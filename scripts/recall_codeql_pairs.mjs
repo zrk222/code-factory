@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Supplementary scoring of paired native SARIF against a registered reference.
-// The bundle pins the cohort, reference, and each prepared case and query.
+// A v1 bundle pins the query for each targeted case. A v2 bundle pins a
+// separate plan that assigns one query inventory to each supported ecosystem.
 // Each old/fixed capture pins observation JSON, SARIF and the CodeQL source ZIP.
 // Artifact paths are relative to the bundle, and archive prefixes identify source roots.
 import { spawnSync } from 'node:child_process';
@@ -11,6 +12,7 @@ import { caseDigest, familiesFor, parseHunks, reviewCapturePath, sarifFindings, 
   scoreCase, sha256, sortKeys, validateRecallManifest } from './recall_harness.mjs';
 
 const FORMAT = 'factory.recall-codeql-pairs.v1';
+const PLAN_BUNDLE = 'factory.recall-codeql-pairs.v2';
 const digest = /^[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
 const relativeEntry = path => typeof path === 'string' && !path.includes('\\')
@@ -34,6 +36,38 @@ function artifact(root, pin) {
   const bytes = readFileSync(boundPath(root, pin));
   requireProof(sha256(bytes) === pin.sha256, 'Artifact fingerprint differs for ' + pin.path);
   return bytes;
+}
+
+function queryBinding(root, id, pin) {
+  const header = artifact(root, pin).toString('utf8').split('*/', 1)[0];
+  requireProof(typeof id === 'string' && id.length > 0 && /^\s*\*\s+@id\s+(\S+)/m.exec(header)?.[1] === id,
+    'Query source ID differs for ' + id);
+  return { id, sha256: pin.sha256, families: familiesFromTags(header.match(/external\/cwe\/cwe-\d+/g) ?? []) };
+}
+
+function registeredPolicies(root, bundle, manifest) {
+  const plan = json(artifact(root, bundle.plan));
+  requireProof(plan.schema === 'factory.recall-codeql-plan.v1' && plan.manifest_sha256 === bundle.manifest.sha256
+    && plan.reference_sha256 === bundle.reference.sha256 && plan.engine_version === bundle.engine_version
+    && Array.isArray(plan.policies) && plan.policies.length > 0, 'CodeQL plan differs from the registered inputs');
+  const ecosystems = new Set(manifest.cases.map(row => row.ecosystem));
+  const policies = new Map();
+  for (const entry of plan.policies) {
+    requireProof(ecosystems.has(entry.ecosystem) && !policies.has(entry.ecosystem)
+      && Array.isArray(entry.queries) && entry.queries.length > 0, 'Invalid CodeQL ecosystem policy');
+    const queries = entry.queries.map(query => queryBinding(root, query.id, query.source));
+    requireProof(new Set(queries.map(q => q.id)).size === queries.length
+      && queries.every(q => q.families.length), 'Duplicate or unclassified query in ecosystem policy');
+    policies.set(entry.ecosystem, { queries, families: new Set(queries.flatMap(query => query.families)),
+      planSha256: bundle.plan.sha256,
+      queriesSha256: caseDigest(queries.map(({ id, sha256 }) => ({ id, sha256 }))) });
+  }
+  const planned = manifest.cases.filter(row => policies.has(row.ecosystem)).map(row => row.ghsa);
+  requireProof(Array.isArray(plan.advisory_schedule), 'CodeQL plan schedule is missing');
+  const scheduled = new Set(plan.advisory_schedule);
+  requireProof(plan.advisory_schedule.length === planned.length && scheduled.size === planned.length
+    && planned.every(id => scheduled.has(id)), 'CodeQL plan schedule omits or adds registered cases');
+  return policies;
 }
 
 // Check the actual archive bytes and exact entry names, lengths and hashes.
@@ -63,12 +97,16 @@ for item in json.load(sys.stdin):
                         raise ValueError("Source archive packet bytes differ for " + item["side"] + ": " + packet["path"])
 `;
 
-function nativeCapture(root, capture, side, input, engineVersion, query) {
+function nativeCapture(root, capture, side, input, engineVersion, policy) {
   const observed = json(artifact(root, capture?.observation));
   requireProof(observed.case === input.ghsa && observed.side === side && observed.revision === input.revisions[side],
     'Native case or revision differs for ' + side);
-  requireProof(observed.query === query.id && observed.query_sha256 === query.sha256
-    && observed.native_sha256 === capture.sarif.sha256, 'Native query or report binding differs for ' + side);
+  const exactQuery = policy.queries[0];
+  const analysisMatches = policy.planSha256
+    ? observed.plan_sha256 === policy.planSha256 && observed.queries_sha256 === policy.queriesSha256
+    : observed.query === exactQuery.id && observed.query_sha256 === exactQuery.sha256;
+  requireProof(analysisMatches && observed.native_sha256 === capture.sarif.sha256,
+    'Native query or report binding differs for ' + side);
   requireProof(capture.archive_prefix === '' || relativeEntry(capture.archive_prefix), 'Invalid archive prefix for ' + side);
   const packets = input.source_packets[side];
   requireProof(Array.isArray(packets) && packets.every(p => relativeEntry(p.path)
@@ -83,12 +121,17 @@ function nativeCapture(root, capture, side, input, engineVersion, query) {
     && Array.isArray(run.results) && Array.isArray(run.invocations) && run.invocations.length > 0
     && run.invocations.every(call => call.executionSuccessful === true
       && !call.toolExecutionNotifications?.some(note => note.level === 'error')), 'Unqualified CodeQL report for ' + side);
-  const descriptors = driver.rules?.filter(rule => rule.id === query.id);
-  requireProof(descriptors?.length === 1 && run.results.every(result => result.ruleId === query.id)
-    && run.results.length === observed.reported_alerts, 'CodeQL query or alert count differs for ' + side);
-  requireProof(JSON.stringify(query.families) === JSON.stringify(familiesFromTags(descriptors[0].properties?.tags ?? [])),
-    'CodeQL family metadata differs for ' + side);
-  const findings = sarifFindings(report, new Set(packets.map(p => p.path))).map(finding => ({ ...finding, rule: query.id }));
+  const descriptors = new Map((driver.rules ?? []).map(rule => [rule.id, rule]));
+  requireProof(descriptors.size === policy.queries.length && descriptors.size === driver.rules?.length
+    && run.results.every(result => descriptors.has(result.ruleId)) && run.results.length === observed.reported_alerts,
+    'CodeQL query inventory or alert count differs for ' + side);
+  for (const query of policy.queries) {
+    requireProof(descriptors.has(query.id), 'CodeQL query ID differs for ' + side);
+    const tags = descriptors.get(query.id).properties?.tags ?? [];
+    requireProof(JSON.stringify(query.families) === JSON.stringify(familiesFromTags(tags)),
+      'CodeQL family metadata differs for ' + side);
+  }
+  const findings = sarifFindings(report, new Set(packets.map(p => p.path)), id => id);
   requireProof(findings.length === run.results.length
     && findings.every(finding => finding.path && Number.isSafeInteger(finding.line) && finding.line > 0),
     'Native alert location is missing for ' + side);
@@ -101,7 +144,7 @@ export function scoreCodeqlPairs(bundlePath) {
   const bytes = readFileSync(bundlePath);
   const root = realpathSync(dirname(bundlePath));
   const bundle = json(bytes);
-  requireProof(bundle.schema === FORMAT && typeof bundle.engine_version === 'string'
+  requireProof([FORMAT, PLAN_BUNDLE].includes(bundle.schema) && typeof bundle.engine_version === 'string'
     && Array.isArray(bundle.cases) && bundle.cases.length > 0, 'Invalid paired CodeQL bundle');
   const manifest = json(artifact(root, bundle.manifest));
   const manifestDigest = validateRecallManifest(manifest);
@@ -118,6 +161,7 @@ export function scoreCodeqlPairs(bundlePath) {
     'Reference case inventory or hit count differs');
   requireProof(new Set(bundle.cases.map(row => row.advisory)).size === bundle.cases.length,
     'Duplicate CodeQL advisory pair');
+  const policies = bundle.schema === PLAN_BUNDLE ? registeredPolicies(root, bundle, manifest) : null;
 
   const archives = [];
   const observations = bundle.cases.map(row => {
@@ -133,16 +177,15 @@ export function scoreCodeqlPairs(bundlePath) {
     requireProof(sha256(JSON.stringify(sortKeys(input))) === before.input_sha256,
       'Prepared case bytes differ from the reference for ' + row.advisory);
 
-    const queryHeader = artifact(root, row.query).toString('utf8').split('*/', 1)[0];
-    const id = /^\s*\*\s+@id\s+(\S+)/m.exec(queryHeader)?.[1];
-    requireProof(id && id === row.query_id,
-      'Query source ID differs for ' + row.advisory);
-    const query = { id, sha256: row.query.sha256,
-      families: familiesFromTags(queryHeader.match(/external\/cwe\/cwe-\d+/g) ?? []) };
-    const old = nativeCapture(root, row.old, 'old', input, bundle.engine_version, query);
-    const fixed = nativeCapture(root, row.fixed, 'fixed', input, bundle.engine_version, query);
     const families = familiesFor(registered.cwes);
-    requireProof(query.families.some(family => families.includes(family)), 'CodeQL query family differs for ' + row.advisory);
+    const policy = policies ? policies.get(registered.ecosystem) : { queries: [queryBinding(root, row.query_id, row.query)] };
+    requireProof(policy, 'No registered CodeQL ecosystem policy for ' + row.advisory);
+    if (!policies) {
+      requireProof(policy.queries[0].families.some(family => families.includes(family)),
+        'CodeQL query family differs for ' + row.advisory);
+    }
+    const old = nativeCapture(root, row.old, 'old', input, bundle.engine_version, policy);
+    const fixed = nativeCapture(root, row.fixed, 'fixed', input, bundle.engine_version, policy);
     archives.push(old.archive, fixed.archive);
 
     const preparedDir = dirname(row.prepared.path);
@@ -151,8 +194,9 @@ export function scoreCodeqlPairs(bundlePath) {
     const editedLines = {};
     const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(registered.ecosystem), editedLines);
     const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings,
-      rules: { [query.id]: query.families } });
-    return { advisory: row.advisory, reference: before.after, query_id: row.query_id, hunk_hit: score.hunk_hit,
+      rules: Object.fromEntries(policy.queries.map(query => [query.id, query.families])) });
+    return { advisory: row.advisory, reference: before.after,
+      ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }), hunk_hit: score.hunk_hit,
       trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
       hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
       deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
@@ -163,7 +207,21 @@ export function scoreCodeqlPairs(bundlePath) {
     { input: JSON.stringify(archives), encoding: 'utf8', windowsHide: true });
   if (verified.error) throw verified.error;
   requireProof(verified.status === 0, 'Source archive verification failed: ' + verified.stderr.trim());
-  return { schema: 'factory.recall-codeql-pair-score.v1', scope: 'supplemental', input_sha256: sha256(bytes),
+  const cohortCoverage = {};
+  if (policies) {
+    const observed = new Set(observations.map(row => row.advisory));
+    const eligible = manifest.cases.filter(row => policies.has(row.ecosystem));
+    cohortCoverage.plan_sha256 = bundle.plan.sha256;
+    cohortCoverage.planned_cases = eligible.length;
+    cohortCoverage.unobserved_advisories = eligible.filter(row => !observed.has(row.ghsa)).map(row => row.ghsa);
+    cohortCoverage.unsupported_advisories = manifest.cases.filter(row => !policies.has(row.ecosystem)).map(row => row.ghsa);
+    cohortCoverage.uncovered_advisory_families = eligible.flatMap(row => {
+      const unsupported = familiesFor(row.cwes).filter(family => !policies.get(row.ecosystem).families.has(family));
+      return unsupported.length ? [{ advisory: row.ghsa, families: unsupported }] : [];
+    });
+  }
+  return { schema: 'factory.recall-codeql-pair-score.v1', scope: policies ? 'registered-codeql-plan' : 'supplemental',
+    input_sha256: sha256(bytes), ...cohortCoverage,
     reference_sha256: bundle.reference.sha256, registered_cases: cases.size, reference_hunk_hits: reference.candidate.hunk_hits,
     scored_pairs: observations.length, strict_hunk_hits: observations.filter(row => row.hunk_hit).length,
     strict_hits_on_reference_misses: observations.filter(row => row.reference === 'miss' && row.hunk_hit).length,

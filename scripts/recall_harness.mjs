@@ -286,7 +286,7 @@ function regionSpan({ startLine, startColumn, endLine, endColumn }) {
   return [startColumn ?? null, lineOffset, endColumn ?? null];
 }
 
-export function sarifFindings(sarif, packetPaths) {
+export function sarifFindings(sarif, packetPaths, normalizeRule = id => id.split('.').slice(-2).join('.')) {
   const out = [];
   const clean = loc => sarifPath(loc.artifactLocation.uri, packetPaths);
   for (const run of sarif.runs ?? []) {
@@ -297,7 +297,7 @@ export function sarifFindings(sarif, packetPaths) {
         .flatMap(thread => thread.locations ?? []).map(step => step.location?.physicalLocation)
         .filter(step => step?.artifactLocation && step.region).map(step => [clean(step), step.region.startLine]);
       const span = regionSpan(location.region);
-      out.push({ rule: result.ruleId.split('.').slice(-2).join('.'), path: clean(location),
+      out.push({ rule: normalizeRule(result.ruleId), path: clean(location),
         line: location.region.startLine, ...(span ? { span } : {}), trace });
     }
   }
