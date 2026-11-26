@@ -33,6 +33,7 @@ ASSEMBLY_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("prestige", ("score", "smoke/{f}.ui", "--json", "--strict")),
     ("hsf", ("compile", "specs/{f}.yaml")),
     ("specline", ("evidence", "{f}")),
+    ("hsf", ("harness", "check", "--json", "--no-cache")),
     ("forgeline", ("ship", "{f}")),
 )
 
@@ -50,6 +51,8 @@ def receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
     stage = args[0].replace("_", "-")
     if module == "specline" and stage == "gate" and len(args) > 1:
         return f"gate-{args[1].replace('_', '-')}"
+    if module == "hsf" and stage == "harness" and len(args) > 1:
+        return f"harness-{args[1].replace('_', '-')}"
     return stage
 
 

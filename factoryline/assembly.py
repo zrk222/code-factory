@@ -1217,6 +1217,43 @@ def _assembly_hsf_action(
     return _skip_stage(stage, report, activity, "no deterministic decision spec")
 
 
+def _ingest_heal_receipts(root: Path, feature: str) -> list[str]:
+    """Bring HSF heal receipts into FactoryLine receipts before the harness check runs (idempotent, best effort)."""
+    from .proof_reuse import ProofReuseError, ingest_harness_heal
+
+    ingested = []
+    for path in sorted((root / "harness" / "receipts").glob("heal-*.json"))[-20:]:
+        try:
+            result = ingest_harness_heal(root, path.relative_to(root), feature=feature)
+        except ProofReuseError:
+            continue
+        if not result["already_ingested"]:
+            ingested.append(result["receipt"])
+    return ingested
+
+
+def _assembly_harness_action(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> str | None:
+    """Run `hsf harness check` only when the project declares a harness (or a release contract requires it)."""
+    if dry_run or stage.stage_id != "hsf:harness-check":
+        return None
+    if (root / "harness" / "harness.yaml").is_file():
+        report["harness_heals_ingested"] = _ingest_heal_receipts(root, feature)
+        return None
+    if stage.required:
+        _assembly_stage_failure(
+            stage, report, activity, "harness_not_declared", "HARNESS_REQUIRED_EVIDENCE_MISSING"
+        )
+        return "halt"
+    return _skip_stage(stage, report, activity, "harness_not_declared", "HSF_HARNESS_NOT_APPLICABLE")
+
+
 def _assembly_evidence_action(
     root: Path,
     dry_run: bool,
@@ -1478,6 +1515,7 @@ def _assembly_stage_halts(
         return True
     for action in (
         _assembly_hsf_action(root, feature, dry_run, stage, report, activity),
+        _assembly_harness_action(root, feature, dry_run, stage, report, activity),
         _assembly_evidence_action(root, dry_run, stage, report, activity),
     ):
         if action is not None:

@@ -1083,3 +1083,93 @@ def test_worklog_fails_closed_when_contract_changes(tmp_path: Path) -> None:
     checked = verify_proof_worklog(tmp_path, Path(draft["path"]))
     assert checked["ok"] is False
     assert checked["reason"] == "oracle_binding_stale"
+
+
+def _heal_workspace(tmp_path, *, status="healthy", classification="ok", read_only=True):
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / ".hsf-harness" / "gates").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".hsf-harness" / "gates" / "unit.json").write_text('{"gate": "unit", "passed": true}', encoding="utf-8")
+    manifest = {"schema": "factory.proof-request.v1", "gates": [{
+        "name": "harness:unit", "command": ["sh", "-c", "pytest -q"], "inputs": ["src/calc.py"],
+        "outputs": [".hsf-harness/gates/unit.json"],
+        "toolchain": {"hsf": "0.6.0"}, "environment": {"PYTHONDONTWRITEBYTECODE": "1"}, "read_only": read_only}]}
+    (tmp_path / ".factory" / "proof-requests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".factory" / "proof-requests" / "harness.json").write_text(json.dumps(manifest), encoding="utf-8")
+    receipt = {"schema": "hsf.harness-heal.v2", "harness": "calc", "status": status, "stop_reason": "healthy",
+               "repair_attempts": 1, "remaining_failures": [] if status == "healthy" else ["unit"],
+               "rounds": [{"round": "verify", "gates": [{"gate": "unit", "passed": False, "classification": "verification"}]},
+                          {"round": 1, "action": "keep", "guard_ok": True, "changed": ["src/calc.py"],
+                           "gates": [{"gate": "unit", "passed": status == "healthy", "classification": classification,
+                                      "duration_s": 0.25, "output_tail": "SECRET-TAIL"}]}],
+               "attribution": {"stage": "harness_heal", "n_checked": 1, "n_passed": 1, "units": []}}
+    path = tmp_path / "harness" / "receipts" / "heal-1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    return Path("harness/receipts/heal-1.json")
+
+
+def test_healthy_heal_receipt_becomes_a_receipt_and_read_only_proofs(tmp_path):
+    from factoryline.proof_reuse import ingest_harness_heal
+
+    heal = _heal_workspace(tmp_path)
+    result = ingest_harness_heal(tmp_path, heal, feature="calc")
+    assert result["ok"] is True and result["proofs"] == ["harness:unit"]
+    written = json.loads((tmp_path / result["receipt"]).read_text(encoding="utf-8"))
+    assert written["module"] == "hsf" and written["stage"] == "harness-heal" and written["ok"] is True
+    assert "SECRET-TAIL" not in json.dumps(written)
+    assert written["outputs"]["authority"] == "none"
+    again = ingest_harness_heal(tmp_path, heal, feature="calc")
+    assert again["already_ingested"] is True and again["receipt"] == result["receipt"]
+
+
+@pytest.mark.parametrize("status, classification, read_only", [
+    ("unhealthy", "ok", True), ("healthy", "cached", True), ("healthy", "flake", True), ("healthy", "ok", False)])
+def test_only_fresh_green_read_only_gates_of_a_healthy_run_become_proofs(tmp_path, status, classification, read_only):
+    from factoryline.proof_reuse import ingest_harness_heal
+
+    heal = _heal_workspace(tmp_path, status=status, classification=classification, read_only=read_only)
+    result = ingest_harness_heal(tmp_path, heal, feature="calc")
+    assert result["proofs"] == [] and result["ok"] is (status == "healthy")
+
+
+@pytest.mark.parametrize("damage", ["schema", "oversized", "symlink", "outside"])
+def test_bad_heal_receipts_are_refused(tmp_path, damage):
+    import os
+
+    from factoryline.proof_reuse import ingest_harness_heal
+
+    heal = _heal_workspace(tmp_path)
+    path = tmp_path / heal
+    if damage == "schema":
+        path.write_text(json.dumps({"schema": "hsf.other", "rounds": []}), encoding="utf-8")
+    elif damage == "oversized":
+        path.write_text(" " * 1_100_000 + "{}", encoding="utf-8")
+    elif damage == "symlink":
+        real = tmp_path / "real"
+        real.mkdir()
+        os.replace(path, real / "heal-1.json")
+        path.parent.rmdir()
+        path.parent.symlink_to(real, target_is_directory=True)
+    else:
+        heal = Path("..") / "elsewhere.json"
+    with pytest.raises(ProofReuseError) as error:
+        ingest_harness_heal(tmp_path, heal, feature="calc")
+    assert error.value.code in {"PROOF_HARNESS_RECEIPT_INVALID", "PROOF_PATH_ESCAPE"}
+
+
+def test_ingest_harness_cli(tmp_path, capsys):
+    heal = _heal_workspace(tmp_path)
+    assert main(["proofs", "ingest-harness", str(heal), "--feature", "calc", "--root", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["proofs"] == ["harness:unit"]
+
+
+def test_harness_requests_without_outputs_are_not_recorded(tmp_path):
+    from factoryline.proof_reuse import ingest_harness_heal
+
+    heal = _heal_workspace(tmp_path)
+    manifest_path = tmp_path / ".factory" / "proof-requests" / "harness.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["gates"][0]["outputs"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert ingest_harness_heal(tmp_path, heal, feature="calc")["proofs"] == []

@@ -525,6 +525,8 @@ def test_documented_forge_commands_reach_scaffolded(tmp_path: Path, target: str)
                               capture_output=True, text=True, encoding="utf-8")
         assert done.returncode == 0, (command, done.stdout[-400:], done.stderr[-400:])
     assert json.loads(done.stdout)["state"] == "scaffolded"
+    assert f"hsf harness init {name} --target {target}" in workflow
+    assert f"hsf harness seed --from all --feature {name}" in workflow
 
 
 def test_ssat_yaml_scopes_every_invariant_to_every_function():

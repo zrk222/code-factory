@@ -1907,7 +1907,7 @@ def test_stage_list_has_conditional_evidence_before_ship():
     from factoryline.verification import BASE_REQUIRED
 
     assert len(set(ASSEMBLY_STAGE_KEYS)) == len(ASSEMBLY_STAGE_KEYS)
-    assert ASSEMBLY_STAGE_KEYS[-2:] == (("specline", "evidence"), ("forgeline", "ship"))
+    assert ASSEMBLY_STAGE_KEYS[-3:] == (("specline", "evidence"), ("hsf", "harness-check"), ("forgeline", "ship"))
     assert ASSEMBLY_STAGES[-1][1][0] == "ship"
     assert ("specline", "evidence") in CONDITIONAL_STAGE_KEYS
     assert "evidence" not in BASE_REQUIRED["specline"]
@@ -2037,3 +2037,57 @@ def test_forge_stage_skippable_reports_state_and_prior_receipt(tmp_path):
     assert forge_stage_skippable(tmp_path, "f", SimpleNamespace(module="forgeline", name="arch-gate", required=False)) == (False, "reviewed", None)
     assert forge_stage_skippable(tmp_path, "f", SimpleNamespace(module="forgeline", name="smoke", required=False)) == (False, None, None)
     assert forge_stage_skippable(tmp_path, "f", SimpleNamespace(module="forgeline", name="review", required=True))[0] is False
+
+
+@pytest.mark.parametrize("declared, outcome", [("none", "skip"), ("pass", "ok"), ("fail", "halt")])
+def test_harness_check_stage_runs_only_with_a_declared_harness(tmp_path, monkeypatch, declared, outcome):
+    from factoryline.protocol import receipt_stage
+
+    assert receipt_stage("hsf", ["harness", "check"]) == "harness-check"
+    _installed(monkeypatch)
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "f.md").write_text("# f\n", encoding="utf-8")
+    if declared != "none":
+        (tmp_path / "harness").mkdir()
+        (tmp_path / "harness" / "harness.yaml").write_text("harness: f\n", encoding="utf-8")
+    executed = []
+    monkeypatch.setattr(
+        "factoryline.assembly.run_cli_detailed",
+        lambda cli, args, *_a, **_k: executed.append(list(args))
+        or _detailed_result('{"ok": true}', ok=declared != "fail", exit_code=0 if declared != "fail" else 1),
+    )
+    report = assemble(tmp_path, "f", chain=[("hsf", ["harness", "check", "--json", "--no-cache"])])
+    row = report["stages"][-1]
+    if outcome == "skip":
+        assert executed == [] and row["marker"] == "HSF_HARNESS_NOT_APPLICABLE"
+        assert not list((tmp_path / "receipts").glob("hsf-f-harness-check-*.json"))
+    elif outcome == "ok":
+        assert executed == [["harness", "check", "--json", "--no-cache"]] and row["status"] == "ok"
+        assert list((tmp_path / "receipts").glob("hsf-f-harness-check-*.json"))
+    else:
+        assert report["halted_at"] == "hsf:harness-check"
+
+
+def test_harness_declaration_requires_harness_check_but_not_compile(tmp_path):
+    from factoryline.verification import _required_stages
+
+    (tmp_path / "harness").mkdir()
+    (tmp_path / "harness" / "harness.yaml").write_text("harness: f\n", encoding="utf-8")
+    Receipt("hsf", "harness-check", "f", True).write(tmp_path)
+    from factoryline.assembly import rollup_receipts
+
+    required = _required_stages(tmp_path, "f", rollup_receipts(tmp_path, "f")["stages"])
+    assert required["hsf"] == {"harness-check"}
+
+
+def test_heal_receipts_are_ingested_before_the_harness_check(tmp_path, monkeypatch):
+    from factoryline.assembly import _ingest_heal_receipts
+
+    (tmp_path / "harness" / "receipts").mkdir(parents=True)
+    (tmp_path / "harness" / "receipts" / "heal-1.json").write_text(json.dumps({
+        "schema": "hsf.harness-heal.v2", "harness": "f", "status": "unhealthy", "rounds": [],
+        "remaining_failures": ["unit"]}), encoding="utf-8")
+    (tmp_path / "harness" / "receipts" / "heal-2.json").write_text("not json", encoding="utf-8")
+    first = _ingest_heal_receipts(tmp_path, "f")
+    assert len(first) == 1 and first[0].startswith("receipts/hsf-f-harness-heal-")
+    assert _ingest_heal_receipts(tmp_path, "f") == []

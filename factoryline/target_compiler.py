@@ -244,6 +244,17 @@ forge architect {name} {name}.ssat.yaml --adopt-existing --root .
 forge status {name} --root .
 ```
 
+## Self-healing harness (HSF)
+
+Optional. A harness checks the gates on every assembly run (`hsf:harness-check`) and lets a bounded repair
+loop fix failures without touching protected tests:
+
+```bash
+hsf harness init {name} --target {target}
+hsf harness seed --from all --feature {name}
+hsf harness check
+```
+
 ## Selected deployment route
 
 **{profile["label"]}** (`{profile["id"]}`)

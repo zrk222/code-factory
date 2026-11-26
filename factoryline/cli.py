@@ -972,6 +972,13 @@ def _build_parser(
     proof_challenge.add_argument("receipt")
     proof_challenge.add_argument("--root", default=".")
     proof_challenge.add_argument("--json", action="store_true")
+    proof_ingest = proofs_sub.add_parser(
+        "ingest-harness", help="record an HSF heal receipt (and its fresh green read-only gates) as evidence"
+    )
+    proof_ingest.add_argument("receipt")
+    proof_ingest.add_argument("--feature")
+    proof_ingest.add_argument("--root", default=".")
+    proof_ingest.add_argument("--json", action="store_true")
 
     s = sub.add_parser(
         "verify", help="summarize local receipts into a fail-closed readiness decision"
@@ -3592,7 +3599,11 @@ def _proofs_result(a, p) -> dict:
         return _lazy_import("proof_reuse", "challenge_proof_receipt")(
             Path(a.root), Path(a.receipt)
         )
-    p.error("proofs requires record, plan, verify, or challenge")
+    if a.proofs_cmd == "ingest-harness":
+        return _lazy_import("proof_reuse", "ingest_harness_heal")(
+            Path(a.root), Path(a.receipt), feature=a.feature
+        )
+    p.error("proofs requires record, plan, verify, challenge, or ingest-harness")
     return {}
 
 

@@ -75,6 +75,10 @@ def _declares_hsf(
     )
 
 
+def _declares_harness(root: Path, rows: list[dict[str, Any]], declared: set[str]) -> bool:
+    return (root / "harness" / "harness.yaml").is_file() or "hsf:harness-check" in declared
+
+
 def _declares_evidence(root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]) -> bool:
     return (
         (root / ".factory" / "workflow-audit-contract.json").is_file()
@@ -95,6 +99,8 @@ def _required_stages(
         required["prestige"] = frozenset({"score"})
     if _declares_hsf(root, feature, rows, declared):
         required["hsf"] = frozenset({"compile"})
+    if _declares_harness(root, rows, declared):
+        required["hsf"] = required.get("hsf", frozenset()) | {"harness-check"}
     if _declares_evidence(root, feature, rows, declared):
         required["specline"] = required["specline"] | {"evidence"}
     return required
@@ -862,6 +868,8 @@ def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
             return stage.present and (root / "smoke" / f"{feature}.ui").is_file()
         if stage.module == "hsf" and stage.name == "compile":
             return stage.present and decision_source(root, feature) is not None
+        if stage.module == "hsf" and stage.name == "harness-check":
+            return stage.present and (root / "harness" / "harness.yaml").is_file()
         return stage.present
 
     planned = [stage.stage_id for stage in stages if applies(stage)]
