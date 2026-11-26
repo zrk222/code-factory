@@ -1,3 +1,10 @@
+import { extname, isAbsolute, posix, relative, resolve } from 'node:path';
+
+export const PARSER_LANGUAGE = Object.freeze({ c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
+  go: 'go', java: 'java', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' });
+
 // Git's NUL-delimited inventory includes files that the strict hunk filter drops.
 export function changedFiles(raw) {
   const fields = new TextDecoder('utf-8', { fatal: true }).decode(raw).split('\0');
@@ -53,6 +60,63 @@ export function engineCoverage(report) {
   return { scanned, skipped, problems, timeouts };
 }
 
+function ruleLanguages(block) {
+  const inline = block.match(/^    languages:[ \t]*\[([a-z, \t]+)\][ \t]*$/m);
+  if (inline) return inline[1].split(',').map(value => value.trim());
+  const lines = block.match(/^    languages:[ \t]*\n((?:    - [a-z]+[ \t]*(?:\n|$))+)/m);
+  return lines ? [...lines[1].matchAll(/^    - ([a-z]+)[ \t]*$/gm)].map(match => match[1]) : null;
+}
+
+function ruleExcludes(block) {
+  const section = block.match(/^    paths:[ \t]*\n((?: {6}[^\n]*\n?)+)/m);
+  if (!section) return [];
+  const match = section[1].match(/^      exclude:[ \t]*(\[[^\n]+\])[ \t]*$/m);
+  if (!match) {
+    const expanded = section[1].match(/^      exclude:[ \t]*\n((?:      - [^\n]+\n?)+)/m);
+    return expanded ? [...expanded[1].matchAll(/^      - ['"](\*\*\/[\w.*\/-]+)['"][ \t]*$/gm)].map(value => value[1]) : [];
+  }
+  try {
+    const values = JSON.parse(match[1]);
+    // Treat only anchored repository globs used by the reviewed rules as proof.
+    return values.filter(value => typeof value === 'string' && /^\*\*\/[\w.*\/-]+$/.test(value));
+  } catch {
+    return [];
+  }
+}
+
+export function compileScannerPathPolicy(rules) {
+  const blocks = rules.replace(/\r\n/g, '\n').split(/^  - id:[ \t]+[^\n]+$/m).slice(1);
+  const byLanguage = Map.groupBy(blocks.flatMap(block => {
+    const languages = ruleLanguages(block);
+    return (languages?.length ? languages : ['generic']).map(language => ({ language, excludes: ruleExcludes(block) }));
+  }), rule => rule.language);
+  const known = new Set(Object.values(PARSER_LANGUAGE));
+  if ([...byLanguage.keys()].some(language => !known.has(language))) return () => false;
+  return (path) => {
+    const extension = extname(path).slice(1).toLowerCase();
+    const language = PARSER_LANGUAGE[extension];
+    if (!language) return false;
+    // Some native parsers accept additional files, so these extensions need both policies.
+    const named = extension === 'js' || extension === 'jsx' ? ['javascript', 'typescript']
+      : language === 'typescript' ? ['typescript', 'javascript'] : [language];
+    const applicable = named.flatMap(name => byLanguage.get(name) ?? []);
+    return Boolean(applicable.length) && applicable.every(rule => rule.excludes.some(glob => posix.matchesGlob(path, glob)));
+  };
+}
+
+export function engineTargetIgnores(stdout, source) {
+  const selected = new Set(), ignored = new Set();
+  for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+    const row = line.match(/^(selected) (.+)$/) ?? line.match(/^(ignored) (.+) \[([a-z0-9_-]+)\]$/);
+    if (!row) return null;
+    const name = scannerPath(relative(source, resolve(source, row[2])));
+    if (!name || name === '..' || name.startsWith('../') || isAbsolute(name)) return null;
+    if (row[1] === 'selected') selected.add(name);
+    else if (row[3] === 'semgrepignore_patterns_match') ignored.add(name);
+  }
+  return path => !selected.has(path) && [...ignored].some(name => path === name || path.startsWith(name + '/'));
+}
+
 function packetCoverage(source, scan, findings, path) {
   if (!scan.submitted) return { ...source, state: 'not_submitted', reason: 'input_verification_failed' };
   if (!scan.verified) return { ...source, state: 'submitted', reason: 'scan_evidence_unverified' };
@@ -60,6 +124,9 @@ function packetCoverage(source, scan, findings, path) {
   const issue = engine?.problems.get(path);
   const matched = findings.has(path);
   if (issue) return { ...source, state: 'partial', reason: issue };
+  if (!matched && !engine?.scanned.has(path) && engine?.policyExclusions?.has(path)) {
+    return { ...source, state: 'excluded', reason: 'scanner_path_policy', policy: engine.policyExclusions.get(path) };
+  }
   if (engine?.skipped.has(path)) return { ...source, state: 'skipped', reason: engine.skipped.get(path) ?? 'engine_reported_skip' };
   if (engine?.scanned.has(path)) return { ...source, state: 'reported_scanned', reason: 'engine_scan_paths' };
   if (matched) return { ...source, state: 'reported_scanned', reason: 'sarif_finding' };

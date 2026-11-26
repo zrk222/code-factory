@@ -10,6 +10,35 @@ import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindin
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
   publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
+import { compileScannerPathPolicy, engineTargetIgnores } from './recall_coverage.mjs';
+
+test('scanner path policy requires exclusion by every applicable reviewed rule', () => {
+  const inline = '  - id: inline\n    languages: [go]\n    paths:\n      exclude: ["**/*.pb.go"]\n';
+  const block = "  - id: block\n    languages:\n    - go\n    paths:\n      exclude:\n      - '**/*.pb.go'\n";
+  const include = "  - id: subset\n    languages: [go]\n    paths:\n      include:\n      - '**/*.pb.go'\n";
+  const policy = compileScannerPathPolicy(inline + block);
+  assert.equal(policy('src/message.pb.go'), true);
+  assert.equal(policy('src/gateway.go'), false);
+  assert.equal(compileScannerPathPolicy(inline + include)('src/message.pb.go'), false);
+  assert.equal(compileScannerPathPolicy(inline + block.replace('    - go', '    - generic'))('src/message.pb.go'), false);
+});
+
+test('target inventory preserves native scope evidence and refuses ambiguous paths', () => {
+  const root = join(tmpdir(), 'recall-target-inventory');
+  const contents = [
+    `ignored ${join(root, 'dist')} [semgrepignore_patterns_match]`,
+    `selected ${join(root, 'dist', 'explicit.js')}`,
+    `ignored ${join(root, 'big.js')} [too_big]`,
+    `selected ${join(root, 'app [semgrepignore_patterns_match]')}`,
+  ].join('\n');
+  const confirmed = engineTargetIgnores(contents, root);
+  assert.equal(confirmed('dist/generated.js'), true);
+  assert.equal(confirmed('dist/explicit.js'), false);
+  assert.equal(confirmed('big.js'), false);
+  assert.equal(confirmed('missing.js'), false);
+  assert.equal(engineTargetIgnores('warning: unsupported inventory', root), null);
+  assert.equal(engineTargetIgnores('ignored ../outside [semgrepignore_patterns_match]', root), null);
+});
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
 --- a/app/files.py
