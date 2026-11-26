@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import childProcess, { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -416,7 +417,29 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
       old: aliasCapture('old'), fixed: aliasCapture('fixed') }] });
   const registered = json('registered.json', bundle);
   const cohort = { schema: 'factory.recall-codeql-cohort.v1', bundles: [registered, supplemental] };
-  const combined = run(cohort);
+  const runWithProcessCount = (overflow = false) => {
+    const originalSpawn = childProcess.spawnSync;
+    const launches = [];
+    childProcess.spawnSync = (command, argv, options) => {
+      const groups = JSON.parse(options.input);
+      const size = Array.isArray(groups[0]) ? groups.length : 1;
+      launches.push(size);
+      if (overflow && size > 1) return originalSpawn(command, argv, { ...options, maxBuffer: 1 });
+      return originalSpawn(command, argv, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      return { score: run(cohort), launches };
+    } finally {
+      childProcess.spawnSync = originalSpawn;
+      syncBuiltinESMExports();
+    }
+  };
+  const { score: combined, launches } = runWithProcessCount();
+  assert.deepEqual(launches, [2]);
+  const fallback = runWithProcessCount(true);
+  assert.deepEqual(fallback.launches, [2, 1, 1]);
+  assert.deepEqual(fallback.score, combined);
   assert.equal(combined.schema, 'factory.recall-codeql-cohort-score.v1');
   assert.equal(combined.registered_cases, 5);
   assert.equal(combined.captured_pairs, 2);
@@ -428,6 +451,12 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
     /Artifact fingerprint differs/);
   assert.throws(() => run({ ...cohort, bundles: [registered, json('other-cohort.json', value)] }),
     /different registry, reference or engine pins/);
+  const badFixed = { ...aliasCapture('fixed'), archive: { ...pair.fixed.archive, sha256: 'a'.repeat(64) } };
+  const badLane = json('bad-lane.json', { ...value, manifest, reference,
+    cases: [{ ...pair, advisory: alias.ghsa, prepared: linked.row.prepared,
+      old: aliasCapture('old'), fixed: badFixed }] });
+  assert.throws(() => run({ ...cohort, bundles: [registered, badLane] }),
+    /Source archive hash differs for GHSA-5555-6666-7777\/fixed/);
   const overlap = json('registered-overlap.json', { ...bundle, cases: [...bundle.cases, linked.row] });
   assert.throws(() => run({ ...cohort, bundles: [overlap, supplemental] }), /Duplicate CodeQL advisory across/);
 });

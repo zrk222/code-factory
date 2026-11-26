@@ -96,37 +96,40 @@ def digest_of(content):
         digest.update(chunk)
     return digest.hexdigest()
 
-bindings = {}
-for item in json.load(sys.stdin):
-    with open(item["archive"], "rb") as content:
-        if digest_of(content) != item["sha256"]:
-            raise ValueError("Source archive hash differs for " + item["side"])
-        content.seek(0)
-        with zipfile.ZipFile(content) as archive:
-            entries = Counter(entry.filename for entry in archive.infolist())
-            verified = {}
-            for packet in item["packets"]:
-                name = item["prefix"] + "/" + packet["path"] if item["prefix"] else packet["path"]
-                if entries[name] != 1:
-                    raise ValueError("Source archive entry is missing or ambiguous for " + item["side"] + ": " + packet["path"])
-                entry = archive.getinfo(name)
-                with archive.open(entry) as data:
-                    if entry.file_size != packet["bytes"] or digest_of(data) != packet["sha256"]:
-                        raise ValueError("Source archive packet bytes differ for " + item["side"] + ": " + packet["path"])
-                verified[packet["path"]] = {"state": "packet_verified", "sha256": packet["sha256"]}
-            side_bindings = []
-            for path in item["references"]:
-                name = item["prefix"] + "/" + path if item["prefix"] else path
-                if path in verified:
-                    binding = verified[path]
-                elif entries[name] == 1 and not archive.getinfo(name).is_dir():
-                    with archive.open(name) as data:
-                        binding = {"state": "archive_verified", "sha256": digest_of(data)}
-                else:
-                    binding = {"state": "ambiguous" if entries[name] > 1 else "missing"}
-                side_bindings.append({"path": path, **binding})
-            bindings[item["side"]] = side_bindings
-print(json.dumps(bindings, separators=(",", ":")))
+def verify_group(items):
+    bindings = {}
+    for item in items:
+        with open(item["archive"], "rb") as content:
+            if digest_of(content) != item["sha256"]:
+                raise ValueError("Source archive hash differs for " + item["side"])
+            content.seek(0)
+            with zipfile.ZipFile(content) as archive:
+                entries = Counter(entry.filename for entry in archive.infolist())
+                verified = {}
+                for packet in item["packets"]:
+                    name = item["prefix"] + "/" + packet["path"] if item["prefix"] else packet["path"]
+                    if entries[name] != 1:
+                        raise ValueError("Source archive entry is missing or ambiguous for " + item["side"] + ": " + packet["path"])
+                    entry = archive.getinfo(name)
+                    with archive.open(entry) as data:
+                        if entry.file_size != packet["bytes"] or digest_of(data) != packet["sha256"]:
+                            raise ValueError("Source archive packet bytes differ for " + item["side"] + ": " + packet["path"])
+                    verified[packet["path"]] = {"state": "packet_verified", "sha256": packet["sha256"]}
+                side_bindings = []
+                for path in item["references"]:
+                    name = item["prefix"] + "/" + path if item["prefix"] else path
+                    if path in verified:
+                        binding = verified[path]
+                    elif entries[name] == 1 and not archive.getinfo(name).is_dir():
+                        with archive.open(name) as data:
+                            binding = {"state": "archive_verified", "sha256": digest_of(data)}
+                    else:
+                        binding = {"state": "ambiguous" if entries[name] > 1 else "missing"}
+                    side_bindings.append({"path": path, **binding})
+                bindings[item["side"]] = side_bindings
+    return bindings
+
+print(json.dumps([verify_group(items) for items in json.load(sys.stdin)], separators=(",", ":")))
 `;
 
 function nativeUriPath(uri) {
@@ -456,9 +459,13 @@ function reuseCapture(row, captured, context) {
     capture_reused_from: source.advisory };
 }
 
-function verifySourceArchives(archives) {
+function verifySourceArchives(groups) {
   const verified = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c', archiveVerifier],
-    { input: JSON.stringify(archives), encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+    { input: JSON.stringify(groups), encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
+  // Retain the per-bundle limit when a combined response exceeds it.
+  if (verified.error?.code === 'ENOBUFS' && groups.length > 1) {
+    return groups.flatMap(group => verifySourceArchives([group]));
+  }
   if (verified.error) throw verified.error;
   requireProof(verified.status === 0, 'Source archive verification failed: ' + verified.stderr.trim());
   return json(Buffer.from(verified.stdout, 'utf8'));
@@ -497,7 +504,7 @@ function scheduledCoverage(plan, policies, manifest, observations) {
   return cohortCoverage;
 }
 
-function verifyPairBundle(root, bundle) {
+function preparePairBundle(root, bundle) {
   requireProof([FORMAT, PLAN_BUNDLE].includes(bundle.schema) && typeof bundle.engine_version === 'string'
     && Array.isArray(bundle.cases) && bundle.cases.length > 0, 'Invalid paired CodeQL bundle');
   const registry = readPairRegistry(root, bundle);
@@ -510,10 +517,19 @@ function verifyPairBundle(root, bundle) {
   const context = { root, cases, referenceCases, policies, engineVersion: bundle.engine_version, archives };
   const captured = new Map(bundle.cases.filter(row => !Object.hasOwn(row, 'capture_reused_from'))
     .map(row => [row.advisory, scorePreparedPair(row, context)]));
-  bindTraceSources(captured.values(), verifySourceArchives(archives));
-  const observations = bundle.cases.map(row => captured.get(row.advisory) ?? reuseCapture(row, captured, context));
-  return { registry, observations, scope: policies ? 'registered-codeql-plan' : 'supplemental',
-    coverage: scheduledCoverage(bundle.plan, policies, manifest, observations) };
+  return { archives, complete(bindings) {
+    bindTraceSources(captured.values(), bindings);
+    const observations = bundle.cases.map(row => captured.get(row.advisory) ?? reuseCapture(row, captured, context));
+    return { registry, observations, scope: policies ? 'registered-codeql-plan' : 'supplemental',
+      coverage: scheduledCoverage(bundle.plan, policies, manifest, observations) };
+  } };
+}
+
+function verifyPairBundles(lanes) {
+  const prepared = lanes.map(({ root, input }) => preparePairBundle(root, input));
+  const bindings = verifySourceArchives(prepared.map(lane => lane.archives));
+  requireProof(Array.isArray(bindings) && bindings.length === prepared.length, 'Missing archive verification group');
+  return prepared.map((lane, index) => lane.complete(bindings[index]));
 }
 
 function summarizeVerifiedPairs(bundle, registry, observations, patternPin) {
@@ -543,7 +559,7 @@ function scoreCohortBundle(root, bytes, bundle, patternPin) {
     && input.reference?.sha256 === first.reference?.sha256 && input.engine_version === first.engine_version),
   'Cohort bundles use different registry, reference or engine pins');
 
-  const verified = lanes.map(lane => verifyPairBundle(lane.root, lane.input));
+  const verified = verifyPairBundles(lanes);
   const observations = verified.flatMap(({ observations }, index) =>
     observations.map(row => ({ ...row, native_bundle_sha256: lanes[index].pin.sha256 })));
   const covered = new Set(observations.map(row => row.advisory));
@@ -562,7 +578,7 @@ export function scoreCodeqlPairs(bundlePath, patternPin = null) {
   const root = realpathSync(dirname(bundlePath));
   const bundle = json(bytes);
   if (bundle.schema === COHORT_BUNDLE) return scoreCohortBundle(root, bytes, bundle, patternPin);
-  const { registry, observations, scope, coverage } = verifyPairBundle(root, bundle);
+  const [{ registry, observations, scope, coverage }] = verifyPairBundles([{ root, input: bundle }]);
   return { schema: 'factory.recall-codeql-pair-score.v1', scope, input_sha256: sha256(bytes), ...coverage,
     ...summarizeVerifiedPairs(bundle, registry, observations, patternPin) };
 }
