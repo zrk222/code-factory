@@ -2355,3 +2355,90 @@ def test_doctor_flags_a_binary_reporting_a_different_build(monkeypatch):
     assert workflow["version_mismatch"] is True and workflow["binary"] == "/usr/local/bin/forge"
     monkeypatch.setattr(protocol, "package_version", lambda _p: "0.10.8+local.x")
     assert cli._doctor_module_check(SimpleNamespace(name="forgeline", cli="forge", installed=True))[1]["version_mismatch"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["revenue", "appforge-status", "--root", ".", "--json"],
+        ["appforge", "next", "--root", "."],
+        ["revenue", "submission-assurance", "--contract", "c", "--saas-proof", "s"],
+        ["saas", "--help"],
+        ["release", "--help"],
+        ["pack", "--help"],
+        ["verifier", "--help"],
+        ["ops", "--help"],
+        ["revenue", "--help"],
+        ["appforge", "init", "--help"],
+    ],
+)
+def test_group_fast_parser_matches_the_full_parser(argv, capsys):
+    from factoryline.cli import FAST_GROUP_MODULES, _build_parser, group_parser
+
+    def parse(parser):
+        try:
+            return vars(parser.parse_args(argv)), capsys.readouterr().out
+        except SystemExit as exit_:
+            return exit_.code, capsys.readouterr().out
+
+    assert argv[0] in FAST_GROUP_MODULES
+    assert parse(group_parser(argv[0])) == parse(_build_parser())
+
+
+def test_provenance_is_cached_across_processes_until_a_source_file_changes(tmp_path, monkeypatch):
+    import factoryline.ops_telemetry as telemetry
+    import factoryline.provenance as provenance_module
+
+    monkeypatch.setenv("FACTORYLINE_CACHE_DIR", str(tmp_path))
+    calls = []
+    real = provenance_module.provenance
+    monkeypatch.setattr(provenance_module, "provenance", lambda: calls.append(1) or real())
+    telemetry._cached_provenance.cache_clear()
+    first = telemetry._cached_provenance()
+    telemetry._cached_provenance.cache_clear()
+    assert telemetry._cached_provenance() == first and len(calls) == 1
+    assert len(list(tmp_path.glob("provenance-*.json"))) == 1
+    package = Path(telemetry.__file__).resolve().parent
+    key = telemetry.provenance_cache_key(package)
+    monkeypatch.setattr(telemetry, "provenance_cache_key", lambda _p: key + "-changed")
+    telemetry._cached_provenance.cache_clear()
+    telemetry._cached_provenance()
+    assert len(calls) == 2
+    telemetry._cached_provenance.cache_clear()
+
+
+def test_wait_briefly_returns_when_the_child_exits():
+    import subprocess
+    import sys
+    import time
+
+    from factoryline.assembly_process import _wait_briefly
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    started = time.monotonic()
+    while child.poll() is None:
+        _wait_briefly(child, [], quantum=5)
+    assert time.monotonic() - started < 4
+
+
+def test_doctor_probes_run_in_parallel_and_keep_module_order(monkeypatch):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from factoryline import cli
+
+    modules = [SimpleNamespace(name=name) for name in ("specline", "forgeline", "hsf", "prestige")]
+    monkeypatch.setattr(cli, "_lazy_import", lambda module, symbol: (lambda: modules))
+    seen = set()
+
+    def probe(module):
+        seen.add(threading.get_ident())
+        time.sleep(0.2)
+        return module.name, {}
+
+    monkeypatch.setattr(cli, "_doctor_module_check", probe)
+    started = time.monotonic()
+    mods, checks = cli._doctor_checks()
+    assert [name for name, _ in checks] == ["specline", "forgeline", "hsf", "prestige"]
+    assert time.monotonic() - started < 0.6 and len(seen) > 1

@@ -389,8 +389,11 @@ def _doctor_module_check(module: Any) -> tuple[Any, dict]:
 
 
 def _doctor_checks() -> tuple[list, list]:
+    from concurrent.futures import ThreadPoolExecutor
+
     mods = _lazy_import("assembly", "detect")()
-    return mods, [_doctor_module_check(module) for module in mods]
+    with ThreadPoolExecutor(max_workers=4) as pool:  # X-SPD-3a: probes are independent subprocesses
+        return mods, list(pool.map(_doctor_module_check, mods))
 
 
 def _doctor_json(checks: list, strict: bool) -> int:
@@ -4622,6 +4625,22 @@ def _dispatch_route_group_41(a, capture_command, p):
     return code
 
 
+# X-SPD-1: groups whose module registers only its own top-level commands can be parsed without building the
+# full parser (about 130 ms cold). Unknown arguments fall back to the full parser, as the common fast path does.
+FAST_GROUP_MODULES = {
+    "revenue": "cli_revenue", "appforge": "cli_revenue", "saas": "cli_saas", "release": "cli_release",
+    "pack": "cli_pack", "verifier": "cli_verifier", "ops": "cli_ops",
+}
+
+
+def group_parser(command: str) -> argparse.ArgumentParser:
+    """A parser holding only one command group, with the same prog and description as the full parser."""
+    p = argparse.ArgumentParser(prog="factory", description="Review code and collect evidence for changes.")
+    sub = p.add_subparsers(dest="cmd")
+    import_module("." + FAST_GROUP_MODULES[command], __package__).add_parser(sub)
+    return p
+
+
 def _dispatch(argv=None) -> int:
     """Parse, route, and dispatch one FactoryLine command."""
     from .ops_telemetry import _measure_phase
@@ -4648,6 +4667,12 @@ def _dispatch(argv=None) -> int:
         }:
             first_lap = argv[0] in {"first-lap", "first-proof"}
             p = _build_parser(common_only=not first_lap, first_lap_only=first_lap)
+            a, unknown = p.parse_known_args(argv)
+            if unknown:
+                p = _build_parser()
+                a = p.parse_args(argv)
+        elif argv and argv[0] in FAST_GROUP_MODULES:
+            p = group_parser(argv[0])
             a, unknown = p.parse_known_args(argv)
             if unknown:
                 p = _build_parser()
