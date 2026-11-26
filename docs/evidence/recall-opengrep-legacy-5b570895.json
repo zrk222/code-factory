@@ -1,0 +1,84 @@
+{
+  "schema": "factory.recall-shipping-version-replay.v1",
+  "scope": "OpenGrep 1.15.0 legacy runtime on Windows, shipping wrapper arguments; Linux packaged worker CI tracked separately",
+  "candidate_full_hunk_hits": 39,
+  "registered_cases": 161,
+  "verified_source_bindings": 161,
+  "scored_case_artifact_verification_failures": [],
+  "source_binding_mismatches": [],
+  "profile_sha256": "61c47d9b52501cefdb3b41d2ef7c522bd96a1f32582ac6efc70ac8e00e8f3c80",
+  "candidate_rules_sha256": "5b570895afe8bb6a28cb8fa1260def3910c91575123b46f6ac77e39472440991",
+  "baseline_focused_rules_sha256": "075001ace41727c312d4dcc8d9f005a8f9c9b8c0087d9ae9a7349ad0d8ca655d",
+  "baseline_focus_hits": 0,
+  "verified_recovery": 7,
+  "engine": {
+    "executable": "opengrep_windows_x86.exe",
+    "executable_sha256": "3f54f4f5c4cb6d10a513c0e7b1c15d40e45a4363d141d141480f7e9c82dd49c6",
+    "version": "1.15.0"
+  },
+  "validator_version": "registered-readback",
+  "frozen_manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "candidate_raw_score_sha256": "9a1e17ede41b362f5a46315fec29f0f586cd04cd2ae0f5941c2526e9e3a31457",
+  "baseline_focus_raw_score_sha256": "7c82e249d6a93d3c4ea72cfb94b8ff811b5400fa3d928f074776d47d22c2b09f",
+  "registered_outcomes": {
+    "hit": 39,
+    "miss": 116,
+    "timeout": 0,
+    "unknown": 2,
+    "error": 0,
+    "coverage_incomplete": 4
+  },
+  "fixed_side_residuals": 17,
+  "candidate_elapsed_seconds": 939.5551086,
+  "case_rows": [
+    {
+      "advisory": "GHSA-4pj9-g833-qx53",
+      "before": "miss",
+      "after": "hit",
+      "input_sha256": "74fbf4142bb746ae93b77446c8efbe7081d6e3c003d1962e28586f8a8e5f9f1b",
+      "residuals": 0
+    },
+    {
+      "advisory": "GHSA-69p3-xp37-f692",
+      "before": "miss",
+      "after": "hit",
+      "input_sha256": "8c08f0a86bf80441f4369ec4ab2dd5d86dfe118d302419ee1b89711b8722b6c8",
+      "residuals": 0
+    },
+    {
+      "advisory": "GHSA-c5r5-7pfh-6qg6",
+      "before": "miss",
+      "after": "hit",
+      "input_sha256": "8a4925d82bf5bbbd57e9b5804e7b674c8372a9388b4c602fd24d9eaf4c1c0cd9",
+      "residuals": 0
+    },
+    {
+      "advisory": "GHSA-fg4q-ccq8-3r5q",
+      "before": "miss",
+      "after": "hit",
+      "input_sha256": "67faac0f5d4a49119085f242b8e5518ac2edc90592e313828aca9040cad65796",
+      "residuals": 0
+    },
+    {
+      "advisory": "GHSA-r7j3-vvh2-xrpj",
+      "before": "miss",
+      "after": "hit",
+      "input_sha256": "7a652b0cfd3001cde2647a9c0877afd9dd532db13a0893428f6d59ce9905a911",
+      "residuals": 0
+    },
+    {
+      "advisory": "GHSA-rfx3-98h7-v3xp",
+      "before": "miss",
+      "after": "hit",
+      "input_sha256": "e41e97c6e6b3f16b5cd940f1a180c7e358fe887210aeb1bbeb389929a8208d4d",
+      "residuals": 0
+    },
+    {
+      "advisory": "GHSA-rp2v-v467-q9vq",
+      "before": "miss",
+      "after": "hit",
+      "input_sha256": "981389bd03ae5a16150889b59c9ee69b8697a67bddb4b6c4799b7e18f505a46c",
+      "residuals": 0
+    }
+  ]
+}
