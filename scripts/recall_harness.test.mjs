@@ -580,7 +580,7 @@ async function feederFixture(run, row = feederRow) {
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "const incomplete = !old && ruleText.includes('# incomplete');",
-      "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
+      "const devTimeout = old && (ruleText.includes('# persistent-case-timeout') || (ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial'));",
       "const recoveredControl = process.argv.includes('--timeout=15') && process.argv.includes('--jobs=1');",
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !recoveredControl));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
@@ -1449,14 +1449,31 @@ test('a resumed score reuses only exactly matching completed cases', () => feede
   const changed = await scoreManifest(manifest, revised, resumable);
   assert.deepEqual(changed.resumed_cases, []);
   assert.equal(changed.summary.hunk_hits, 0);
-  // A timed-out case is never kept, so a resumed run rescans it.
   const timeouts = join(root, 'retry.yml');
   writeFileSync(timeouts, readFileSync(baseline, 'utf8') + '# retry\n');
   const before = readdirSync(checkpointDir).length;
-  const interruptedByTimeout = await scoreManifest(manifest, timeouts, { ...resumable, jobs: 1 });
-  assert.ok(interruptedByTimeout.cases[0].retried_serially);
-  // Even when the serial retry then finishes, the timed-out pass is not checkpointed.
-  assert.equal(readdirSync(checkpointDir).length, before);
+  const retrySettings = { ...resumable, jobs: 1 };
+  const recovered = await scoreManifest(manifest, timeouts, retrySettings);
+  const [recoveredCase] = recovered.cases;
+  assert.equal(recoveredCase.retried_serially, true);
+  assert.equal(recoveredCase.outcome, 'hit');
+  assert.equal(recoveredCase.initial_scan_sides.old.timeouts, 1);
+  assert.equal(readdirSync(checkpointDir).length, before + 1);
+  const resumedRetry = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.deepEqual(resumedRetry.resumed_cases, [feederRow.ghsa]);
+  assert.deepEqual(resumedRetry.cases, recovered.cases);
+  assert.deepEqual(readdirSync(join(fixture.workdir, resumedRetry.scan_directory)), []);
+  const initialReport = join(fixture.workdir, recoveredCase.initial_captures.old.native_report.path);
+  writeFileSync(initialReport, '{}');
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, recoveredCase), false);
+  const reacquired = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.deepEqual(reacquired.resumed_cases, []);
+  assert.notEqual(reacquired.cases[0].initial_captures.old.native_report.path,
+    recoveredCase.initial_captures.old.native_report.path);
+  writeFileSync(timeouts, readFileSync(baseline, 'utf8') + '# persistent-case-timeout\n');
+  const persistent = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.equal(persistent.cases[0].outcome, 'timeout');
+  assert.equal(readdirSync(checkpointDir).length, before + 1);
 }));
 
 test('checkpoint records are bound to their full input fingerprint', async () => {

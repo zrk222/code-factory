@@ -803,14 +803,27 @@ export function scorerSha256() {
 // are still present in this work directory with the same bytes.
 export function checkpointArtifactsIntact(workdir, row) {
   try {
+    const root = realpathSync(workdir);
+    const attempts = [[row.captures, row.scan_sides]];
+    if (row.retried_serially) attempts.push([row.initial_captures, row.initial_scan_sides]);
     for (const side of ['old', 'fixed']) {
-      const capture = row.captures?.[side];
       const packets = row.source_packets?.[side] ?? [];
-      if (!capture) { if (packets.length) return false; continue; }
-      for (const artifact of [capture.sarif, capture.native_report].filter(Boolean)) {
-        if (sha256(readFileSync(resolve(workdir, artifact.path))) !== artifact.sha256) return false;
+      const checkedSources = new Set();
+      for (const [captures, diagnostics] of attempts) {
+        const capture = captures?.[side];
+        if (!capture) { if (packets.length) return false; continue; }
+        const notes = diagnostics?.[side];
+        if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
+          || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
+        for (const artifact of [capture.sarif, capture.native_report].filter(Boolean)) {
+          if (sha256(readFileSync(reviewCapturePath(root, artifact.path))) !== artifact.sha256) return false;
+        }
+        const source = reviewCapturePath(root, capture.source_root);
+        if (!checkedSources.has(source)) {
+          verifyPreparedBytes(source, packets);
+          checkedSources.add(source);
+        }
       }
-      verifyPreparedBytes(resolve(workdir, capture.source_root), packets);
     }
     return true;
   } catch { return false; }
@@ -845,11 +858,12 @@ async function scorePreparedManifest(manifest, opts, context) {
     }
   };
   const resumed = [];
+  const checkpointInputs = row => ({ schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
+    manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
+    profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
+    engine_args: context.extra, scope: context.scope });
   const checkpointed = async (row, staged) => {
-    const inputs = { schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
-      manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
-      profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
-      engine_args: context.extra, scope: context.scope };
+    const inputs = checkpointInputs(row);
     const saved = readCheckpoint(checkpoints, inputs);
     if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
       resumed.push(row.ghsa);
@@ -882,8 +896,14 @@ async function scorePreparedManifest(manifest, opts, context) {
     retried = true;
     const initial = rows[index];
     const serial = { ...context, scanRoot: join(context.scanRoot, 'serial') };
-    rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
+    const row = manifest.cases[index];
+    const recovered = { ...(await one(row, serial)), retried_serially: true,
       initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
+    rows[index] = recovered;
+    if (checkpoints && checkpointable(recovered) && checkpointArtifactsIntact(context.workdir, recovered)) {
+      await verifyPins('serial case checkpoint');
+      writeCheckpoint(checkpoints, checkpointInputs(row), recovered);
+    }
   }
   if (!checkpoints || retried) await verifyPins('case scoring');
   return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
