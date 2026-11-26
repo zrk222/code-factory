@@ -1,0 +1,236 @@
+{
+ "schema": "factory.recall-fixed-span-trace-review.v1",
+ "scope": "Registered exposed replay, Go/Ruby shell recovery. Q2 not read or used.",
+ "pinned_span_source": {
+  "commit": "1e77f9c800f0efe816b4411ae9b6cb8c914e333d",
+  "path": "docs/evidence/recall-exposed-161-residual-84e99896.json",
+  "field": "earlier_candidate_added_fixed_spans",
+  "fixed_span_labels": "NOT_ADJUDICATED"
+ },
+ "source_binding": {
+  "method": "sha256 of the fixed-revision files in the exposed case packets (harness cases-v4 cache for manifest cases 5f332b15...), compared with each pinned span source_sha256",
+  "GHSA-6g56-v9qg-jp92": {
+   "revisions": {
+    "old": "9cccea26f4f8d988cb4308b8bec9fdbb9ab0afc0",
+    "fixed": "787bae461b23003a4daa4d1d639016a754cf6b00"
+   },
+   "fixed_sha256_matches": true
+  },
+  "GHSA-v222-6mr4-qj29": {
+   "revisions": {
+    "old": "7227a60978cfd4bf5fecc8705a4fc83f536c0d3b",
+    "fixed": "c7ea001a597c7033575342c51483dab7b87ae155"
+   },
+   "fixed_sha256_matches": true
+  }
+ },
+ "span_encoding": "[startColumn, endLine - startLine, endColumn] from the SARIF region (recall_harness regionSpan); span_text is the exact slice.",
+ "trace_limits": [
+  "The pinned evidence carries spans, not SARIF codeFlows, and the archived matcher bytes are not in this branch. Each trace was reconstructed from the digest-verified fixed source and the fix diff, not replayed from the archived candidate.",
+  "The definition of (*SshExecutor).vgName is outside the Go source packet."
+ ],
+ "current_rules": {
+  "rules_sha256": "b2a2800f3b71300f7752ee404bc1c16d6752cf54c6e31219f2174d853dbdf1d6",
+  "engine": "OpenGrep 2.1.0 d6a68a84",
+  "go.parameter-shell-command and ruby.parameter-shell-command on both sides of both cases": "no alerts (both cases are misses)"
+ },
+ "spans": [
+  {
+   "case": "GHSA-6g56-v9qg-jp92",
+   "rule": "go.parameter-shell-command",
+   "path": "executors/sshexec/device.go",
+   "line": 36,
+   "span": [
+    73,
+    0,
+    79
+   ],
+   "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217",
+   "span_text": "device",
+   "statement": "fmt.Sprintf(\"pvcreate --metadatasize=128M --dataalignment=256K '%v'\", device),",
+   "changed_by_fix": true,
+   "reaching_argument": "`device`, a string parameter of exported method (*SshExecutor).DeviceSetup(host, device, vgid); flows into fmt.Sprintf, then the []string literal `commands`.",
+   "receiver_dispatch": "Sink: s.RemoteExecutor.RemoteCommandExecute(host, commands, 5). RemoteExecutor is an interface-typed struct field; dispatch to the concrete SSH executor (remote shell) is not resolvable from this file.",
+   "fixed_revision_guard": "Local: single quotes around %v. They do not escape an embedded quote, so locally the value is still injectable. Upstream: Fix commit adds msg.Validate() at the REST boundary (apps/glusterfs/app_device.go DeviceAdd/DeviceSetState, app_node.go, app_volume.go) with deviceNameRe ^/[a-zA-Z0-9_./-]+$ and 32-hex UUIDs (pkg/glusterfs/api/types.go). That guard is cross-file and upstream of the sink; a pattern-limited intraprocedural rule cannot see it.",
+   "trace_verdict": "LOCAL_FLOW_REAL__GUARDED_CROSS_FILE",
+   "note": "The alert is a sound local flow. Whether it is a fixed-side FP depends on the cross-file validation, which this lane cannot observe.",
+   "label": "NOT_ADJUDICATED"
+  },
+  {
+   "case": "GHSA-6g56-v9qg-jp92",
+   "rule": "go.parameter-shell-command",
+   "path": "executors/sshexec/device.go",
+   "line": 37,
+   "span": [
+    33,
+    0,
+    47
+   ],
+   "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217",
+   "span_text": "s.vgName(vgid)",
+   "statement": "fmt.Sprintf(\"vgcreate %v %v\", s.vgName(vgid), device),",
+   "changed_by_fix": false,
+   "reaching_argument": "The return value of the receiver method s.vgName(vgid), not a parameter. `vgid` is the heketi-generated device id, which requests validate as a 32-hex UUID. The vgName definition is outside the source packet.",
+   "receiver_dispatch": "Span is a method call on the receiver (*SshExecutor).vgName; the matcher treated a receiver-method result over a parameter as attacker text. Sink: s.RemoteExecutor.RemoteCommandExecute(host, commands, 5). RemoteExecutor is an interface-typed struct field; dispatch to the concrete SSH executor (remote shell) is not resolvable from this file.",
+   "fixed_revision_guard": "Fix commit adds msg.Validate() at the REST boundary (apps/glusterfs/app_device.go DeviceAdd/DeviceSetState, app_node.go, app_volume.go) with deviceNameRe ^/[a-zA-Z0-9_./-]+$ and 32-hex UUIDs (pkg/glusterfs/api/types.go). That guard is cross-file and upstream of the sink; a pattern-limited intraprocedural rule cannot see it.",
+   "trace_verdict": "DERIVED_RECEIVER_RESULT__NOT_SHOWN_ATTACKER_CONTROLLED",
+   "note": "The span exists only because the broad group taints any receiver-method result. Attacker control is not shown; this points to an FP.",
+   "label": "NOT_ADJUDICATED"
+  },
+  {
+   "case": "GHSA-6g56-v9qg-jp92",
+   "rule": "go.parameter-shell-command",
+   "path": "executors/sshexec/device.go",
+   "line": 37,
+   "span": [
+    49,
+    0,
+    55
+   ],
+   "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217",
+   "span_text": "device",
+   "statement": "fmt.Sprintf(\"vgcreate %v %v\", s.vgName(vgid), device),",
+   "changed_by_fix": false,
+   "reaching_argument": "`device` parameter of DeviceSetup, unquoted. The fix did not change this line.",
+   "receiver_dispatch": "Sink: s.RemoteExecutor.RemoteCommandExecute(host, commands, 5). RemoteExecutor is an interface-typed struct field; dispatch to the concrete SSH executor (remote shell) is not resolvable from this file.",
+   "fixed_revision_guard": "Local: none. Upstream: Fix commit adds msg.Validate() at the REST boundary (apps/glusterfs/app_device.go DeviceAdd/DeviceSetState, app_node.go, app_volume.go) with deviceNameRe ^/[a-zA-Z0-9_./-]+$ and 32-hex UUIDs (pkg/glusterfs/api/types.go). That guard is cross-file and upstream of the sink; a pattern-limited intraprocedural rule cannot see it.",
+   "trace_verdict": "LOCAL_FLOW_REAL__GUARDED_CROSS_FILE",
+   "note": "Unchanged context line; identical on the old side.",
+   "label": "NOT_ADJUDICATED"
+  },
+  {
+   "case": "GHSA-6g56-v9qg-jp92",
+   "rule": "go.parameter-shell-command",
+   "path": "executors/sshexec/device.go",
+   "line": 67,
+   "span": [
+    30,
+    0,
+    44
+   ],
+   "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217",
+   "span_text": "s.vgName(vgid)",
+   "statement": "fmt.Sprintf(\"vgremove %v\", s.vgName(vgid)),",
+   "changed_by_fix": false,
+   "reaching_argument": "Return value of receiver method s.vgName(vgid) inside (*SshExecutor).DeviceTeardown(host, device, vgid).",
+   "receiver_dispatch": "Receiver-method result, as at line 37. Sink: s.RemoteExecutor.RemoteCommandExecute(host, commands, 5). RemoteExecutor is an interface-typed struct field; dispatch to the concrete SSH executor (remote shell) is not resolvable from this file.",
+   "fixed_revision_guard": "Fix commit adds msg.Validate() at the REST boundary (apps/glusterfs/app_device.go DeviceAdd/DeviceSetState, app_node.go, app_volume.go) with deviceNameRe ^/[a-zA-Z0-9_./-]+$ and 32-hex UUIDs (pkg/glusterfs/api/types.go). That guard is cross-file and upstream of the sink; a pattern-limited intraprocedural rule cannot see it.",
+   "trace_verdict": "DERIVED_RECEIVER_RESULT__NOT_SHOWN_ATTACKER_CONTROLLED",
+   "note": "Same matcher artifact as line 37 span [33,0,47].",
+   "label": "NOT_ADJUDICATED"
+  },
+  {
+   "case": "GHSA-6g56-v9qg-jp92",
+   "rule": "go.parameter-shell-command",
+   "path": "executors/sshexec/device.go",
+   "line": 68,
+   "span": [
+    32,
+    0,
+    38
+   ],
+   "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217",
+   "span_text": "device",
+   "statement": "fmt.Sprintf(\"pvremove '%v'\", device),",
+   "changed_by_fix": true,
+   "reaching_argument": "`device` parameter of exported DeviceTeardown.",
+   "receiver_dispatch": "Sink: s.RemoteExecutor.RemoteCommandExecute(host, commands, 5). RemoteExecutor is an interface-typed struct field; dispatch to the concrete SSH executor (remote shell) is not resolvable from this file.",
+   "fixed_revision_guard": "Local: single quotes only. Upstream: Fix commit adds msg.Validate() at the REST boundary (apps/glusterfs/app_device.go DeviceAdd/DeviceSetState, app_node.go, app_volume.go) with deviceNameRe ^/[a-zA-Z0-9_./-]+$ and 32-hex UUIDs (pkg/glusterfs/api/types.go). That guard is cross-file and upstream of the sink; a pattern-limited intraprocedural rule cannot see it.",
+   "trace_verdict": "LOCAL_FLOW_REAL__GUARDED_CROSS_FILE",
+   "note": "As line 36.",
+   "label": "NOT_ADJUDICATED"
+  },
+  {
+   "case": "GHSA-v222-6mr4-qj29",
+   "rule": "ruby.parameter-shell-command",
+   "path": "lib/asciidoctor/include_ext/include_processor.rb",
+   "line": 117,
+   "span": [
+    20,
+    0,
+    24
+   ],
+   "source_sha256": "743dd76246e5a94a69759eaba9107414e76ede4bce785a0a20d5d2055f8e7ec3",
+   "span_text": "path",
+   "statement": "IO.foreach(path).select.with_index(1, &selector)",
+   "changed_by_fix": true,
+   "reaching_argument": "`path`, a parameter of protected method read_lines(path, selector). The fix only renamed it from `filename`.",
+   "receiver_dispatch": "Constant receiver IO, class method foreach. A String argument beginning with \"|\" spawns a subprocess (Ruby < 4.0; deprecated in 3.3). The receiver resolves statically; this is not dynamic dispatch.",
+   "fixed_revision_guard": "Same-file caller: process() passes path = resolve_target_path(target, reader). At the fixed revision that returns target only when target_http?(target) (downcased http:// or https:// prefix and URI.parse is URI::HTTP), otherwise reader.document.normalize_system_path(target, reader.dir, ...) kept only if ::File.file?(path). Neither value can begin with '|'. The guard is interprocedural (process -> resolve_target_path -> read_lines), outside a local matcher.",
+   "trace_verdict": "COMMAND_CAPABLE_SINK__GUARDED_IN_SAME_FILE_CALLER",
+   "note": "The old side has the same call (renamed argument), so any local matcher hits both sides equally. The fix is in target_http?/resolve_target_path.",
+   "label": "NOT_ADJUDICATED"
+  },
+  {
+   "case": "GHSA-v222-6mr4-qj29",
+   "rule": "ruby.parameter-shell-command",
+   "path": "lib/asciidoctor/include_ext/include_processor.rb",
+   "line": 119,
+   "span": [
+    18,
+    0,
+    22
+   ],
+   "source_sha256": "743dd76246e5a94a69759eaba9107414e76ede4bce785a0a20d5d2055f8e7ec3",
+   "span_text": "path",
+   "statement": "URI.open(path, &:read)",
+   "changed_by_fix": true,
+   "reaching_argument": "`path` parameter of read_lines (renamed from `filename`).",
+   "receiver_dispatch": "Constant receiver URI (open-uri). For a String that is not an http/https/ftp URI, URI.open falls back to Kernel#open, where \"|cmd\" runs a command. The receiver resolves statically.",
+   "fixed_revision_guard": "Same-file caller: process() passes path = resolve_target_path(target, reader). At the fixed revision that returns target only when target_http?(target) (downcased http:// or https:// prefix and URI.parse is URI::HTTP), otherwise reader.document.normalize_system_path(target, reader.dir, ...) kept only if ::File.file?(path). Neither value can begin with '|'. The guard is interprocedural (process -> resolve_target_path -> read_lines), outside a local matcher.",
+   "trace_verdict": "COMMAND_CAPABLE_SINK__GUARDED_IN_SAME_FILE_CALLER",
+   "note": "As line 117.",
+   "label": "NOT_ADJUDICATED"
+  }
+ ],
+ "summary": {
+  "spans": 7,
+  "adjudicated": 0,
+  "LOCAL_FLOW_REAL__GUARDED_CROSS_FILE": 3,
+  "DERIVED_RECEIVER_RESULT__NOT_SHOWN_ATTACKER_CONTROLLED": 2,
+  "COMMAND_CAPABLE_SINK__GUARDED_IN_SAME_FILE_CALLER": 2
+ },
+ "decision": "NO_REPLACEMENT_IMPLEMENTED",
+ "reasons": [
+  "In both cases the fix is upstream of the sink. GHSA-6g56 adds cross-file API validation, and its quoting alone is insufficient. GHSA-v222 narrows the same-file caller with target_http? and path normalization. The sink lines are identical or renamed on both sides.",
+  "Any parameter-to-sink matcher that hits the old-side hunk therefore also emits the same fixed-side spans (5 Go, 2 Ruby). Treating the Go single quotes as a sanitizer would be unprincipled.",
+  "Fixed-side check on the current exposed pair (baseline 8cd65488 -> candidate b2a2800f, OpenGrep 2.1.0): residuals 17/39 hits -> 18/40. The unchanged limit allows a per-hit rate of at most 17/39 x 1.1 = 0.4795. Recovering both cases (+2 hits) with all 7 spans gives 25/42 = 0.595. Dropping the 2 receiver-result spans still gives 23/42 = 0.548. No replacement within the existing names and thresholds passes the fixed-side check.",
+  "The two s.vgName(vgid) spans come from tainting receiver-method results. A replacement must drop that, whatever the cohort shows."
+ ],
+ "proposal": [
+  {
+   "id": "ruby-pipe-open-interprocedural",
+   "lane": "native (CodeQL or OpenGrep interfile/taint with same-file function summaries)",
+   "shape": "Source: the include target parameter of an Asciidoctor IncludeProcessor#process (or any public method parameter). Sink: the first argument of IO.foreach/IO.read/IO.readlines/URI.open/Kernel#open/open with a statically resolved constant receiver. Sanitizers: a dominating http(s)-only URI check, or normalize_system_path plus File.file?, in the caller chain.",
+   "expected": "Hits the old-side read_lines calls through the uriish? bypass; clears the fixed side through target_http?. Not expressible as a pattern-limited local rule."
+  },
+  {
+   "id": "go-shell-argument-local",
+   "lane": "pattern-limited, review tier only if added",
+   "shape": "Taint exported-method string parameters into fmt.Sprintf arguments that reach a []string or string passed to a method whose name matches *Command*Execute*/Exec*/Run* on any receiver. Do not taint receiver-method return values (s.vgName(vgid)). Treat no quoting as a sanitizer.",
+   "expected": "Would keep the 3 `device` fixed-side spans (guarded cross-file) and drop the 2 vgName spans. It cannot pass the unchanged fixed-side limit on this pair, so it is not implemented."
+  }
+ ],
+ "keep_visible": "All 7 spans stay NOT_ADJUDICATED. They need blinded span review before any loss or gain accounting.",
+ "fixed_side_arithmetic": {
+  "baseline": {
+   "residual": 17,
+   "hunk_hits": 39
+  },
+  "candidate": {
+   "residual": 18,
+   "hunk_hits": 40
+  },
+  "limit_rate": 0.4795,
+  "with_all_7_spans": {
+   "residual": 25,
+   "hunk_hits": 42,
+   "rate": 0.5952
+  },
+  "without_receiver_result_spans": {
+   "residual": 23,
+   "hunk_hits": 42,
+   "rate": 0.5476
+  }
+ }
+}
