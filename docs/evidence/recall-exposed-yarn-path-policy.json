@@ -1,0 +1,349 @@
+{
+  "schema": "factory.exposed-yarn-scope-recovery.v1",
+  "scope": "Single previously exposed case and source-pin restoration",
+  "harness_commit": "cc73075ce8eb3188ca63f650632edfcb3d2e1360",
+  "upstream_evidence_commit": "844912c817c3b022e6df3f3e9c336951a384eddc",
+  "case": "GHSA-g4wm-2vf7-vfgr",
+  "manifest_sha256": "f145abdf9615eb13e70de16f0ae18b18fcefbc6f1b773d433d71ae42831d7db6",
+  "manifest_cases_sha256": "92f42109f2c9d4a7dd686830f6396ad00d8ed7f10ed2ed5985c8779519f9b225",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "engine_args": [
+    "--timeout=15",
+    "--jobs=1"
+  ],
+  "scanner_path_policy": "opengrep-2.1.0-target-inventory-v1",
+  "fixed_old_revisions": {
+    "old": "c427fbad33f1f2b11341f1cf852eedecbb106400",
+    "fixed": "98864c678444d9336357c844efa4fd5a7984c0d7"
+  },
+  "arms": [
+    {
+      "arm": "baseline",
+      "ruleset_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+      "outcome": "hit",
+      "timeouts": 0,
+      "fixed_side_alerts": 0,
+      "target_inventory_sha256": "92e0c611085596b1c8a0437711d77cd5ee7761134f8fc1b708df28c93c08cfcc",
+      "score_sha256": "b0246d9648c0ac656b0ae88f388089f8fa674a8803d4f2221810c554cd225209"
+    },
+    {
+      "arm": "candidate",
+      "ruleset_sha256": "1c60974c1a0e1df8684af83c2928b720d96b7dfe67116a9c38feaa63ef3496c1",
+      "outcome": "miss",
+      "timeouts": 0,
+      "fixed_side_alerts": 0,
+      "target_inventory_sha256": "92e0c611085596b1c8a0437711d77cd5ee7761134f8fc1b708df28c93c08cfcc",
+      "score_sha256": "f09ab2950def5e3d3e6b935b63be53586749ff764306faea18695e2d4d156d30"
+    }
+  ],
+  "excluded_packet": {
+    "path": ".yarn/releases/yarn-4.14.1.cjs",
+    "submitted": true,
+    "bytes": 3005868,
+    "sha256": "5c7a0c5ea1c5b690df603c8e16b3742f87169b814d56bb5e63881145e8a84033",
+    "state": "excluded",
+    "reason": "scanner_path_policy",
+    "policy": "engine_target_ignore"
+  },
+  "size_only_compare": "coverage_incomplete",
+  "exact_review": {
+    "source_sha256": "958a04c6be2e08ea7ef6af6227781ff6b6190c26014adc58f7a640e099e1e2b3",
+    "matched_fp_spans": 4,
+    "independence": "AI reviewers; unanimous FP on every span, so no judge was needed; independence from AI is unestablished"
+  },
+  "raw_hit_loss_preserved": true,
+  "full_cohort_qualification": "PENDING",
+  "restored_source_pins": [
+    {
+      "control": "composer_composer",
+      "commit": "edc2b0dbc63b9fad29b0b72311fe7247ffae33e1",
+      "git_tree": "23e0c31eef23e22593ab89cbc9896898cfc5c895",
+      "tree_sha256": "3d4722d12e8e741c75fb3b8227176e243d74cc82b9e0c38b1035dc8d278017ec",
+      "entries": 1151
+    },
+    {
+      "control": "getgrav_grav",
+      "commit": "491762339c32b2c653358067b946ce19861c4b70",
+      "git_tree": "3f1bd60ad28f2f08e3707d9332e74fd9827ef04b",
+      "tree_sha256": "b92bcf2b4cd0efe1290435df8a6982e38aed8785182ce1acbc2b2ae1728598d1",
+      "entries": 1353
+    },
+    {
+      "control": "gohugoio_hugo",
+      "commit": "61e3122e370bb0aac204d90c4a69d3c936a8709c",
+      "git_tree": "7478d35a8deb12d79ae05c68f44560cec6ad1f57",
+      "tree_sha256": "8ddd8cea09c810d2fd9e47c4907f6a1b8d16b49e5485a501aca5bf74faba375d",
+      "entries": 2619
+    },
+    {
+      "control": "laravel_framework",
+      "commit": "817f2fc80be4c95f59f7c7f0e696ae1383899fdb",
+      "git_tree": "c3506ea460ddf14558b0a4053e57d25144192751",
+      "tree_sha256": "fc09874aa4d1c3bef971ffe7b01ea98cb6b792e13da62affff3f36278b9cbd99",
+      "entries": 3528
+    },
+    {
+      "control": "mozilla_pdf.js",
+      "commit": "32fb05b3b7216a9d9f496284392f04a5601266fb",
+      "git_tree": "992cb9e448d2c9886450595be063471db7180b8b",
+      "tree_sha256": "a054c4d3cd1ea43460dc58bed82f13f39de4448584b5d6ceb1124bf3e0a1e834",
+      "entries": 2754
+    },
+    {
+      "control": "rubygems_rubygems",
+      "commit": "a7de0cda3142f789a3c84ad85602df13cf3cc931",
+      "git_tree": "c69f49a1efd50c2a5659a7accf406f75c2122ef0",
+      "tree_sha256": "3cc49f9f3b4189255d351709ddd0b15fc1c68427fc8f3a33b6be4d6308eabbfb",
+      "entries": 2123
+    },
+    {
+      "control": "sveltejs_kit",
+      "commit": "efced484bbbd3fbbf0419b9117fef3474118d241",
+      "git_tree": "4ed582e878b6f311e090f5d0a3132dc70d9a7816",
+      "tree_sha256": "ec932fea1cc1dab900465dc4079029891886566acff5d4ce1377b279c031bf47",
+      "entries": 3302
+    }
+  ],
+  "historical_controls": {
+    "verified_source_trees": 17,
+    "total": 18,
+    "open_control": "ctl-mastodon"
+  },
+  "declared_control_scope": {
+    "directory_exclusions": [
+      "build",
+      "test"
+    ],
+    "listed_exact_exclusions": 105,
+    "exact_exclusions_with_verified_source": 101,
+    "source_locator_sha256": "3d503c72e1ecfbe6f84a5a5d2a5f22d0555475afe5a9d8c636d6e3ab2bc9103e",
+    "local_plan_sha256": "e89da9f1f7a226175541277201b0311069b3a23dd0695718cbf2aea63cf32fc0",
+    "repository_exclusions": [
+      {
+        "control": "ZJONSSON_node-unzipper",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "apache_commons-compress",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "caddyserver_caddy",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "composer_composer",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "cthackers_adm-zip",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "expressjs_express",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "getgrav_grav",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "gohugoio_hugo",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "jekyll_jekyll",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "jquery_jquery",
+        "exact_paths": [
+          "dist/wrappers/jquery.bundler-require-wrapper.js",
+          "dist/wrappers/jquery.bundler-require-wrapper.slim.js"
+        ],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "laravel_framework",
+        "exact_paths": [
+          "src/Illuminate/Foundation/resources/exceptions/renderer/dist/scripts.js"
+        ],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "markedjs_marked",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "mozilla_pdf.js",
+        "exact_paths": [
+          "docs/contents/js/bootstrap.min.js",
+          "docs/contents/js/jquery-3.7.1.min.js",
+          "external/dist/legacy/web/pdf_viewer.d.mts",
+          "external/dist/web/pdf_viewer.d.mts",
+          "external/dist/webpack.mjs",
+          "external/jbig2/jbig2_nowasm_fallback.js"
+        ],
+        "declared_timeout_seconds": 30,
+        "staged_source_verified": true
+      },
+      {
+        "control": "phpbb_phpbb",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "rubygems_rubygems",
+        "exact_paths": [
+          "lib/bundler/vendor/fileutils/lib/fileutils.rb",
+          "lib/bundler/vendor/thor/lib/thor.rb",
+          "lib/bundler/vendor/thor/lib/thor/actions.rb",
+          "lib/bundler/vendor/thor/lib/thor/actions/create_file.rb",
+          "lib/bundler/vendor/thor/lib/thor/actions/create_link.rb",
+          "lib/bundler/vendor/thor/lib/thor/actions/directory.rb",
+          "lib/bundler/vendor/thor/lib/thor/actions/empty_directory.rb",
+          "lib/bundler/vendor/thor/lib/thor/actions/file_manipulation.rb",
+          "lib/bundler/vendor/thor/lib/thor/actions/inject_into_file.rb",
+          "lib/bundler/vendor/thor/lib/thor/base.rb",
+          "lib/bundler/vendor/thor/lib/thor/command.rb",
+          "lib/bundler/vendor/thor/lib/thor/core_ext/hash_with_indifferent_access.rb",
+          "lib/bundler/vendor/thor/lib/thor/error.rb",
+          "lib/bundler/vendor/thor/lib/thor/group.rb",
+          "lib/bundler/vendor/thor/lib/thor/invocation.rb",
+          "lib/bundler/vendor/thor/lib/thor/line_editor.rb",
+          "lib/bundler/vendor/thor/lib/thor/line_editor/basic.rb",
+          "lib/bundler/vendor/thor/lib/thor/line_editor/readline.rb",
+          "lib/bundler/vendor/thor/lib/thor/nested_context.rb",
+          "lib/bundler/vendor/thor/lib/thor/parser.rb",
+          "lib/bundler/vendor/thor/lib/thor/parser/argument.rb",
+          "lib/bundler/vendor/thor/lib/thor/parser/arguments.rb",
+          "lib/bundler/vendor/thor/lib/thor/parser/option.rb",
+          "lib/bundler/vendor/thor/lib/thor/parser/options.rb",
+          "lib/bundler/vendor/thor/lib/thor/rake_compat.rb",
+          "lib/bundler/vendor/thor/lib/thor/runner.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell/basic.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell/color.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell/column_printer.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell/html.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell/table_printer.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell/terminal.rb",
+          "lib/bundler/vendor/thor/lib/thor/shell/wrapped_printer.rb",
+          "lib/bundler/vendor/thor/lib/thor/util.rb",
+          "lib/bundler/vendor/thor/lib/thor/version.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/exceptions.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/generic_request.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/header.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/proxy_delta.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/request.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/requests.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/response.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/responses.rb",
+          "lib/rubygems/vendor/net-http/lib/net/http/status.rb",
+          "lib/rubygems/vendor/net-http/lib/net/https.rb",
+          "lib/rubygems/vendor/net-protocol/lib/net/protocol.rb",
+          "lib/rubygems/vendor/optparse/lib/optionparser.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse/ac.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse/date.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse/kwargs.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse/shellwords.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse/time.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse/uri.rb",
+          "lib/rubygems/vendor/optparse/lib/optparse/version.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/assignment.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/basic_package_source.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/failure_writer.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/incompatibility.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/package.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/partial_solution.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/rubygems.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/solve_failure.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/static_package_source.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/strategy.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/term.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/version.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_constraint.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_range.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_solver.rb",
+          "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_union.rb",
+          "lib/rubygems/vendor/securerandom/lib/securerandom.rb",
+          "lib/rubygems/vendor/timeout/lib/timeout.rb",
+          "lib/rubygems/vendor/tsort/lib/tsort.rb",
+          "lib/rubygems/vendor/uri/lib/uri.rb",
+          "lib/rubygems/vendor/uri/lib/uri/common.rb",
+          "lib/rubygems/vendor/uri/lib/uri/file.rb",
+          "lib/rubygems/vendor/uri/lib/uri/ftp.rb",
+          "lib/rubygems/vendor/uri/lib/uri/generic.rb",
+          "lib/rubygems/vendor/uri/lib/uri/http.rb",
+          "lib/rubygems/vendor/uri/lib/uri/https.rb",
+          "lib/rubygems/vendor/uri/lib/uri/ldap.rb",
+          "lib/rubygems/vendor/uri/lib/uri/ldaps.rb",
+          "lib/rubygems/vendor/uri/lib/uri/mailto.rb",
+          "lib/rubygems/vendor/uri/lib/uri/rfc2396_parser.rb",
+          "lib/rubygems/vendor/uri/lib/uri/rfc3986_parser.rb",
+          "lib/rubygems/vendor/uri/lib/uri/version.rb",
+          "lib/rubygems/vendor/uri/lib/uri/ws.rb",
+          "lib/rubygems/vendor/uri/lib/uri/wss.rb"
+        ],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "spring-projects_spring-petclinic",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "sveltejs_kit",
+        "exact_paths": [],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": true
+      },
+      {
+        "control": "ctl-mastodon",
+        "exact_paths": [
+          "app/models/generated_annual_report.rb",
+          "db/migrate/20240111033014_create_generated_annual_reports.rb",
+          "db/migrate/20251202140424_add_share_key_to_generated_annual_reports.rb",
+          "db/migrate/20260805130216_fix_generated_annual_reports_foreign_key.rb"
+        ],
+        "declared_timeout_seconds": null,
+        "staged_source_verified": false
+      }
+    ],
+    "verified_exclusion_file_sha256": "8899b61b681a6566cce64a2583e9b53f9310272949d50b1b724607d3b2e548df",
+    "verified_exclusion_file_bindings": 101
+  }
+}
