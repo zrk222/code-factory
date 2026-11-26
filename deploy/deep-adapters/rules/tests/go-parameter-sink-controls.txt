@@ -3,6 +3,7 @@ package controls
 import (
 	"database/sql"
 	"fmt"
+	"github.com/huandu/go-sqlbuilder"
 	"gorm.io/gorm/clause"
 	"os/exec"
 )
@@ -55,4 +56,27 @@ func FindInStore(store *sql.DB, name string) (*sql.Rows, error) {
 func FindInStoreBound(store *sql.DB, name string) (*sql.Rows, error) {
 	// ok: go.parameter-sql-text
 	return store.Query("SELECT * FROM users WHERE name = $1", name)
+}
+
+type sqlProjectionSettings struct { column string }
+
+func (s sqlProjectionSettings) rawProjection() (string, []interface{}) {
+	builder := sqlbuilder.NewSelectBuilder()
+	// ruleid: go.parameter-sql-text
+	builder.Select(fmt.Sprintf("TRIM('%s')", sqlbuilder.Escape(s.column)))
+	return builder.Build()
+}
+
+func (s sqlProjectionSettings) boundProjection() (string, []interface{}) {
+	builder := sqlbuilder.NewSelectBuilder()
+	// ok: go.parameter-sql-text
+	builder.Select(fmt.Sprintf("TRIM(%s)", builder.Var(s.column)))
+	return builder.Build()
+}
+
+func constantProjection() (string, []interface{}) {
+	builder := sqlbuilder.NewSelectBuilder()
+	// ok: go.parameter-sql-text
+	builder.Select(fmt.Sprintf("TRIM('%s')", sqlbuilder.Escape("fixed")))
+	return builder.Build()
 }

@@ -4114,7 +4114,7 @@ rules:
       cwe: ["CWE-89"]
       scope: Function parameters to query/fetch/exec SQL text in the same function; bound parameter arrays are not sinks.
   - id: go.parameter-sql-text
-    message: A function parameter is formatted into SQL text; pass it as a query argument with a placeholder instead.
+    message: Dynamic text reaches a raw SQL expression; use a bound query argument or an allowlisted SQL identifier.
     severity: INFO
     languages: [go]
     mode: taint
@@ -4123,6 +4123,43 @@ rules:
           - pattern-inside: func $F(..., $P $T, ...) { ... }
           - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
+      # Escape protects builder placeholders; the formatted SQL still contains the input.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: fmt.Sprintf("$FORMAT", sqlbuilder.Escape($V))
+                  - pattern-inside: |
+                      import "github.com/huandu/go-sqlbuilder"
+                      ...
+                  - pattern-not-inside: func $F(..., sqlbuilder $T, ...) $RET { ... }
+                  - pattern-not-inside: func ($R $T) $F(..., sqlbuilder $S, ...) $RET { ... }
+                  - pattern-not-inside: |
+                      sqlbuilder := $LOCAL
+                      ...
+                  - pattern-not-inside: |
+                      var sqlbuilder = $LOCAL
+                      ...
+              - patterns:
+                  - pattern: fmt.Sprintf("$FORMAT", $PKG.Escape($V))
+                  - pattern-inside: |
+                      import $PKG "github.com/huandu/go-sqlbuilder"
+                      ...
+                  - pattern-not-inside: func $F(..., $PKG $T, ...) $RET { ... }
+                  - pattern-not-inside: func ($R $T) $F(..., $PKG $S, ...) $RET { ... }
+                  - pattern-not-inside: |
+                      $PKG := $LOCAL
+                      ...
+                  - pattern-not-inside: |
+                      var $PKG = $LOCAL
+                      ...
+          - metavariable-regex: {metavariable: $FORMAT, regex: "(?s).*'%s'.*"}
+          - metavariable-pattern:
+              metavariable: $V
+              patterns:
+                - pattern: $VALUE
+                - pattern-not: '"..."'
+        exact: true
+        label: BUILDER_PLACEHOLDER_ESCAPED
     pattern-sanitizers:
       - pattern: strconv.Itoa(...)
       - pattern: strconv.FormatInt(...)
@@ -4135,6 +4172,34 @@ rules:
           # Validation, allow-list and quoting helpers return a value the caller has vetted.
           - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(valid|sanitiz|escape|quote|allow|whitelist)\w*$'}
     pattern-sinks:
+      # Select receives SQL expressions from this builder's own constructor.
+      - patterns:
+          - pattern: $B.Select(..., $Q, ...)
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/huandu/go-sqlbuilder"
+                      ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := sqlbuilder.NewSelectBuilder()
+                          ...
+                      - pattern-inside: |
+                          $B := sqlbuilder.$DIALECT.NewSelectBuilder()
+                          ...
+              - patterns:
+                  - pattern-inside: |
+                      import $PKG "github.com/huandu/go-sqlbuilder"
+                      ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := $PKG.NewSelectBuilder()
+                          ...
+                      - pattern-inside: |
+                          $B := $PKG.$DIALECT.NewSelectBuilder()
+                          ...
+          - focus-metavariable: $Q
+        requires: BUILDER_PLACEHOLDER_ESCAPED
       - patterns:
           - pattern-either:
               - pattern: $DB.Query($Q, ...)
