@@ -143,6 +143,41 @@ test('CodeQL uses the same source-root resolution for indexed endpoints and trac
   assert.throws(review, /Invalid native source path/);
 });
 
+test('cross-file evidence requires one ordered, archive-verified thread to the reported sink', t => {
+  const { root, value, json, run } = stagedPair(t);
+  const pair = value.cases[0];
+  const position = (uri, startLine = 1) => ({ physicalLocation: { artifactLocation: { uri }, region: { startLine } } });
+  const finding = (...threads) => ({ ruleId: pair.query_id, locations: [position('helper.py')],
+    codeFlows: [{ threadFlows: threads.map(thread => ({ locations: thread.map(location => ({ location })) })) }] });
+  const captured = (side, results) => {
+    const capture = pair[side];
+    const report = JSON.parse(readFileSync(join(root, capture.sarif.path), 'utf8'));
+    const binding = JSON.parse(readFileSync(join(root, capture.observation.path), 'utf8'));
+    report.runs[0].results = results;
+    const sarif = json(side + '.cross-file.sarif', report);
+    const observation = json(side + '.cross-file.json', { ...binding, native_sha256: sarif.sha256,
+      reported_alerts: results.length });
+    return { ...capture, sarif, observation };
+  };
+  const score = (old, fixed = []) => run({ ...value, cases: [{ ...pair,
+    old: captured('old', [old]), fixed: captured('fixed', fixed) }] });
+  const anchor = position('sample.py');
+  const sink = position('helper.py');
+  const receipt = score(finding([anchor, sink]));
+  assert.equal(receipt.strict_hunk_hits, 0);
+  assert.equal(receipt.changed_file_hits, 0);
+  assert.equal(receipt.cross_file_trace_hits, 1);
+  assert.deepEqual(receipt.cases[0].cross_file_trace_matches, [{
+    rule: pair.query_id, sink: { path: 'helper.py', line: 1 }, anchor: { path: 'sample.py', line: 1 },
+    source_paths: ['helper.py', 'sample.py'], fixed_sink_residual: false,
+  }]);
+  assert.equal(score(finding([anchor, sink]), [finding()]).cases[0].cross_file_trace_matches[0].fixed_sink_residual, true);
+  for (const trace of [finding([anchor], [sink]), finding([sink, anchor]),
+    finding([position('sample.py', 2), sink]), finding([anchor, position('missing.py'), sink])]) {
+    assert.equal(score(trace).cross_file_trace_hits, 0);
+  }
+});
+
 test('native and pattern hits join only on identical evidence and are counted once', t => {
   const { root, row, value, binding, json, run } = stagedPair(t);
   const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false, hunk_findings: [],

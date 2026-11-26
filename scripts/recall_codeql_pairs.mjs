@@ -227,7 +227,7 @@ function nativeCapture(root, capture, side, input, engineVersion, policy) {
   const flows = traceFlows(run.results, resolvePath);
   const references = [...new Set([...findings.map(row => row.path),
     ...flows.flat(3).map(step => step.path).filter(Boolean)])].sort();
-  return { findings, fingerprints: captureFingerprints(capture, input.revisions[side], policy, packets, findings, flows),
+  return { findings, flows, fingerprints: captureFingerprints(capture, input.revisions[side], policy, packets, findings, flows),
     archive: { archive: boundPath(root, capture.archive), sha256: capture.archive.sha256,
       prefix: capture.archive_prefix, packets, references, side: input.ghsa + '/' + side } };
 }
@@ -317,6 +317,29 @@ function readPairRegistry(root, bundle) {
   return { manifest, manifestDigest, reference, cases, referenceCases };
 }
 
+function crossFileTraceMatches(old, fixed, hunks, families, rules) {
+  const sinkKey = ({ rule, path }) => JSON.stringify([rule, path]);
+  const fixedSinks = new Set(fixed.findings.map(sinkKey));
+  const matches = [];
+  for (const [index, finding] of old.findings.entries()) {
+    const { rule, path, line } = finding;
+    if (Object.hasOwn(hunks, path) || !rules[rule]?.some(family => families.includes(family))) continue;
+    for (const thread of old.flows[index].flat()) {
+      const steps = thread.filter(step => step.state !== 'nonphysical');
+      const sink = steps.at(-1);
+      if (sink?.path !== path || sink.line !== line || steps.some(step => step.state)) continue;
+      const anchor = steps.slice(0, -1).find(step => Object.hasOwn(hunks, step.path)
+        && hunks[step.path].old.includes(step.line));
+      if (anchor) {
+        matches.push({ rule, sink: { path, line }, anchor,
+          source_paths: [...new Set(steps.map(step => step.path))].sort(),
+          fixed_sink_residual: fixedSinks.has(sinkKey(finding)) });
+      }
+    }
+  }
+  return matches;
+}
+
 function scorePreparedPair(row, { root, cases, referenceCases, policies, engineVersion, archives }) {
   const registered = cases.get(row.advisory);
   const before = referenceCases.get(row.advisory);
@@ -346,13 +369,14 @@ function scorePreparedPair(row, { root, cases, referenceCases, policies, engineV
   artifact(root, { path: join(preparedDir, 'changes.z'), sha256: input.changed_files_sha256 });
   const editedLines = {};
   const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(registered.ecosystem), editedLines);
-  const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings,
-    rules: Object.fromEntries(policy.queries.map(query => [query.id, query.families])) });
+  const rules = Object.fromEntries(policy.queries.map(query => [query.id, query.families]));
+  const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings, rules });
   return { advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
     ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }), hunk_hit: score.hunk_hit,
     file_hit: score.file_hit,
     trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
     hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
+    cross_file_trace_matches: crossFileTraceMatches(old, fixed, hunks, families, rules),
     deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
     native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
     fingerprints: { old: old.fingerprints, fixed: fixed.fingerprints },
@@ -376,6 +400,10 @@ function bindTraceSources(observations, bindings) {
       for (const source of sources) states[source.state] = (states[source.state] ?? 0) + 1;
       Object.assign(row.fingerprints[side], { trace_sources_sha256: caseDigest(sources), trace_source_states: states });
     }
+    const oldSources = new Map(bindings[row.advisory + '/old'].map(source => [source.path, source.state]));
+    row.cross_file_trace_matches = row.cross_file_trace_matches.filter(match =>
+      oldSources.get(match.anchor.path) === 'packet_verified' && match.source_paths.every(path =>
+        ['packet_verified', 'archive_verified'].includes(oldSources.get(path))));
   }
 }
 
@@ -418,6 +446,7 @@ export function scoreCodeqlPairs(bundlePath, patternPin = null) {
     reference_sha256: bundle.reference.sha256, registered_cases: cases.size, reference_hunk_hits: reference.candidate.hunk_hits,
     scored_pairs: observations.length, strict_hunk_hits: observations.filter(row => row.hunk_hit).length,
     changed_file_hits: observations.filter(row => row.file_hit).length,
+    cross_file_trace_hits: observations.filter(row => row.cross_file_trace_matches.length > 0).length,
     strict_hits_on_reference_misses: observations.filter(row => row.reference === 'miss' && row.hunk_hit).length,
     deleted_line_hits: observations.filter(row => row.deleted_line_hit).length,
     fixed_hunk_residuals: observations.reduce((sum, row) => sum + row.fixed_hunk_residuals, 0), cases: observations };
