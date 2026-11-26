@@ -864,27 +864,60 @@ NO_NETWORK = ("no_network_clients", r"\b(requests|urllib3|httpx)\b")
 SSAT_SCOPE_MAX_LINES = 200
 
 
-def ssat_module(name: str, path: str, imports: list[str], functions: list[tuple[str, list[str], str, str]]) -> dict:
+def ssat_module(
+    name: str,
+    path: str,
+    imports: list[str],
+    functions: list[tuple[str, list[str], str, str]],
+) -> dict:
     """One SSAT module; functions are (name, args, returns, doc)."""
-    return {"name": name, "path": path, "imports": imports,
-            "functions": [{"name": f, "args": args, "returns": ret, "doc": doc} for f, args, ret, doc in functions]}
+    return {
+        "name": name,
+        "path": path,
+        "imports": imports,
+        "functions": [
+            {"name": f, "args": args, "returns": ret, "doc": doc}
+            for f, args, ret, doc in functions
+        ],
+    }
 
 
 def ssat_yaml(name: str, modules: list[dict], invariants: list[tuple[str, str]]) -> str:
     """Serialise an SSAT ForgeLine can parse: every invariant is scoped to every declared function."""
     import yaml
 
-    scopes = [{"module": module["name"], "symbol": function["name"], "max_lines": SSAT_SCOPE_MAX_LINES}
-              for module in modules for function in module["functions"]]
-    document = {"name": name, "modules": modules, "dependencies": [],
-                "invariants": [{"name": rule, "forbid_pattern": pattern, "scopes": [dict(scope) for scope in scopes]}
-                               for rule, pattern in invariants]}
+    scopes = [
+        {
+            "module": module["name"],
+            "symbol": function["name"],
+            "max_lines": SSAT_SCOPE_MAX_LINES,
+        }
+        for module in modules
+        for function in module["functions"]
+    ]
+    document = {
+        "name": name,
+        "modules": modules,
+        "dependencies": [],
+        "invariants": [
+            {
+                "name": rule,
+                "forbid_pattern": pattern,
+                "scopes": [dict(scope) for scope in scopes],
+            }
+            for rule, pattern in invariants
+        ],
+    }
     return yaml.safe_dump(document, sort_keys=False, width=1000, allow_unicode=True)
 
 
 def _ssat_yaml(blueprint: AppBlueprint) -> str:
-    backend = ssat_module("backend", "backend/main.py", [],
-                          [("healthz", [], "dict", "Return API health and app identity.")])
+    backend = ssat_module(
+        "backend",
+        "backend/main.py",
+        [],
+        [("healthz", [], "dict", "Return API health and app identity.")],
+    )
     return ssat_yaml(blueprint.name, [backend], [("no_eval", NO_EVAL[1]), NO_SECRET])
 
 

@@ -306,16 +306,27 @@ def provenance_cache_key(package_dir: Path) -> str:
     rows = [__version__, str(package_dir)]
     for path in sorted(package_dir.rglob("*.py")):
         info = path.stat()
-        rows.append(f"{path.relative_to(package_dir).as_posix()}:{info.st_size}:{info.st_mtime_ns}")
-    for marker in (package_dir.parent / ".git" / "HEAD", package_dir.parent / ".git" / "index"):
-        rows.append(f"{marker.name}:{marker.stat().st_mtime_ns}" if marker.exists() else f"{marker.name}:-")
+        rows.append(
+            f"{path.relative_to(package_dir).as_posix()}:{info.st_size}:{info.st_mtime_ns}"
+        )
+    for marker in (
+        package_dir.parent / ".git" / "HEAD",
+        package_dir.parent / ".git" / "index",
+    ):
+        rows.append(
+            f"{marker.name}:{marker.stat().st_mtime_ns}"
+            if marker.exists()
+            else f"{marker.name}:-"
+        )
     return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
 
 
 def _provenance_cache_dir() -> Path:
     import os
 
-    configured = os.environ.get("FACTORYLINE_CACHE_DIR") or os.environ.get("XDG_CACHE_HOME")
+    configured = os.environ.get("FACTORYLINE_CACHE_DIR") or os.environ.get(
+        "XDG_CACHE_HOME"
+    )
     base = Path(configured) if configured else Path.home() / ".cache"
     return base if os.environ.get("FACTORYLINE_CACHE_DIR") else base / "factoryline"
 
@@ -325,12 +336,20 @@ def _cached_provenance() -> dict[str, Any]:
     """X-SPD-2: reuse the build hash across processes while no source file or git state changed."""
     package_dir = Path(__file__).resolve().parent
     try:
-        cache: Path | None = _provenance_cache_dir() / f"provenance-{provenance_cache_key(package_dir)}.json"
+        cache: Path | None = (
+            _provenance_cache_dir()
+            / f"provenance-{provenance_cache_key(package_dir)}.json"
+        )
     except OSError:
         cache = None
     try:
-        cached = json.loads(cache.read_text(encoding="utf-8")) if cache is not None else None
-        if isinstance(cached, dict) and cached.get("schema") == "factoryline.provenance.v1":
+        cached = (
+            json.loads(cache.read_text(encoding="utf-8")) if cache is not None else None
+        )
+        if (
+            isinstance(cached, dict)
+            and cached.get("schema") == "factoryline.provenance.v1"
+        ):
             return cached
     except (OSError, ValueError):
         pass
@@ -352,7 +371,9 @@ def _write_provenance_cache(cache: Path, value: dict[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(value, stream, sort_keys=True)
         os.replace(temporary, cache)
-        for stale in cache.parent.glob("provenance-*.json"):  # keep only the current build's entry
+        for stale in cache.parent.glob(
+            "provenance-*.json"
+        ):  # keep only the current build's entry
             if stale != cache:
                 stale.unlink(missing_ok=True)
     except OSError:

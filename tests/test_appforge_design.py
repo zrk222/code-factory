@@ -163,19 +163,70 @@ def _cli(*argv):
     return main(list(argv))
 
 
-def _af_workspace(tmp_path: Path, monkeypatch, *, kit: bool = True, build: str = "42") -> Path:
+def _af_workspace(
+    tmp_path: Path, monkeypatch, *, kit: bool = True, build: str = "42"
+) -> Path:
     monkeypatch.chdir(tmp_path)
     out = f".factory/appforge/init-{build}"
-    assert _cli("revenue", "appforge-init", "--root", ".", "--out-dir", out, "--app-name", "A",
-                "--bundle-identifier", "com.e.a", "--version", "1.0", "--build-number", build,
-                "--source-commit", "a" * 40, "--audience", "x", "--primary-job", "y", "--desired-emotion", "z",
-                "--json") == 0
-    assert _cli("revenue", "appforge-design", "--root", ".", "--brief", f"{out}/appforge-design-brief.json",
-                "--out-dir", ".factory/appforge/design", "--json") == 0
+    assert (
+        _cli(
+            "revenue",
+            "appforge-init",
+            "--root",
+            ".",
+            "--out-dir",
+            out,
+            "--app-name",
+            "A",
+            "--bundle-identifier",
+            "com.e.a",
+            "--version",
+            "1.0",
+            "--build-number",
+            build,
+            "--source-commit",
+            "a" * 40,
+            "--audience",
+            "x",
+            "--primary-job",
+            "y",
+            "--desired-emotion",
+            "z",
+            "--json",
+        )
+        == 0
+    )
+    assert (
+        _cli(
+            "revenue",
+            "appforge-design",
+            "--root",
+            ".",
+            "--brief",
+            f"{out}/appforge-design-brief.json",
+            "--out-dir",
+            ".factory/appforge/design",
+            "--json",
+        )
+        == 0
+    )
     if kit:
-        assert _cli("revenue", "evidence-kit", "--root", ".", "--candidate", f"{out}/release-candidate.json",
-                    "--design-input", f"{out}/user-design-input.md", "--out-dir", f".factory/appforge/evidence-{build}",
-                    "--json") == 0
+        assert (
+            _cli(
+                "revenue",
+                "evidence-kit",
+                "--root",
+                ".",
+                "--candidate",
+                f"{out}/release-candidate.json",
+                "--design-input",
+                f"{out}/user-design-input.md",
+                "--out-dir",
+                f".factory/appforge/evidence-{build}",
+                "--json",
+            )
+            == 0
+        )
     return tmp_path
 
 
@@ -188,40 +239,96 @@ def test_appforge_next_walks_the_chain(tmp_path: Path, monkeypatch, capsys) -> N
     capsys.readouterr()
     step = appforge_next(tmp_path)
     assert step["stage"] == "evidence-kit"
-    assert "--candidate" in step["argv"] and ".factory/appforge/init-42/release-candidate.json" in step["argv"]
+    assert (
+        "--candidate" in step["argv"]
+        and ".factory/appforge/init-42/release-candidate.json" in step["argv"]
+    )
     assert _cli(*step["argv"][1:]) == 0  # the printed command runs as-is
     capsys.readouterr()
     step = appforge_next(tmp_path)
-    assert step["stage"] == "native-surface" and step["inputs_missing"] == ["--contract", "--evidence"]
+    assert step["stage"] == "native-surface" and step["inputs_missing"] == [
+        "--contract",
+        "--evidence",
+    ]
 
 
-def test_appforge_next_reports_a_blocked_stage_and_all_done(tmp_path: Path, monkeypatch) -> None:
+def test_appforge_next_reports_a_blocked_stage_and_all_done(
+    tmp_path: Path, monkeypatch
+) -> None:
     import factoryline.appforge_design as design
 
-    statuses = {name: {"current_count": 1, "latest": {"ok": True, "marker": "OK"}} for name, *_ in design._NEXT_CHAIN}
-    statuses["quality_audit"] = {"current_count": 1, "latest": {"ok": False, "marker": "QUALITY_BLOCKED",
-                                                                 "findings": [{"detail": "contrast below 4.5"}]}}
-    monkeypatch.setattr(design, "appforge_design_projection", lambda _root, **_k: {**statuses["design"], **statuses})
-    monkeypatch.setattr(design, "_receipt_only_status", lambda _w, _p, _i=None: statuses["store_media"])
+    statuses = {
+        name: {"current_count": 1, "latest": {"ok": True, "marker": "OK"}}
+        for name, *_ in design._NEXT_CHAIN
+    }
+    statuses["quality_audit"] = {
+        "current_count": 1,
+        "latest": {
+            "ok": False,
+            "marker": "QUALITY_BLOCKED",
+            "findings": [{"detail": "contrast below 4.5"}],
+        },
+    }
+    monkeypatch.setattr(
+        design,
+        "appforge_design_projection",
+        lambda _root, **_k: {**statuses["design"], **statuses},
+    )
+    monkeypatch.setattr(
+        design, "_receipt_only_status", lambda _w, _p, _i=None: statuses["store_media"]
+    )
     step = design.appforge_next(tmp_path)
-    assert step["stage"] == "quality-audit" and step["state"] == "blocked" and "contrast below 4.5" in step["why"]
-    statuses["quality_audit"] = {"current_count": 1, "latest": {"ok": True, "marker": "OK"}}
+    assert (
+        step["stage"] == "quality-audit"
+        and step["state"] == "blocked"
+        and "contrast below 4.5" in step["why"]
+    )
+    statuses["quality_audit"] = {
+        "current_count": 1,
+        "latest": {"ok": True, "marker": "OK"},
+    }
     assert design.appforge_next(tmp_path)["stage"] == "complete"
 
 
-def test_new_build_number_marks_downstream_receipts_stale(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_new_build_number_marks_downstream_receipts_stale(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     from factoryline.appforge_design import appforge_next
 
     _af_workspace(tmp_path, monkeypatch)
     assert appforge_next(tmp_path)["stale_for_candidate"] == []
-    _cli("revenue", "appforge-init", "--root", ".", "--out-dir", ".factory/appforge/init-43", "--app-name", "A",
-         "--bundle-identifier", "com.e.a", "--version", "1.0", "--build-number", "43", "--source-commit", "a" * 40,
-         "--audience", "x", "--primary-job", "y", "--desired-emotion", "z", "--json")
+    _cli(
+        "revenue",
+        "appforge-init",
+        "--root",
+        ".",
+        "--out-dir",
+        ".factory/appforge/init-43",
+        "--app-name",
+        "A",
+        "--bundle-identifier",
+        "com.e.a",
+        "--version",
+        "1.0",
+        "--build-number",
+        "43",
+        "--source-commit",
+        "a" * 40,
+        "--audience",
+        "x",
+        "--primary-job",
+        "y",
+        "--desired-emotion",
+        "z",
+        "--json",
+    )
     capsys.readouterr()
     assert "evidence-kit" in appforge_next(tmp_path)["stale_for_candidate"]
 
 
-def test_status_after_kit_has_no_stale_lines_and_a_next_line(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_status_after_kit_has_no_stale_lines_and_a_next_line(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     _af_workspace(tmp_path, monkeypatch)
     capsys.readouterr()
     assert _cli("revenue", "appforge-status", "--root", ".") == 0
@@ -232,7 +339,9 @@ def test_status_after_kit_has_no_stale_lines_and_a_next_line(tmp_path: Path, mon
     assert len(capsys.readouterr().out.splitlines()) < 40
 
 
-def test_appforge_group_matches_revenue_spelling_and_status_writes_nothing(tmp_path: Path, monkeypatch, capsys):
+def test_appforge_group_matches_revenue_spelling_and_status_writes_nothing(
+    tmp_path: Path, monkeypatch, capsys
+):
     _af_workspace(tmp_path, monkeypatch)
     capsys.readouterr()
     before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
@@ -248,30 +357,83 @@ def test_appforge_group_matches_revenue_spelling_and_status_writes_nothing(tmp_p
 def test_stage_inputs_default_to_the_producers_outputs() -> None:
     import argparse
 
-    from factoryline.cli_revenue import APPFORGE_SHORT_NAMES, _STAGE_INPUT_DEFAULTS, add_parser
+    from factoryline.cli_revenue import (
+        APPFORGE_SHORT_NAMES,
+        _STAGE_INPUT_DEFAULTS,
+        add_parser,
+    )
 
     parser = argparse.ArgumentParser(prog="factory")
     add_parser(parser.add_subparsers(dest="cmd"))
-    args = parser.parse_args(["revenue", "submission-assurance", "--contract", "c.json", "--saas-proof", "s.json"])
-    assert args.app_review == ".factory/appforge/app-review.json" and args.quality_audit.endswith("quality-audit.json")
-    explicit = parser.parse_args(["revenue", "submission-assurance", "--contract", "c", "--saas-proof", "s",
-                                  "--app-review", "mine.json"])
+    args = parser.parse_args(
+        [
+            "revenue",
+            "submission-assurance",
+            "--contract",
+            "c.json",
+            "--saas-proof",
+            "s.json",
+        ]
+    )
+    assert (
+        args.app_review == ".factory/appforge/app-review.json"
+        and args.quality_audit.endswith("quality-audit.json")
+    )
+    explicit = parser.parse_args(
+        [
+            "revenue",
+            "submission-assurance",
+            "--contract",
+            "c",
+            "--saas-proof",
+            "s",
+            "--app-review",
+            "mine.json",
+        ]
+    )
     assert explicit.app_review == "mine.json"
-    assert parser.parse_args(["appforge", "kit", "--candidate", "c", "--design-input", "d", "--out-dir", "o"]).revenue_cmd == "evidence-kit"
-    assert set(APPFORGE_SHORT_NAMES.values()) >= {command for command, _ in _STAGE_INPUT_DEFAULTS}
+    assert (
+        parser.parse_args(
+            [
+                "appforge",
+                "kit",
+                "--candidate",
+                "c",
+                "--design-input",
+                "d",
+                "--out-dir",
+                "o",
+            ]
+        ).revenue_cmd
+        == "evidence-kit"
+    )
+    assert set(APPFORGE_SHORT_NAMES.values()) >= {
+        command for command, _ in _STAGE_INPUT_DEFAULTS
+    }
 
 
-def test_status_brief_lines_and_receipt_candidate_filter(tmp_path: Path, monkeypatch, capsys) -> None:
-    from factoryline.appforge_design import appforge_design_projection, appforge_status_brief, appforge_status_lines
+def test_status_brief_lines_and_receipt_candidate_filter(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from factoryline.appforge_design import (
+        appforge_design_projection,
+        appforge_status_brief,
+        appforge_status_lines,
+    )
     from factoryline.revenue_evidence import is_receipt_candidate
 
     assert not is_receipt_candidate(Path("x/oracle-authority-template.json"))
     assert not is_receipt_candidate(Path("x/submission-assurance-contract.json"))
     assert not is_receipt_candidate(Path("x/app-review-evidence.json"))
-    assert is_receipt_candidate(Path("x/mobile-evidence.json")) and is_receipt_candidate(Path("x/app-review.json"))
+    assert is_receipt_candidate(
+        Path("x/mobile-evidence.json")
+    ) and is_receipt_candidate(Path("x/app-review.json"))
     _af_workspace(tmp_path, monkeypatch)
     capsys.readouterr()
     brief = appforge_status_brief(tmp_path, appforge_design_projection(tmp_path))
-    assert set(brief["stages"]) >= {"init", "design"} and brief["next"]["stage"] == "native-surface"
+    assert (
+        set(brief["stages"]) >= {"init", "design"}
+        and brief["next"]["stage"] == "native-surface"
+    )
     lines = list(appforge_status_lines(brief))
     assert lines[-1].startswith("next: factory revenue appforge-native-surface")

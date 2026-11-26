@@ -192,12 +192,16 @@ def _display_name(name: str) -> str:
 
 def _bundle_identifier(name: str) -> str:
     """A placeholder reverse-DNS id derived from the target name; replace com.example before release."""
-    return "com.example." + ("".join(ch for ch in name.lower() if ch.isalnum()) or "app")
+    return "com.example." + (
+        "".join(ch for ch in name.lower() if ch.isalnum()) or "app"
+    )
 
 
 def _store_delivery_section(name: str, manifest: dict[str, Any]) -> str:
     """A-CON-1: the AppForge start for a mobile target, pre-filled from mobile/app.json and the manifest."""
-    purpose = str(manifest["intent"].get("purpose") or "the intended users").replace('"', "'")
+    purpose = str(manifest["intent"].get("purpose") or "the intended users").replace(
+        '"', "'"
+    )
     return f"""
 ## Store delivery (AppForge)
 
@@ -412,9 +416,28 @@ def test_worker_rejects_empty_input():
         run_task({})
 """,
     )
-    _write(root / f"{name}.ssat.yaml", ssat_yaml(name, [ssat_module("worker", "worker/main.py", ["json", "sys"], [
-        ("run_task", ["payload: dict"], "dict", "Return the same normalized result for the same payload.")])],
-        [NO_EVAL, NO_NETWORK]))
+    _write(
+        root / f"{name}.ssat.yaml",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "worker",
+                    "worker/main.py",
+                    ["json", "sys"],
+                    [
+                        (
+                            "run_task",
+                            ["payload: dict"],
+                            "dict",
+                            "Return the same normalized result for the same payload.",
+                        )
+                    ],
+                )
+            ],
+            [NO_EVAL, NO_NETWORK],
+        ),
+    )
     _write_json(
         root / "smoke" / f"{name}.json",
         {
@@ -511,9 +534,28 @@ def test_cli_rejects_empty_input():
         render("  ")
 """,
     )
-    _write(root / f"{name}.ssat.yaml", ssat_yaml(name, [ssat_module("cli_app", "cli_app/main.py", ["argparse", "json"], [
-        ("render", ["message: str", "uppercase: bool"], "dict", "Normalize one command input deterministically.")])],
-        [NO_EVAL, NO_NETWORK]))
+    _write(
+        root / f"{name}.ssat.yaml",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "cli_app",
+                    "cli_app/main.py",
+                    ["argparse", "json"],
+                    [
+                        (
+                            "render",
+                            ["message: str", "uppercase: bool"],
+                            "dict",
+                            "Normalize one command input deterministically.",
+                        )
+                    ],
+                )
+            ],
+            [NO_EVAL, NO_NETWORK],
+        ),
+    )
     _write_json(
         root / "smoke" / f"{name}.json",
         {
@@ -609,10 +651,34 @@ def test_api_rejects_empty_message():
     assert client.post("/v1/echo", json={"message": ""}).status_code == 422
 """,
     )
-    _write(root / f"{name}.ssat.yaml", ssat_yaml(name, [ssat_module("api", "backend/main.py", ["fastapi", "pydantic"], [
-        ("healthz", [], "dict", "Return stable API health and identity."),
-        ("echo", ["request: EchoRequest"], "dict", "Return a validated deterministic response.")])],
-        [NO_EVAL]))
+    _write(
+        root / f"{name}.ssat.yaml",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "api",
+                    "backend/main.py",
+                    ["fastapi", "pydantic"],
+                    [
+                        (
+                            "healthz",
+                            [],
+                            "dict",
+                            "Return stable API health and identity.",
+                        ),
+                        (
+                            "echo",
+                            ["request: EchoRequest"],
+                            "dict",
+                            "Return a validated deterministic response.",
+                        ),
+                    ],
+                )
+            ],
+            [NO_EVAL],
+        ),
+    )
     _write_json(
         root / "smoke" / f"{name}.json",
         {
@@ -718,9 +784,28 @@ def test_mcp_rejects_unknown_method():
     assert response["error"]["code"] == -32601
 """,
     )
-    _write(root / f"{name}.ssat.yaml", ssat_yaml(name, [ssat_module("mcp_server", "mcp_server/main.py", ["json", "sys"], [
-        ("dispatch", ["request: dict"], "dict", "Dispatch one local JSON-RPC request deterministically.")])],
-        [("stdio_only", r"\b(socket|requests|urllib3|httpx)\b"), NO_EVAL]))
+    _write(
+        root / f"{name}.ssat.yaml",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "mcp_server",
+                    "mcp_server/main.py",
+                    ["json", "sys"],
+                    [
+                        (
+                            "dispatch",
+                            ["request: dict"],
+                            "dict",
+                            "Dispatch one local JSON-RPC request deterministically.",
+                        )
+                    ],
+                )
+            ],
+            [("stdio_only", r"\b(socket|requests|urllib3|httpx)\b"), NO_EVAL],
+        ),
+    )
     _write_json(
         root / "smoke" / f"{name}.json",
         {
@@ -845,7 +930,10 @@ def _scaffold_mobile(root: Path, name: str, purpose: str, text: str) -> list[str
                 "version": MOBILE_VERSION,
                 "orientation": "portrait",
                 "userInterfaceStyle": "automatic",
-                "ios": {"bundleIdentifier": _bundle_identifier(name), "buildNumber": MOBILE_BUILD},
+                "ios": {
+                    "bundleIdentifier": _bundle_identifier(name),
+                    "buildNumber": MOBILE_BUILD,
+                },
             }
         },
     )
@@ -855,12 +943,34 @@ def _scaffold_mobile(root: Path, name: str, purpose: str, text: str) -> list[str
     )
     _write(root / "mobile" / ".gitignore", "node_modules\n.expo\ndist\nandroid\nios\n")
     _write_backend(root, name, purpose)
-    _write(root / f"{name}.ssat.yaml", ssat_yaml(name, [
-        ssat_module("backend", "backend/main.py", ["fastapi"], [
-            ("healthz", [], "dict", "Return API health and app identity.")]),
-        ssat_module("mobile", "mobile/App.tsx", ["expo-status-bar", "react-native"], [
-            ("App", [], "JSX.Element", "Render the governed mobile starter state.")])],
-        [NO_EVAL]))
+    _write(
+        root / f"{name}.ssat.yaml",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "backend",
+                    "backend/main.py",
+                    ["fastapi"],
+                    [("healthz", [], "dict", "Return API health and app identity.")],
+                ),
+                ssat_module(
+                    "mobile",
+                    "mobile/App.tsx",
+                    ["expo-status-bar", "react-native"],
+                    [
+                        (
+                            "App",
+                            [],
+                            "JSX.Element",
+                            "Render the governed mobile starter state.",
+                        )
+                    ],
+                ),
+            ],
+            [NO_EVAL],
+        ),
+    )
     _write_json(
         root / "smoke" / f"{name}.json",
         {

@@ -70,12 +70,29 @@ def resolve_source_commit(root: Path, value: str | None) -> tuple[str, bool]:
             )
         return commit, False
     try:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=10)
-        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, timeout=10)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
     except (OSError, subprocess.TimeoutExpired):
         head = dirty = None
     commit = head.stdout.strip() if head and head.returncode == 0 else ""
-    if not _COMMIT.fullmatch(commit) or dirty is None or dirty.returncode != 0 or dirty.stdout.strip():
+    if (
+        not _COMMIT.fullmatch(commit)
+        or dirty is None
+        or dirty.returncode != 0
+        or dirty.stdout.strip()
+    ):
         raise RevenueForgeError(
             "APPFORGE_INIT_COMMIT_REQUIRED",
             "pass --source-commit, or run from a clean git checkout so HEAD can be used",

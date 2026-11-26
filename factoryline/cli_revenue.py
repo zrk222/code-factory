@@ -165,7 +165,8 @@ def add_parser(sub: Any) -> None:
     revenue_appforge_init.add_argument("--version", required=True)
     revenue_appforge_init.add_argument("--build-number", required=True)
     revenue_appforge_init.add_argument(
-        "--source-commit", help="40-character build commit; defaults to HEAD of a clean git checkout"
+        "--source-commit",
+        help="40-character build commit; defaults to HEAD of a clean git checkout",
     )
     revenue_appforge_init.add_argument("--audience", required=True)
     revenue_appforge_init.add_argument("--primary-job", required=True)
@@ -370,7 +371,9 @@ def add_parser(sub: Any) -> None:
     )
     revenue_mobile_evidence.add_argument("--json", action="store_true")
     revenue_appforge_status.add_argument(
-        "--brief", action="store_true", help="only {stage: marker, ok, path} plus the next command"
+        "--brief",
+        action="store_true",
+        help="only {stage: marker, ok, path} plus the next command",
     )
     revenue_next = revenue_sub.add_parser(
         "appforge-next",
@@ -387,21 +390,49 @@ _STAGE_INPUT_DEFAULTS = {
     ("submission-assurance", "--app-review"): ".factory/appforge/app-review.json",
     ("submission-assurance", "--store-media"): ".factory/appforge/store-media.json",
     ("submission-assurance", "--quality-audit"): ".factory/appforge/quality-audit.json",
-    ("appforge-rehearse", "--submission-assurance"): ".factory/appforge/submission-assurance.json",
-    ("appforge-surface-matrix", "--native-surface"): ".factory/appforge/native-surface.json",
-    ("appforge-storefront-story", "--store-media"): ".factory/appforge/store-media.json",
-    ("appforge-fastlane-capture", "--surface-matrix"): ".factory/appforge/surface-matrix.json",
-    ("appforge-fastlane-capture", "--storefront-story"): ".factory/appforge/storefront-story.json",
+    (
+        "appforge-rehearse",
+        "--submission-assurance",
+    ): ".factory/appforge/submission-assurance.json",
+    (
+        "appforge-surface-matrix",
+        "--native-surface",
+    ): ".factory/appforge/native-surface.json",
+    (
+        "appforge-storefront-story",
+        "--store-media",
+    ): ".factory/appforge/store-media.json",
+    (
+        "appforge-fastlane-capture",
+        "--surface-matrix",
+    ): ".factory/appforge/surface-matrix.json",
+    (
+        "appforge-fastlane-capture",
+        "--storefront-story",
+    ): ".factory/appforge/storefront-story.json",
 }
 # `factory appforge <short>` reuses the `factory revenue <long>` parser and handler.
 APPFORGE_SHORT_NAMES = {
-    "init": "appforge-init", "design": "appforge-design", "kit": "evidence-kit", "status": "appforge-status",
-    "next": "appforge-next", "native-surface": "appforge-native-surface", "surface-matrix": "appforge-surface-matrix",
-    "app-review": "app-review-gate", "store-media": "store-media-gate", "storefront-story": "appforge-storefront-story",
-    "fastlane-capture": "appforge-fastlane-capture", "submission-integrity": "appforge-submission-integrity",
-    "quality-audit": "quality-audit", "oracle": "appforge-oracle", "device-reality-intent": "device-reality-intent",
-    "device-reality": "device-reality-gate", "eas": "appforge-eas", "submission-assurance": "submission-assurance",
-    "rehearse": "appforge-rehearse", "mobile-evidence": "appforge-mobile-evidence",
+    "init": "appforge-init",
+    "design": "appforge-design",
+    "kit": "evidence-kit",
+    "status": "appforge-status",
+    "next": "appforge-next",
+    "native-surface": "appforge-native-surface",
+    "surface-matrix": "appforge-surface-matrix",
+    "app-review": "app-review-gate",
+    "store-media": "store-media-gate",
+    "storefront-story": "appforge-storefront-story",
+    "fastlane-capture": "appforge-fastlane-capture",
+    "submission-integrity": "appforge-submission-integrity",
+    "quality-audit": "quality-audit",
+    "oracle": "appforge-oracle",
+    "device-reality-intent": "device-reality-intent",
+    "device-reality": "device-reality-gate",
+    "eas": "appforge-eas",
+    "submission-assurance": "submission-assurance",
+    "rehearse": "appforge-rehearse",
+    "mobile-evidence": "appforge-mobile-evidence",
 }
 
 
@@ -415,12 +446,17 @@ def _default_stage_inputs(revenue_sub: Any) -> None:
 
 
 def _add_appforge_group(sub: Any, revenue_sub: Any) -> None:
-    appforge = sub.add_parser("appforge", help="AppForge iOS delivery stages (same commands as factory revenue appforge-*)")
+    appforge = sub.add_parser(
+        "appforge",
+        help="AppForge iOS delivery stages (same commands as factory revenue appforge-*)",
+    )
     group = appforge.add_subparsers(required=True, dest="appforge_cmd")
     helps = {action.dest: action.help for action in revenue_sub._choices_actions}
     for short, long in APPFORGE_SHORT_NAMES.items():
         source = revenue_sub.choices[long]
-        child = group.add_parser(short, parents=[source], add_help=False, help=helps.get(long) or long)
+        child = group.add_parser(
+            short, parents=[source], add_help=False, help=helps.get(long) or long
+        )
         child.set_defaults(revenue_cmd=long)
 
 
@@ -773,7 +809,9 @@ def _command_appforge_status(args: Any, root: Path) -> dict:
     inventory = tuple(receipt_paths(root, "*.json"))  # one walk serves status and next
     payload = appforge_design_projection(root, inventory=inventory)
     brief = appforge_status_brief(root, payload, inventory)
-    return brief if getattr(args, "brief", False) else {**payload, "next": brief["next"]}
+    return (
+        brief if getattr(args, "brief", False) else {**payload, "next": brief["next"]}
+    )
 
 
 def _command_appforge_next(args: Any, root: Path) -> dict:

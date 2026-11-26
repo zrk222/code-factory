@@ -380,7 +380,9 @@ def _doctor_module_check(module: Any) -> tuple[Any, dict]:
     check = _lazy_import("protocol", "compatibility")(
         module.name, meta, help_text, reported_version=reported_version
     )
-    metadata_version = import_module(".protocol", __package__).package_version(meta["pip"])
+    metadata_version = import_module(".protocol", __package__).package_version(
+        meta["pip"]
+    )
     workflow["binary"] = _doctor_binary(module.cli) if module.installed else None
     workflow["version_mismatch"] = bool(
         reported_version and metadata_version and reported_version != metadata_version
@@ -392,7 +394,9 @@ def _doctor_checks() -> tuple[list, list]:
     from concurrent.futures import ThreadPoolExecutor
 
     mods = _lazy_import("assembly", "detect")()
-    with ThreadPoolExecutor(max_workers=4) as pool:  # X-SPD-3a: probes are independent subprocesses
+    with ThreadPoolExecutor(
+        max_workers=4
+    ) as pool:  # X-SPD-3a: probes are independent subprocesses
         return mods, list(pool.map(_doctor_module_check, mods))
 
 
@@ -443,8 +447,10 @@ def _print_doctor_module(module: Any, check: Any, workflow: dict) -> None:
     if check.missing_commands:
         print(f"                 missing commands: {', '.join(check.missing_commands)}")
     if workflow.get("version_mismatch"):
-        print(f"                 version mismatch: {workflow.get('binary')} reports a different build "
-              "than the installed package metadata")
+        print(
+            f"                 version mismatch: {workflow.get('binary')} reports a different build "
+            "than the installed package metadata"
+        )
     if not workflow["ok"]:
         print(f"                 workflow: {workflow['reason']}")
     elif not workflow.get("provenance_ok"):
@@ -461,15 +467,23 @@ def _doctor_failures(checks: list) -> list:
 
 def doctor_install_hints(failed: list) -> list[str]:
     """Copy-paste-safe commands: one pinned extra first, then each brick quoted so `>=` is not a shell redirect."""
-    own = import_module(".protocol", __package__).package_version("factoryline-code-factory") or "<version>"
+    own = (
+        import_module(".protocol", __package__).package_version(
+            "factoryline-code-factory"
+        )
+        or "<version>"
+    )
     return [f'python -m pip install "factoryline-code-factory[factory]=={own}"'] + [
-        f'python -m pip install --upgrade "{item.package}>={item.minimum}"' for item in failed
+        f'python -m pip install --upgrade "{item.package}>={item.minimum}"'
+        for item in failed
     ]
 
 
 def _print_doctor_summary(failed: list) -> None:
     if failed:
-        print("\nInstall or upgrade incompatible bricks (first line installs all of them):")
+        print(
+            "\nInstall or upgrade incompatible bricks (first line installs all of them):"
+        )
         for hint in doctor_install_hints(failed):
             print(f"  {hint}")
     else:
@@ -973,7 +987,8 @@ def _build_parser(
     proof_challenge.add_argument("--root", default=".")
     proof_challenge.add_argument("--json", action="store_true")
     proof_ingest = proofs_sub.add_parser(
-        "ingest-harness", help="record an HSF heal receipt (and its fresh green read-only gates) as evidence"
+        "ingest-harness",
+        help="record an HSF heal receipt (and its fresh green read-only gates) as evidence",
     )
     proof_ingest.add_argument("receipt")
     proof_ingest.add_argument("--feature")
@@ -4639,14 +4654,21 @@ def _dispatch_route_group_41(a, capture_command, p):
 # X-SPD-1: groups whose module registers only its own top-level commands can be parsed without building the
 # full parser (about 130 ms cold). Unknown arguments fall back to the full parser, as the common fast path does.
 FAST_GROUP_MODULES = {
-    "revenue": "cli_revenue", "appforge": "cli_revenue", "saas": "cli_saas", "release": "cli_release",
-    "pack": "cli_pack", "verifier": "cli_verifier", "ops": "cli_ops",
+    "revenue": "cli_revenue",
+    "appforge": "cli_revenue",
+    "saas": "cli_saas",
+    "release": "cli_release",
+    "pack": "cli_pack",
+    "verifier": "cli_verifier",
+    "ops": "cli_ops",
 }
 
 
 def group_parser(command: str) -> argparse.ArgumentParser:
     """A parser holding only one command group, with the same prog and description as the full parser."""
-    p = argparse.ArgumentParser(prog="factory", description="Review code and collect evidence for changes.")
+    p = argparse.ArgumentParser(
+        prog="factory", description="Review code and collect evidence for changes."
+    )
     sub = p.add_subparsers(dest="cmd")
     import_module("." + FAST_GROUP_MODULES[command], __package__).add_parser(sub)
     return p

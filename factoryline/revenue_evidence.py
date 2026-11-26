@@ -26,15 +26,23 @@ from . import compat_sha as _sha
 
 
 # Inputs the evidence kit writes for a person to fill in; they are never stage receipts.
-KIT_INPUT_NAMES = frozenset({
-    "release-candidate.json", "app-review-evidence.json", "store-media-evidence.json", "quality-evidence.json",
-    "device-reality-journeys.json", "device-reality-evidence.json",
-})
+KIT_INPUT_NAMES = frozenset(
+    {
+        "release-candidate.json",
+        "app-review-evidence.json",
+        "store-media-evidence.json",
+        "quality-evidence.json",
+        "device-reality-journeys.json",
+        "device-reality-evidence.json",
+    }
+)
 
 
 def is_receipt_candidate(path: Path) -> bool:
     """Exclude templates, contracts and kit inputs so status does not call its own scaffolding stale."""
-    return path.name not in KIT_INPUT_NAMES and not path.name.endswith(("-template.json", "-contract.json"))
+    return path.name not in KIT_INPUT_NAMES and not path.name.endswith(
+        ("-template.json", "-contract.json")
+    )
 
 
 def receipt_paths(

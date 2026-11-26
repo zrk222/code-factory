@@ -2287,16 +2287,25 @@ def test_companion_minimums_have_one_source():
     from factoryline.protocol import MINIMUM_VERSIONS, version_tuple
 
     root = Path(__file__).resolve().parents[1]
-    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    packages = {meta["pip"]: name for name, meta in MODULES.items() if name in MINIMUM_VERSIONS}
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+    packages = {
+        meta["pip"]: name for name, meta in MODULES.items() if name in MINIMUM_VERSIONS
+    }
     pins = {}
     for requirement in project["optional-dependencies"]["factory"]:
         package, version = re.split(r"[=><~!]=", requirement, maxsplit=1)
         pins[packages[package.strip()]] = version.strip()
     assert set(pins) == set(MINIMUM_VERSIONS)
-    assert all(version_tuple(pins[name]) >= version_tuple(minimum) for name, minimum in MINIMUM_VERSIONS.items())
+    assert all(
+        version_tuple(pins[name]) >= version_tuple(minimum)
+        for name, minimum in MINIMUM_VERSIONS.items()
+    )
     topology = json.loads((root / "factory.topology.json").read_text(encoding="utf-8"))
-    assert {brick["id"]: brick["minimum"] for brick in topology["bricks"]} == MINIMUM_VERSIONS
+    assert {
+        brick["id"]: brick["minimum"] for brick in topology["bricks"]
+    } == MINIMUM_VERSIONS
 
 
 def test_published_vocabulary_covers_factoryline():
@@ -2304,10 +2313,17 @@ def test_published_vocabulary_covers_factoryline():
 
     from factoryline.attribution import FailureClass
 
-    vocabulary = json.loads(resources.files("factoryline").joinpath("data/protocol.json").read_text(encoding="utf-8"))
+    vocabulary = json.loads(
+        resources.files("factoryline")
+        .joinpath("data/protocol.json")
+        .read_text(encoding="utf-8")
+    )
     assert {item.value for item in FailureClass} <= set(vocabulary["failure_classes"])
     assert vocabulary["failure_classes"] == sorted(set(vocabulary["failure_classes"]))
-    assert "version" in vocabulary["provenance_fields"] and "factory.provenance.v1" in vocabulary["provenance_schemas"]
+    assert (
+        "version" in vocabulary["provenance_fields"]
+        and "factory.provenance.v1" in vocabulary["provenance_schemas"]
+    )
 
 
 def test_doctor_install_hints_are_shell_safe(monkeypatch):
@@ -2317,13 +2333,19 @@ def test_doctor_install_hints_are_shell_safe(monkeypatch):
     from factoryline.cli import doctor_install_hints
 
     monkeypatch.setattr(protocol, "package_version", lambda package: "9.9.9")
-    hints = doctor_install_hints([SimpleNamespace(package="code-factory-4-design", minimum="0.7.4")])
-    assert hints[0] == 'python -m pip install "factoryline-code-factory[factory]==9.9.9"'
+    hints = doctor_install_hints(
+        [SimpleNamespace(package="code-factory-4-design", minimum="0.7.4")]
+    )
+    assert (
+        hints[0] == 'python -m pip install "factoryline-code-factory[factory]==9.9.9"'
+    )
     assert hints[1] == 'python -m pip install --upgrade "code-factory-4-design>=0.7.4"'
     assert all(hint.count('"') == 2 for hint in hints)
 
 
-def test_cli_command_prefers_the_venv_bin_over_the_resolved_interpreter(tmp_path, monkeypatch):
+def test_cli_command_prefers_the_venv_bin_over_the_resolved_interpreter(
+    tmp_path, monkeypatch
+):
     from factoryline import cli_foundations
 
     real = tmp_path / "base" / "bin"
@@ -2335,7 +2357,9 @@ def test_cli_command_prefers_the_venv_bin_over_the_resolved_interpreter(tmp_path
     (venv / "forge").write_text("", encoding="utf-8")
     (real / "forge").write_text("", encoding="utf-8")
     monkeypatch.setattr(cli_foundations.sys, "executable", str(venv / "python3"))
-    monkeypatch.setattr(cli_foundations.sys, "argv", [str(tmp_path / "elsewhere" / "python")])
+    monkeypatch.setattr(
+        cli_foundations.sys, "argv", [str(tmp_path / "elsewhere" / "python")]
+    )
     assert cli_foundations.cli_command("forge") == str(venv / "forge")
 
 
@@ -2345,16 +2369,34 @@ def test_doctor_flags_a_binary_reporting_a_different_build(monkeypatch):
     import factoryline.protocol as protocol
     from factoryline import cli
 
-    monkeypatch.setattr(cli, "_run_cli_bounded", lambda *_a, **_k: {"ok": True, "stdout": b"", "stderr": b""})
     monkeypatch.setattr(
-        cli, "_workflow_canary", lambda _m: {"ok": True, "provenance": {"version": "0.10.8+local.x"}}
+        cli,
+        "_run_cli_bounded",
+        lambda *_a, **_k: {"ok": True, "stdout": b"", "stderr": b""},
+    )
+    monkeypatch.setattr(
+        cli,
+        "_workflow_canary",
+        lambda _m: {"ok": True, "provenance": {"version": "0.10.8+local.x"}},
     )
     monkeypatch.setattr(protocol, "package_version", lambda _p: "0.10.8")
-    monkeypatch.setattr(cli, "_doctor_binary", lambda cli_name: f"/usr/local/bin/{cli_name}")
-    check, workflow = cli._doctor_module_check(SimpleNamespace(name="forgeline", cli="forge", installed=True))
-    assert workflow["version_mismatch"] is True and workflow["binary"] == "/usr/local/bin/forge"
+    monkeypatch.setattr(
+        cli, "_doctor_binary", lambda cli_name: f"/usr/local/bin/{cli_name}"
+    )
+    check, workflow = cli._doctor_module_check(
+        SimpleNamespace(name="forgeline", cli="forge", installed=True)
+    )
+    assert (
+        workflow["version_mismatch"] is True
+        and workflow["binary"] == "/usr/local/bin/forge"
+    )
     monkeypatch.setattr(protocol, "package_version", lambda _p: "0.10.8+local.x")
-    assert cli._doctor_module_check(SimpleNamespace(name="forgeline", cli="forge", installed=True))[1]["version_mismatch"] is False
+    assert (
+        cli._doctor_module_check(
+            SimpleNamespace(name="forgeline", cli="forge", installed=True)
+        )[1]["version_mismatch"]
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -2385,14 +2427,18 @@ def test_group_fast_parser_matches_the_full_parser(argv, capsys):
     assert parse(group_parser(argv[0])) == parse(_build_parser())
 
 
-def test_provenance_is_cached_across_processes_until_a_source_file_changes(tmp_path, monkeypatch):
+def test_provenance_is_cached_across_processes_until_a_source_file_changes(
+    tmp_path, monkeypatch
+):
     import factoryline.ops_telemetry as telemetry
     import factoryline.provenance as provenance_module
 
     monkeypatch.setenv("FACTORYLINE_CACHE_DIR", str(tmp_path))
     calls = []
     real = provenance_module.provenance
-    monkeypatch.setattr(provenance_module, "provenance", lambda: calls.append(1) or real())
+    monkeypatch.setattr(
+        provenance_module, "provenance", lambda: calls.append(1) or real()
+    )
     telemetry._cached_provenance.cache_clear()
     first = telemetry._cached_provenance()
     telemetry._cached_provenance.cache_clear()
@@ -2428,7 +2474,10 @@ def test_doctor_probes_run_in_parallel_and_keep_module_order(monkeypatch):
 
     from factoryline import cli
 
-    modules = [SimpleNamespace(name=name) for name in ("specline", "forgeline", "hsf", "prestige")]
+    modules = [
+        SimpleNamespace(name=name)
+        for name in ("specline", "forgeline", "hsf", "prestige")
+    ]
     monkeypatch.setattr(cli, "_lazy_import", lambda module, symbol: (lambda: modules))
     seen = set()
 

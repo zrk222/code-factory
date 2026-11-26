@@ -75,14 +75,22 @@ def _declares_hsf(
     )
 
 
-def _declares_harness(root: Path, rows: list[dict[str, Any]], declared: set[str]) -> bool:
-    return (root / "harness" / "harness.yaml").is_file() or "hsf:harness-check" in declared
+def _declares_harness(
+    root: Path, rows: list[dict[str, Any]], declared: set[str]
+) -> bool:
+    return (
+        root / "harness" / "harness.yaml"
+    ).is_file() or "hsf:harness-check" in declared
 
 
-def _declares_evidence(root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]) -> bool:
+def _declares_evidence(
+    root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]
+) -> bool:
     return (
         (root / ".factory" / "workflow-audit-contract.json").is_file()
-        or any(row["module"] == "specline" and row["stage"] == "evidence" for row in rows)
+        or any(
+            row["module"] == "specline" and row["stage"] == "evidence" for row in rows
+        )
         or "specline:evidence" in declared
     )
 
@@ -861,7 +869,10 @@ def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
         if stage.required:
             return True
         if (stage.module, stage.name) in CONDITIONAL_STAGE_KEYS:
-            return stage.present and (root / ".factory" / "workflow-audit-contract.json").is_file()
+            return (
+                stage.present
+                and (root / ".factory" / "workflow-audit-contract.json").is_file()
+            )
         if stage.module in BASE_REQUIRED_MODULES:
             return True
         if stage.module == "prestige":

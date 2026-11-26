@@ -305,8 +305,12 @@ def decision_source(root: Path, feature: str) -> str | None:
         text = (root / "specs" / f"{feature}.md").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-    section = text.split("## Decision logic", 1)[1] if "## Decision logic" in text else ""
-    return "decision_table" if _DECISION_ROW.search(section.split("\n## ", 1)[0]) else None
+    section = (
+        text.split("## Decision logic", 1)[1] if "## Decision logic" in text else ""
+    )
+    return (
+        "decision_table" if _DECISION_ROW.search(section.split("\n## ", 1)[0]) else None
+    )
 
 
 MAX_RECEIPT_BYTES = 1_048_576
@@ -975,8 +979,13 @@ def _forge_architect_state(root: Path, feature: str) -> str | None:
 # are idempotent in ForgeLine and always run; only the non-repeatable stages are skipped.
 _FORGE_SKIPPABLE = ("architect", "review", "arch-gate")
 _FORGE_STATE_PROVES = {
-    "scaffolded": 1, "filled": 1, "reviewed": 2, "arch_gated": 3,
-    "tests_verified": 3, "smoked": 3, "shipped": 3,
+    "scaffolded": 1,
+    "filled": 1,
+    "reviewed": 2,
+    "arch_gated": 3,
+    "tests_verified": 3,
+    "smoked": 3,
+    "shipped": 3,
 }
 _FORGE_FAILED_GATE_PROVES = {"fill": 1, "review": 1, "arch_gate": 2}
 
@@ -984,7 +993,9 @@ _FORGE_FAILED_GATE_PROVES = {"fill": 1, "review": 1, "arch_gate": 2}
 def _forge_stages_proven(root: Path, feature: str) -> tuple[str | None, int]:
     """Forge state and the count of skippable stages it proves (a blocked run proves those before its failure)."""
     try:
-        run = json.loads((root / ".forge" / feature / "state.json").read_text(encoding="utf-8"))
+        run = json.loads(
+            (root / ".forge" / feature / "state.json").read_text(encoding="utf-8")
+        )
         state = run.get("state")
         if state == "blocked":
             gate = (run.get("history") or [{}])[-1].get("failed_gate")
@@ -994,7 +1005,9 @@ def _forge_stages_proven(root: Path, feature: str) -> tuple[str | None, int]:
         return None, 0
 
 
-def _prior_passing_receipt(root: Path, feature: str, module: str, stage: str) -> str | None:
+def _prior_passing_receipt(
+    root: Path, feature: str, module: str, stage: str
+) -> str | None:
     """The newest passing FactoryLine receipt for one stage, as a workspace-relative path."""
     directory = root / LAYOUT["receipts"]
     newest: tuple[str, str] | None = None
@@ -1003,13 +1016,19 @@ def _prior_passing_receipt(root: Path, feature: str, module: str, stage: str) ->
             receipt = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if receipt.get("ok") is True and receipt.get("stage") == stage and receipt.get("feature") == feature:
+        if (
+            receipt.get("ok") is True
+            and receipt.get("stage") == stage
+            and receipt.get("feature") == feature
+        ):
             key = (str(receipt.get("ts", "")), path.relative_to(root).as_posix())
             newest = max(newest or key, key)
     return newest[1] if newest else None
 
 
-def forge_stage_skippable(root: Path, feature: str, stage: _AssemblyStage) -> tuple[bool, str | None, str | None]:
+def forge_stage_skippable(
+    root: Path, feature: str, stage: _AssemblyStage
+) -> tuple[bool, str | None, str | None]:
     """Whether the Forge run is already past this stage: (skip, forge state, prior passing receipt).
 
     A release-contract-required stage is skippable only when a prior passing receipt for it exists. Skipped
@@ -1142,8 +1161,19 @@ def _assembly_forge_review(
     return False
 
 
-def _skip_stage(stage: _AssemblyStage, report: dict, activity: LiveActivity, reason: str, marker: str | None = None) -> str:
-    row = {"module": stage.module, "stage": stage.name, "status": "skipped", "reason": reason}
+def _skip_stage(
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+    reason: str,
+    marker: str | None = None,
+) -> str:
+    row = {
+        "module": stage.module,
+        "stage": stage.name,
+        "status": "skipped",
+        "reason": reason,
+    }
     if marker:
         row["marker"] = marker
     report["stages"].append(row)
@@ -1159,12 +1189,18 @@ def _handoff_probe(root: Path, feature: str, activity: LiveActivity) -> dict:
         root,
         heartbeat=activity.heartbeat,
     )
-    payload = next((item for item in _output_objects(out) if "state" in item), None)  # outermost object first
+    payload = next(
+        (item for item in _output_objects(out) if "state" in item), None
+    )  # outermost object first
     return payload or {"state": "blocked", "error": {"message": out[-500:]}}
 
 
 def _decision_handoff_action(
-    root: Path, feature: str, stage: _AssemblyStage, report: dict, activity: LiveActivity
+    root: Path,
+    feature: str,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
 ) -> str | None:
     """Skip a table-less handoff, pause for goldens, fail a blocked export, or let compile run."""
     probe = _handoff_probe(root, feature, activity)
@@ -1172,9 +1208,14 @@ def _decision_handoff_action(
     if state == "ready_to_compile":
         return None
     if state == "no_decisions" and not stage.required:
-        return _skip_stage(stage, report, activity, "no_decision_table", "HSF_DECISIONS_NOT_DECLARED")
+        return _skip_stage(
+            stage, report, activity, "no_decision_table", "HSF_DECISIONS_NOT_DECLARED"
+        )
     if state == "needs_goldens":
-        goldens = os.path.relpath(str(probe.get("goldens") or f"goldens/{feature}_decisions/cases.jsonl"), root.resolve())
+        goldens = os.path.relpath(
+            str(probe.get("goldens") or f"goldens/{feature}_decisions/cases.jsonl"),
+            root.resolve(),
+        )
         report["paused_at"] = "decision_goldens"
         report["next_command"] = (
             f"review golden cases into {Path(goldens).as_posix()} (one JSON object per line), "
@@ -1184,7 +1225,11 @@ def _decision_handoff_action(
         return "halt"
     error = probe.get("error") or {}
     _assembly_stage_failure(
-        stage, report, activity, str(error.get("message") or state), str(error.get("code") or "DECISION_HANDOFF_BLOCKED")
+        stage,
+        report,
+        activity,
+        str(error.get("message") or state),
+        str(error.get("code") or "DECISION_HANDOFF_BLOCKED"),
     )
     return "halt"
 
@@ -1248,10 +1293,16 @@ def _assembly_harness_action(
         return None
     if stage.required:
         _assembly_stage_failure(
-            stage, report, activity, "harness_not_declared", "HARNESS_REQUIRED_EVIDENCE_MISSING"
+            stage,
+            report,
+            activity,
+            "harness_not_declared",
+            "HARNESS_REQUIRED_EVIDENCE_MISSING",
         )
         return "halt"
-    return _skip_stage(stage, report, activity, "harness_not_declared", "HSF_HARNESS_NOT_APPLICABLE")
+    return _skip_stage(
+        stage, report, activity, "harness_not_declared", "HSF_HARNESS_NOT_APPLICABLE"
+    )
 
 
 def _assembly_evidence_action(
@@ -1268,10 +1319,20 @@ def _assembly_evidence_action(
         return None
     if stage.required:
         _assembly_stage_failure(
-            stage, report, activity, "acceptance_contract_missing", "ACCEPTANCE_EVIDENCE_REQUIRED_MISSING"
+            stage,
+            report,
+            activity,
+            "acceptance_contract_missing",
+            "ACCEPTANCE_EVIDENCE_REQUIRED_MISSING",
         )
         return "halt"
-    return _skip_stage(stage, report, activity, "acceptance_evidence_not_declared", "SPECLINE_EVIDENCE_NOT_APPLICABLE")
+    return _skip_stage(
+        stage,
+        report,
+        activity,
+        "acceptance_evidence_not_declared",
+        "SPECLINE_EVIDENCE_NOT_APPLICABLE",
+    )
 
 
 def _assembly_dry_run(
