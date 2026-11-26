@@ -857,32 +857,42 @@ def _assembly_scope_requirements(root, feature):
     }
 
 
+def _conditional_inputs_present(root, feature, stage) -> bool | None:
+    """Whether an input-gated stage has its input; None for stages that are not input-gated."""
+    from .assembly import decision_source
+
+    checks = {
+        ("specline", "evidence"): lambda: (
+            root / ".factory" / "workflow-audit-contract.json"
+        ).is_file(),
+        ("prestige", "score"): lambda: (root / "smoke" / f"{feature}.ui").is_file(),
+        ("hsf", "compile"): lambda: decision_source(root, feature) is not None,
+        ("hsf", "harness-check"): lambda: (root / "harness" / "harness.yaml").is_file(),
+    }
+    check = checks.get((stage.module, stage.name))
+    return None if check is None else check()
+
+
+def _stage_applies(root, feature, stage) -> bool:
+    from .assembly import forge_stage_skippable
+
+    if forge_stage_skippable(root, feature, stage)[0]:
+        return (
+            False  # assembly skips it; it is not part of this run's declared sequence
+        )
+    if stage.required:
+        return True
+    present = _conditional_inputs_present(root, feature, stage)
+    if present is not None:
+        return stage.present and present
+    return stage.module in BASE_REQUIRED_MODULES or stage.present
+
+
 def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
     """Declare required and applicable native stages before assembly runs them."""
-
-    from .assembly import decision_source, forge_stage_skippable
-
-    def applies(stage):
-        if forge_stage_skippable(root, feature, stage)[0]:
-            return False  # assembly skips it; it is not part of this run's declared sequence
-        if stage.required:
-            return True
-        if (stage.module, stage.name) in CONDITIONAL_STAGE_KEYS:
-            return (
-                stage.present
-                and (root / ".factory" / "workflow-audit-contract.json").is_file()
-            )
-        if stage.module in BASE_REQUIRED_MODULES:
-            return True
-        if stage.module == "prestige":
-            return stage.present and (root / "smoke" / f"{feature}.ui").is_file()
-        if stage.module == "hsf" and stage.name == "compile":
-            return stage.present and decision_source(root, feature) is not None
-        if stage.module == "hsf" and stage.name == "harness-check":
-            return stage.present and (root / "harness" / "harness.yaml").is_file()
-        return stage.present
-
-    planned = [stage.stage_id for stage in stages if applies(stage)]
+    planned = [
+        stage.stage_id for stage in stages if _stage_applies(root, feature, stage)
+    ]
     report["sequence_run_id"] = run_id
     report["sequence_recorded"] = False
     if not planned:
