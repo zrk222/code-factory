@@ -4596,6 +4596,15 @@ rules:
           - pattern-not-inside: |
               $X = $O.encode(...);
               ...
+      # Attribute values spliced in by concatenation ('="' + value + '"' or "=\"" + v + "\"";
+      # SQL's ='" + v + "'" quoting is a different shape). The leading
+      # character class keeps out jQuery attribute selectors ([name="' + v + '"]),
+      # which are queries, not markup.
+      - patterns:
+          - pattern-regex: '(?:^|[^\w\[\-])[\w:-]*=(?:"''|\\"[''"]|\\''[''"])\s*\+\s*(?P<VALUE>[A-Za-z_$][\w$.]*(?:\[[^\]\n]{1,40}\])?)\s*\+\s*(?:''"|[''"]\\"|[''"]\\'')'
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: '^(?![A-Z_][A-Z0-9_]*$)(?!(?:width|height|x|y|size|index|count|i|j|k|n|id)$)(?!\w*(?:Width|Height)$)'
     metadata:
       tier: review
       category: security

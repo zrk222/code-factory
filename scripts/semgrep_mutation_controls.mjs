@@ -184,7 +184,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 1,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
-  'opt.factory.rules.javascript.html-template-unescaped-interpolation': 3,
+  'opt.factory.rules.javascript.html-template-unescaped-interpolation': 4,
   'opt.factory.rules.javascript.parameter-shell-command': 6,
   'opt.factory.rules.javascript.parameter-sql-text': 2,
   'opt.factory.rules.javascript.request-command-injection': 4,
@@ -263,6 +263,8 @@ export function javascriptControlManifest() {
     { rule, path: 'typescript-shell-binding.ts', line: 5 },
     { rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
       path: 'typescript-html-escaped-local.ts', line: 10 },
+    { rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
+      path: 'typescript-html-escaped-local.ts', line: 15 },
   ];
 }
 
@@ -274,9 +276,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 255 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 256 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 255;
+const REVIEWED_FINDINGS = 256;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

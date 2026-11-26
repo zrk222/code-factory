@@ -9,3 +9,13 @@ export function attachmentRaw(name: string) {
   // ruleid: javascript.html-template-unescaped-interpolation
   return `<a class="attachment" download="${label}">${label}</a>`;
 }
+
+export function attribute(name: string, value: string) {
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return " " + name + "=\"" + value + "\"";
+}
+
+export function checkbox(name: string) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return $('input[name="' + name + '"]');
+}
