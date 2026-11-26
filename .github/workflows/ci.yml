@@ -192,10 +192,139 @@ jobs:
             native-signed-child-lifecycle-summary.json
           if-no-files-found: error
 
+  registered-recall-scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+    outputs:
+      replay: ${{ steps.scope.outputs.replay }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Identify changes to the registered detector or gate
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "$BASE_SHA^{commit}"; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          paths=(
+            '.github/workflows/ci.yml'
+            'deploy/deep-adapters/rules/semgrep-pattern-limited.yml'
+            'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'
+            'docs/evidence/recall-registered-exposed-161-manifest.json'
+            'docs/evidence/recall-registered-exposed-161-profile.json'
+            'scripts/recall_coverage.mjs'
+            'scripts/recall_harness.mjs'
+            'scripts/recall_losses.mjs'
+            'scripts/verify_registered_recall.mjs'
+            'scripts/verify_registered_recall.test.mjs'
+          )
+          changed="$(git diff --name-only "$BASE_SHA" HEAD -- "${paths[@]}")"
+          if [[ -n "$changed" ]]; then
+            echo 'replay=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'replay=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  registered-recall-retention:
+    needs: registered-recall-scope
+    if: needs.registered-recall-scope.outputs.replay == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+      SEMGREP_SEND_METRICS: "off"
+      OPENGREP_ARCHIVE_SHA256: de250811f7209619e4fdafff55e5f13cb24a70c9cb0ea86435c2c92393ea04ab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22.23.4"
+      - name: Test the recall retention verifier
+        run: node --test scripts/verify_registered_recall.test.mjs
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        id: engine-cache
+        with:
+          path: ${{ runner.temp }}/cf-opengrep-2.1.0.zip
+          key: cf-opengrep-${{ runner.os }}-${{ runner.arch }}-2.1.0-${{ env.OPENGREP_ARCHIVE_SHA256 }}
+      - name: Replay the registered 161-case exposed benchmark
+        shell: pwsh
+        env:
+          ENGINE_CACHE_HIT: ${{ steps.engine-cache.outputs.cache-hit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $timer = [Diagnostics.Stopwatch]::StartNew()
+          function RecordElapsed($phase) {
+            "- ${phase}: $([Math]::Round($timer.Elapsed.TotalSeconds, 3)) s" >> $env:GITHUB_STEP_SUMMARY
+            $timer.Restart()
+          }
+          "- Runner: $env:ImageOS $env:ImageVersion, Node $(node --version), engine cache hit: $env:ENGINE_CACHE_HIT" >> $env:GITHUB_STEP_SUMMARY
+          '- Scoring: three case workers, one engine worker per case, 15 second engine timeout and serial timeout retry.' >> $env:GITHUB_STEP_SUMMARY
+          $root = Join-Path $env:RUNNER_TEMP 'cf-registered-recall'
+          New-Item -ItemType Directory -Path $root | Out-Null
+          function RequireHash($path, $sha) {
+            if ((Get-FileHash -LiteralPath $path).Hash -ne $sha) { throw "Pinned bytes changed at $path" }
+          }
+          $archive = Join-Path $env:RUNNER_TEMP 'cf-opengrep-2.1.0.zip'
+          $reference = Join-Path $root 'reference.json'
+          $score = Join-Path $root 'score.json'
+          $rules = 'deploy/deep-adapters/rules/semgrep-pattern-limited.yml'
+          $manifest = 'docs/evidence/recall-registered-exposed-161-manifest.json'
+          $profile = 'docs/evidence/recall-registered-exposed-161-profile.json'
+          RequireHash $manifest 'bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60'
+          RequireHash $profile '8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/zrk222/code-factory/123622f6058427a1f7468463e9c4685b540ed6ee/docs/evidence/recall-restore-39-exposed-161.json' -OutFile $reference
+          RequireHash $reference '0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf'
+          RecordElapsed 'Reference download and input verification'
+          if ((Test-Path -LiteralPath $archive) -and
+              (Get-FileHash -LiteralPath $archive).Hash -ne $env:OPENGREP_ARCHIVE_SHA256) {
+            Write-Warning 'Cached scanner archive differs from the pin. Downloading pinned bytes.'
+            Remove-Item -LiteralPath $archive
+          }
+          if (!(Test-Path -LiteralPath $archive)) {
+            Invoke-WebRequest 'https://github.com/opengrep/opengrep/releases/download/v2.1.0/opengrep_windows_x86.zip' -OutFile $archive
+          }
+          RequireHash $archive $env:OPENGREP_ARCHIVE_SHA256
+          Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $root engine)
+          $bin = (Get-ChildItem (Join-Path $root engine) -Recurse -File -Filter opengrep.exe).FullName
+          RequireHash $bin 'fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a'
+          RecordElapsed 'Engine archive verification and extraction'
+          node scripts/recall_harness.mjs score --manifest $manifest --rules $rules --profile $profile --opengrep $bin --workdir (Join-Path $root work) --checkpoint-dir (Join-Path $root checkpoints) --jobs 3 --extra-arg '--timeout=15' --extra-arg '--jobs=1' --out $score
+          $status = $LASTEXITCODE
+          RecordElapsed 'Source preparation and scoring with any serial retry'
+          if ($status -ne 0) { exit $status }
+          node scripts/verify_registered_recall.mjs $reference $score $rules (Join-Path $root receipt.json) (Join-Path $root work)
+          $status = $LASTEXITCODE
+          RecordElapsed 'Retention verification'
+          exit $status
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: registered-recall-retention
+          path: ${{ runner.temp }}/cf-registered-recall/receipt.json
+          if-no-files-found: warn
+
   candidate-quality:
+    needs: [registered-recall-scope, registered-recall-retention]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Require passing registered recall retention
+        if: >-
+          needs.registered-recall-scope.result != 'success' ||
+          !((needs.registered-recall-scope.outputs.replay == 'true' && needs.registered-recall-retention.result == 'success') ||
+          (needs.registered-recall-scope.outputs.replay == 'false' && needs.registered-recall-retention.result == 'skipped'))
+        run: |
+          echo 'The registered recall retention job did not pass.'
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
