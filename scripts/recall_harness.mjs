@@ -102,12 +102,38 @@ function diffPath(header, prefix) {
 }
 
 // Old- and new-side line sets of every in-language, non-test file in a -U5 diff.
-export function parseHunks(diff, extensions) {
+export function parseHunks(diff, extensions, editedLines = null) {
   const files = {};
   let oldPath = null, newPath = null;
-  let inHunks = false;
+  let inHunks = false, cursor = null, valid = true;
+  const deleted = new Map(), added = new Map();
+  const mark = (side, path, line) => {
+    if (!path) return;
+    if (!side.has(path)) side.set(path, new Set());
+    side.get(path).add(line);
+  };
   const keep = path => path && extensions.some(ext => path.endsWith(`.${ext}`)) && !isTestPath(path);
   for (const line of diff.split('\n')) {
+    if (cursor && (cursor.oldLeft || cursor.newLeft)) {
+      if (line === '\\ No newline at end of file') continue;
+      if (line.startsWith('-') && cursor.oldLeft > 0) {
+        mark(deleted, oldPath, cursor.oldAt++);
+        cursor.oldLeft--;
+        continue;
+      }
+      if (line.startsWith('+') && cursor.newLeft > 0) {
+        mark(added, newPath, cursor.newAt++);
+        cursor.newLeft--;
+        continue;
+      }
+      if (line.startsWith(' ') && cursor.oldLeft > 0 && cursor.newLeft > 0) {
+        cursor.oldAt++; cursor.newAt++;
+        cursor.oldLeft--; cursor.newLeft--;
+        continue;
+      }
+      valid = false;
+      cursor = null;
+    }
     if (line.startsWith('diff --git ')) { oldPath = newPath = null; inHunks = false; continue; }
     if (!inHunks && line.startsWith('--- ')) { oldPath = diffPath(line, 'a/'); continue; }
     if (!inHunks && line.startsWith('+++ ')) { newPath = diffPath(line, 'b/'); continue; }
@@ -115,7 +141,12 @@ export function parseHunks(diff, extensions) {
     if (!match) continue;
     inHunks = true;
     appendHunk(files, match, oldPath, newPath, keep);
+    if (editedLines) {
+      const [oldAt, oldLeft, newAt, newLeft] = [match[1], match[2] ?? '1', match[3], match[4] ?? '1'].map(Number);
+      cursor = { oldAt, oldLeft, newAt, newLeft };
+    }
   }
+  if (editedLines && valid && !cursor?.oldLeft && !cursor?.newLeft) Object.assign(editedLines, { deleted, added });
   return files;
 }
 
@@ -256,24 +287,29 @@ export function sarifFindings(sarif, packetPaths) {
 }
 
 // Hunk/file hit and fix-side residuals for one case.
-export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) {
+export function scoreCase({ families, hunks, editedLines, oldFindings, newFindings, rules }) {
   const wanted = new Set(families);
   const relevant = finding => (rules[finding.rule] ?? []).some(family => wanted.has(family));
   const changedFindings = oldFindings.filter(f => Object.hasOwn(hunks, f.path));
   const oldHits = changedFindings.filter(relevant);
   const hunkHits = oldHits.filter(f => hunks[f.path]?.old.includes(f.line));
   const matchedFamilies = [...new Set(hunkHits.flatMap(f => rules[f.rule].filter(family => wanted.has(family))))].sort();
-  // Secondary, pre-registered: the alert's source or any dataflow step is on a changed line.
+  // Secondary, pre-registered: the alert endpoint or a dataflow step overlaps the old hunk.
   const traceHits = oldHits.filter(f => [[f.path, f.line], ...(f.trace ?? [])]
     .some(([path, line]) => hunks[path]?.old.includes(line)));
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
   const hunkSpans = hunkHits.map(f => f.span ?? null);
+  const editedLineEvidence = editedLines?.deleted && {
+    deleted_line_hit: hunkHits.some(f => editedLines.deleted.get(f.path)?.has(f.line)),
+    added_line_residuals: residual.filter(f => editedLines.added.get(f.path)?.has(f.line)).map(f => [f.rule, f.path, f.line]),
+  };
   return { hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
     hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]),
     ...(hunkSpans.some(Boolean) ? { hunk_spans: hunkSpans } : {}), matched_hunk_families: matchedFamilies,
     alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
-    fix_side_residual: residual.map(f => [f.rule, f.path, f.line]) };
+    fix_side_residual: residual.map(f => [f.rule, f.path, f.line]),
+    ...(editedLineEvidence ? { edited_lines: editedLineEvidence } : {}) };
 }
 
 function hasScanError(notes) {
@@ -311,6 +347,16 @@ export function summarize(rows) {
     return out;
   };
   const hits = scored.filter(row => row.hunk_hit).length;
+  const localized = scored.filter(row => row.edited_lines);
+  const localization = localized.reduce((totals, row) => {
+    const { deleted_line_hit: hit, added_line_residuals: residuals } = row.edited_lines;
+    totals.deleted_line_hits += Number(hit);
+    totals.context_only_hunk_hits += Number(row.hunk_hit && !hit);
+    totals.added_line_residual_alerts += residuals.length;
+    totals.context_only_residual_alerts += row.fix_side_residual.length - residuals.length;
+    return totals;
+  }, { scored: localized.length, deleted_line_hits: 0, context_only_hunk_hits: 0,
+    added_line_residual_alerts: 0, context_only_residual_alerts: 0 });
   const fileHits = scored.filter(row => row.file_hit).length;
   const alerts = rows.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
   const scoredAlerts = scored.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
@@ -318,6 +364,7 @@ export function summarize(rows) {
     cases: rows.length, scored: scored.length, file_coverage: summarizeCoverage(rows),
     status: rows.reduce((acc, row) => ({ ...acc, [row.status]: (acc[row.status] ?? 0) + 1 }), {}),
     hunk_hits: hits, hunk_recall_wilson95: wilson(hits, scored.length),
+    ...(localized.length ? { edited_lines: localization } : {}),
     hunk_hits_over_registered_cases: { hits, cases: rows.length, wilson95: wilson(hits, rows.length) },
     trace_hits: scored.filter(row => row.trace_hit).length,
     trace_recall_wilson95: wilson(scored.filter(row => row.trace_hit).length, scored.length),
@@ -550,8 +597,9 @@ function bindPreparedCase(directory, record, key, row, scope) {
   }
   const patch = readFileSync(join(directory, 'diff.patch'));
   if (sha256(patch) !== record.diff_sha256) throw new Error('Prepared diff byte fingerprint differs');
-  return { ...record, changes: readPreparedInventory(directory, record.changed_files_sha256),
-    hunks: parseHunks(patch.toString('utf8'), scopeExtensions(row.ecosystem, scope)),
+  const editedLines = {};
+  const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(row.ecosystem, scope), editedLines);
+  return { ...record, changes: readPreparedInventory(directory, record.changed_files_sha256), hunks, editedLines,
     old: record.source_packets.old.length ? join(directory, 'old') : null,
     new: record.source_packets.fixed.length ? join(directory, 'new') : null };
 }
@@ -712,7 +760,7 @@ async function scoreOne(context, row) {
   const old = await observeSide(context, prepared.old, join(reports, 'old.sarif'), oldPackets);
   const fixed = await observeSide(context, prepared.new, join(reports, 'new.sarif'), fixedPackets);
   const families = familiesFor(row.cwes);
-  const result = scoreCase({ families, hunks: prepared.hunks, oldFindings: old.findings,
+  const result = scoreCase({ families, hunks: prepared.hunks, editedLines: prepared.editedLines, oldFindings: old.findings,
     newFindings: fixed.findings, rules: context.ruleMap });
   const coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
     scans: { old, fixed }, extensions: scopeExtensions(row.ecosystem, context.scope), isTestPath });
@@ -1203,6 +1251,8 @@ function pairedCaseEvidence({ before, after }) {
         ...(previous.hunk_spans ? { baseline_hunk_spans: previous.hunk_spans } : {}) } : {}),
       registered_families: registeredFamilies(row), baseline_matched_hunk_families: baselineFamilies,
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
+      ...(previous?.edited_lines && scoredCase(previous) ? { before_edited_lines: previous.edited_lines } : {}),
+      ...(scoredCase(row) && row.edited_lines ? { after_edited_lines: row.edited_lines } : {}),
       retried_serially: Boolean(row.retried_serially) };
   });
 }

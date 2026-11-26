@@ -52,6 +52,35 @@ test('hunk content cannot overwrite paths and file headers retain spaces', () =>
   } });
 });
 
+test('edited lines distinguish deleted anchors and fixed-side context without changing hunk scoring', () => {
+  const editedLines = {};
+  const diff = DIFF.replace('-b', '--- content').replace('+b2', '+++ content').replace('+b3', '+b3\n\\ No newline at end of file');
+  const hunks = parseHunks(diff, ['py'], editedLines);
+  const alert = line => ({ rule: 'fixture.review', path: 'app/files.py', line });
+  const score = oldFindings => scoreCase({ families: ['xss'], hunks, editedLines, oldFindings,
+    newFindings: [alert(10), alert(11), alert(12), alert(13)], rules: { 'fixture.review': ['xss'] } });
+  const context = score([alert(10), alert(12)]), deleted = score([alert(11)]);
+  assert.equal(context.hunk_hit, true);
+  assert.equal(context.edited_lines.deleted_line_hit, false);
+  assert.equal(deleted.hunk_hit, true);
+  assert.equal(deleted.edited_lines.deleted_line_hit, true);
+  assert.deepEqual(context.edited_lines.added_line_residuals, [
+    ['fixture.review', 'app/files.py', 11], ['fixture.review', 'app/files.py', 12],
+  ]);
+  assert.equal(context.fix_side_residual.length, 4);
+  const report = summarize([context, deleted].map(row => ({ ...row, status: 'scored', families: ['xss'], ecosystem: 'PyPI' })));
+  assert.deepEqual(report.edited_lines, { scored: 2, deleted_line_hits: 1, context_only_hunk_hits: 1,
+    added_line_residual_alerts: 4, context_only_residual_alerts: 4 });
+  const insertion = {};
+  parseHunks('diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,0 +2 @@\n+added\n', ['py'], insertion);
+  assert.equal(insertion.deleted.size, 0);
+  assert.deepEqual([...insertion.added.get('a.py')], [2]);
+  const truncated = {};
+  const broad = parseHunks(diff.split('\\ No newline')[0].replace('+b3\n', ''), ['py'], truncated);
+  assert.equal(broad['app/files.py'].old.length, 3);
+  assert.deepEqual(truncated, {});
+});
+
 test('rule families read both inline and block CWE lists', () => {
   const rules = `rules:
   - id: python.request-path-traversal
@@ -673,6 +702,7 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   const { root, workdir, manifest, profile, baseline, candidate, old, diff, opts } = fixture;
   const before = await scoreManifest(manifest, baseline, opts);
   assert.equal(before.summary.hunk_hits, 1);
+  assert.equal(before.summary.edited_lines.deleted_line_hits, 1);
   assert.equal(before.manifest_sha256, sha256(readFileSync(manifest)));
   assert.equal(before.profile_sha256, sha256(readFileSync(profile)));
   assert.equal(before.ruleset_sha256, sha256(readFileSync(baseline)));
@@ -721,6 +751,9 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   assert.deepEqual(evaluation.new_errors, [feederRow.ghsa]);
   assert.deepEqual(evaluation.new_coverage_gaps, []);
   assert.deepEqual(dev.cases[0].matched_hunk_families, ['xss']);
+  assert.deepEqual(dev.cases[0].before_edited_lines, { deleted_line_hit: true, added_line_residuals: [] });
+  assert.equal(dev.cases[0].after_edited_lines, undefined);
+  assert.equal(dev.after.edited_lines, undefined);
   assert.equal(dev.after.scored, 0);
   assert.equal(dev.after.outcomes.error, 1);
   assert.equal(observed.status, 'incomplete');
