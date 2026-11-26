@@ -93,13 +93,1804 @@
             "scored": 2
           }
         }
+      },
+      "baseline": {
+        "raw_score_sha256": "fa958ee73e9050040818febdf878647557a499181ea71cb31f9708466b41f233",
+        "rules_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+        "started_utc": "2026-11-26T12:24:29.5553649Z",
+        "finished_utc": "2026-11-26T12:28:28.7229913Z",
+        "registered": 282,
+        "scored": 261,
+        "hunk_hits": 22,
+        "hunk_recall_wilson95_registered": [
+          0.052081,
+          0.115289
+        ],
+        "outcomes": {
+          "miss": 239,
+          "hit": 22,
+          "unknown": 21
+        },
+        "fixed_side_residual_alerts": 31,
+        "edited_line_diagnostics": {
+          "scored": 261,
+          "deleted_line_hits": 13,
+          "context_only_hunk_hits": 9,
+          "added_line_residual_alerts": 15,
+          "context_only_residual_alerts": 16
+        },
+        "by_ecosystem": {
+          "Maven": {
+            "registered": 33,
+            "hunk_hits": 0
+          },
+          "PyPI": {
+            "registered": 68,
+            "hunk_hits": 6
+          },
+          "Go": {
+            "registered": 61,
+            "hunk_hits": 7
+          },
+          "npm": {
+            "registered": 69,
+            "hunk_hits": 6
+          },
+          "Packagist": {
+            "registered": 49,
+            "hunk_hits": 3
+          },
+          "RubyGems": {
+            "registered": 2,
+            "hunk_hits": 0
+          }
+        },
+        "by_family_scored": {
+          "sql": {
+            "hits": 2,
+            "scored": 17
+          },
+          "code": {
+            "hits": 0,
+            "scored": 29
+          },
+          "path": {
+            "hits": 10,
+            "scored": 93
+          },
+          "xss": {
+            "hits": 4,
+            "scored": 71
+          },
+          "cmd": {
+            "hits": 4,
+            "scored": 25
+          },
+          "deser": {
+            "hits": 2,
+            "scored": 18
+          },
+          "tls": {
+            "hits": 0,
+            "scored": 10
+          },
+          "incl": {
+            "hits": 0,
+            "scored": 2
+          }
+        }
+      },
+      "paired": {
+        "gains_over_baseline": 8,
+        "losses_from_baseline": 2,
+        "source_binding_mismatches": 0,
+        "transitions": {
+          "hit to hit": 20,
+          "hit to miss": 2,
+          "miss to hit": 8,
+          "miss to miss": 231,
+          "unknown to unknown": 21
+        },
+        "case_outcomes": [
+          {
+            "ghsa": "GHSA-7ph3-grqh-pv9v",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-v798-mcc6-2m3m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vwxw-jrg6-9jxv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-72r4-9c5j-mj57",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2fp4-5v5c-4448",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4c8j-mgm4-qqvp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-75mw-h36v-2jv7",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-f5gc-qxf8-mh9g",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-pxcc-8665-phx8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-r937-wjx7-w2jp",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-pp89-732f-3g8q",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-6c99-87fr-6q7r",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hrmj-8fm9-cg8x",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q63x-9pfm-mjx4",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wp5x-hrrw-6r4g",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3w28-36p9-w929",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-85qj-f5wg-rwp9",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-89mr-xqfv-758m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-c39w-43gm-34h5",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-j3rv-43j4-c7qm",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wc3f-xc32-435f",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-chxj-gxww-q98w",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fhrq-3gmx-p879",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gh82-f9x8-5frx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hvqh-jw65-wcpq",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-v73p-f52r-fmmr",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7pm4-56h2-5rxr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2fmp-9rvw-hc96",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-38x5-rcv4-xf7x",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4936-9hrh-qqpw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-869j-r97x-hx2g",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-c29q-5xm7-5p62",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-h5jc-78hr-3pc9",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-mwqm-4fw3-cjvr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wwf9-7jrc-rv4q",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-x975-rgx4-5fh4",
+            "baseline": "hit",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xg3j-c7q4-f9ph",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8m59-7xv8-735h",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-cmwh-pvxp-8882",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fcw5-x6j4-ccmp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hxpf-9xvq-wph8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-p6gq-j5cr-w38f",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-69qj-pvh9-c5wg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7v5m-pr3q-6453",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-c54g-xjwj-8g82",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gr75-jv2w-4656",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q8gq-377p-jq3r",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-58w9-8g37-x9v5",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-rgjc-h3x7-9mwg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-x5qj-865h-mgvm",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-239w-m3h6-ch8v",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gxjx-7m74-hcq8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jh32-v29g-68pq",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jvf5-rxvv-3mcg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-p5j5-4j3q-8mq8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4x76-22x2-rx8v",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hqp4-2352-xf5r",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-px92-q6rc-6mwv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-rcvq-m9j9-6f4g",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wxq4-cc2q-338q",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7j4w-x8x8-5mvg",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8g5p-jxp9-457c",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-93qh-vwrm-c5pw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-g2xq-2v27-4rh3",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-qv8h-rqr3-mph9",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vf2h-7x3w-97fr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-6qwm-5fm9-cvjx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-f6vj-48fm-hmvx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jvc5-6g7q-c843",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-x863-p983-p4f7",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7hp6-g3pq-3pc3",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-p2j4-c4g6-rpf5",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vjmr-f5fc-vr2w",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jjrm-hr5f-673x",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-w8p5-mx5w-cpqj",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2fhx-q92v-5fhv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4p62-hqp5-g644",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-66q5-cj5g-wrfx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wqcr-7rf3-f64m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-c27g-q93r-2cwf",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-ch57-39q2-4crm",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-f22v-gfqf-p8f3",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jg22-mg44-37j8",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-m3v4-v5gx-7wf5",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-85rw-g4f4-jprr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-29h4-r29x-hchv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-5j8p-5rrj-8wjg",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9277-mp7x-85jf",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-c3px-h233-h6fq",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hhg7-c65m-h7ff",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-r2f4-ff2p-xc64",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-v45h-mqf4-6939",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-28gh-q3gw-pvx8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2gv2-cffp-j227",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2qv6-9wx5-cwv4",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3234-gxc3-pq6f",
+            "baseline": "hit",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-36fc-7wjg-mfvj",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-cv2p-68f4-f4pw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-h4ph-crvj-9h92",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hmr5-2xcr-v8pp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-ph9p-34f9-6g65",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-29pf-2h5f-8g72",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fgmj-fm8m-jvvx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hqmv-v56g-4m47",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hxmh-2xc4-c894",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xq3r-2qv5-vqqm",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9xq9-36w5-q796",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fhhq-h4hg-549x",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-97r8-rf7q-wmjw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jx93-pf6x-874r",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-x7m9-mwc2-g6w2",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-f63h-wc26-pmvc",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3363-2ph6-35wh",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-5hhf-xmfx-4vvr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-64rr-pp78-62ww",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-6wxc-8mgq-w26m",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-ch4j-vcf5-58x5",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jrrg-99xh-5j2q",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-mq5j-pw29-jcv3",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-5qrq-9645-g5g2",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7p5m-v798-f8vv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-f3cj-j4f6-wq85",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fm77-94qm-4894",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-m8fg-67j7-cx4v",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q23m-vm9r-5745",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q58j-g3f4-h26h",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-rpr9-rxv7-x643",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-g3xq-3gmv-qq8g",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xr5h-phrj-8vxv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hx53-77qj-8663",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3cjv-h753-qf7h",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-42h5-h8qh-vv9v",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-5vpg-rj7q-qpw2",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-6jh4-47v2-4g37",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7mqj-8gj2-cg59",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9c3j-xm6v-j7j3",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-g8f2-4f4f-5jqw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8g7g-hmwm-6rv2",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fmg2-f5r9-24qc",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q4p8-8j9m-8hxj",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-r42m-953q-6vjx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-rqv2-m695-f8j4",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3v85-fqvh-7rxf",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-5cmv-3rc4-7279",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-98h9-4798-4q5v",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fwj3-42wh-8673",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gq5c-rw37-g46c",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-j822-46r5-h4qx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-mmpx-jh39-wrv6",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xv9c-mjw8-79gf",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-289f-fq7w-6q2w",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2h4p-vjrc-8xpq",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3gmf-p6r4-q8m6",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fhq3-2gf3-8f3j",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-w4rc-p66m-x6qq",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xwqr-rcqg-22mr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-526f-jxpj-jmg2",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7pwc-h2j2-rjgj",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9695-8fr9-hw5q",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fw8g-cg8f-9j28",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hrcw-xc63-g29m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-r39h-4c2p-3jxp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gxxh-8vcj-w2mh",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q4ph-8x8g-95f8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-qq3r-w4hj-gjp6",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vp2f-cqqp-478j",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-86hp-qxqp-w9wv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q7r4-hc83-hf2q",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-55wf-5m3q-6jjf",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-f6pr-83pg-ghh6",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gfg9-5357-hv4c",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gw2x-mfwr-h46p",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-h4hv-92pp-pcjg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-h8cj-hpmg-636v",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-74m3-9qvm-rp9h",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hffm-xvc3-vprc",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8x35-hph8-37hq",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gx2m-mcc2-r4p3",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-mw35-8rx3-xf9r",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8h25-q488-4hxw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-98f2-w9h9-7fp9",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-m8mh-x359-vm8m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q2pw-xx38-p64j",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-qmcv-hh7c-3m56",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2jrg-rf5x-568g",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4948-f92q-f432",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-6457-mxpq-4fqq",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-c3h8-g69v-pjrg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-h7mw-gpvr-xq4m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hjh7-r5w8-5872",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-j88v-2chj-qfwx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jfwf-28xr-xw6q",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-mgcp-mfp8-3q45",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-p3h2-2j4p-p83g",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q89c-q3h5-w34g",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vmj7-7xmm-4349",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-w937-fg2h-xhq2",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wrwh-c28m-9jjh",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-x2xq-qhjf-5mvg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xfxp-ppx7-cqrp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xjvc-pw2r-6878",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-676v-wh57-p375",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-6vgr-cp5c-ffx3",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-7ccv-rp6m-rffr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-m6rx-7pvw-2f73",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-mph4-q2vm-w2pw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-66r7-m7xm-v49h",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9qhq-v63v-fv3j",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-c97m-vxhj-p7j6",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-p6x5-p4xf-cc4r",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-533q-w4g6-5586",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-855c-r2vq-c292",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-97v6-998m-fp4g",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-ffgh-3jrf-8wvh",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-gc9w-cc93-rjv8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hf5p-q87m-crj7",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-v92g-xgxw-vvmm",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-w59f-67xm-rxx7",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-cw73-5f7h-m4gv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-76hw-p97h-883f",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-875v-7m49-8x88",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8q5w-mmxf-48jg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hc8w-h2mf-hp59",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-j98m-w3xp-9f56",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-w4fj-87j5-f25c",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4f3f-g24h-fr8m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9pr4-rf97-79qh",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-jcxm-m3jx-f287",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vffh-x6r8-xx99",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3wqj-33cg-xc48",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-45q4-x4r9-8fqj",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8wrq-fv5f-pfp2",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-93vf-569f-22cq",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9cp7-j3f8-p5jx",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hr2v-4r36-88hr",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-m5gr-86j6-99jp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vj8v-p5vw-m6v5",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vmx8-mqv2-9gmg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-x783-xp3g-mqhp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-x7mm-9vvv-64w8",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3xp3-pr8x-f755",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wp29-qmvj-frvp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-3xxc-pwj6-jgrj",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-5gfj-64gh-mgmw",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-92pp-h63x-v22m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-r758-8hxw-4845",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-v273-448j-v4qj",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-w8wv-vfpc-hw2w",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wmmm-f939-6g9c",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xf4j-xp2r-rqqx",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-69w3-r845-3855",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-89gg-p5r5-q6r4",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-cpm7-cfpx-3hvp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fh64-r2vc-xvhr",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-q4gv-pjmh-c735",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-qmwh-9m9c-h36m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4w7w-66w2-5vf9",
+            "baseline": "miss",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-cjg8-h5qc-hrjv",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-wx4p-jr66-jfp9",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-xqv9-qr76-hfq2",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2wfh-rcwf-wh23",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-4744-96p5-mp2j",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-8x9r-hvwg-c55h",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-fcm4-4pj2-m5hf",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-2fr7-cc4f-wh98",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-6qcc-6q27-whp8",
+            "baseline": "hit",
+            "candidate": "hit",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-mcv8-8m8x-48pg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-9m2v-hc5g-5jpv",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-35xm-qvjg-8m42",
+            "baseline": "unknown",
+            "candidate": "unknown",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-5474-4w2j-mq4c",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-85v3-4m8g-hrh6",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-cmw6-hcpp-c6jp",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-ff66-236v-p4fg",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-g87c-r2jp-293w",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-ghq9-vc6f-8qjf",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-hgjq-p8cr-gg4h",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-j6v5-g24h-vg4j",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-p998-jp59-783m",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-prxj-3gcv-cqrh",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-r5fr-rjxr-66jc",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-vx58-fwwq-5g8j",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          },
+          {
+            "ghsa": "GHSA-whv5-4q2f-q68g",
+            "baseline": "miss",
+            "candidate": "miss",
+            "same_scored_source": true
+          }
+        ]
       }
     }
   },
   "pending": [
     "Candidate hunk-alert blinded precision",
     "Full-tree flagged-anywhere and 18-control density",
-    "primary baseline score",
     "legacy candidate score"
   ]
 }

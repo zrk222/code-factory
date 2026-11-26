@@ -9,7 +9,9 @@ and incomplete case remains in the registered denominator.
 
 | Engine | Pinned baseline | Pinned candidate | Candidate Wilson 95% |
 | --- | ---: | ---: | ---: |
-| OpenGrep 2.1.0 Windows x64 | Pending | 28/282 (9.9%) | 7.0%–14.0% |
+| OpenGrep 2.1.0 Windows x64 | 22/282 (7.8%) | 28/282 (9.9%) | 7.0%–14.0% |
+
+The paired OpenGrep 2.1.0 comparison gained 8 case hits and lost 2. Fixed-side residual alerts rose from 31 to 47.
 
 [Frozen run plan](evidence/fresh-test-plan-q2.json) · [Verified score receipt](evidence/heldout-recall-2026-q2.json)
 
