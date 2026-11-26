@@ -183,7 +183,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 2,
-  'opt.factory.rules.javascript.html-template-unescaped-interpolation': 4,
+  'opt.factory.rules.javascript.html-template-unescaped-interpolation': 6,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.parameter-shell-command': 7,
   'opt.factory.rules.javascript.parameter-sql-text': 11,
@@ -278,6 +278,9 @@ export function javascriptControlManifest() {
     // non-exiting checks, and reads that precede the check.
     ...[21, 50, 58, 63, 67, 72].map(line => ({ rule: 'opt.factory.rules.javascript.request-path-traversal',
       path: 'typescript-path-guard.ts', line })),
+    // Values inside inline event-handler attributes.
+    ...[4, 9].map(line => ({ rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
+      path: 'typescript-html-event-handler.ts', line })),
   ];
 }
 
@@ -291,7 +294,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 338;
+const REVIEWED_FINDINGS = 340;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -355,6 +358,7 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-html-escaped-local-controls.txt', 'typescript-html-escaped-local.ts'],
   ['ts', 'tsx-sql-identifier-controls.txt', 'typescript-sql-identifier.ts'],
   ['ts', 'tsx-path-guard-controls.txt', 'typescript-path-guard.ts'],
+  ['ts', 'tsx-html-event-handler-controls.txt', 'typescript-html-event-handler.ts'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['cs', 'csharp-sql-builder-controls.txt', 'csharp-sql-builder.cs'],

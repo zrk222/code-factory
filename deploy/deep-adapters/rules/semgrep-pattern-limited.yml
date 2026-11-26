@@ -5505,6 +5505,15 @@ rules:
               - pattern-not-inside: |
                   $X = $O.encode(...);
                   ...
+          # Anywhere inside an inline event-handler attribute (onclick="run('${name}')") a
+          # value is script, where HTML escaping does not apply either.
+          - patterns:
+              - pattern: '`...${$X}...`'
+              - pattern-regex: <[A-Za-z][\w-]*[^<>`]*?\son[a-z]+\s*=\s*"[^"<>`\n]*?\$\{\s*(?P<VALUE>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\}[^"\n]*"
+              # UPPER_CASE constants and numeric names (counts, sizes, indexes).
+              - metavariable-regex:
+                  metavariable: $VALUE
+                  regex: '^(?!(?:[\w$]+\.)*[A-Z_][A-Z0-9_]*$)(?!(?:[\w$]+\.)*(?:width|height|x|y|size|opacity|index|idx|count|total|length|level|zIndex|i|j|k|n|\w*(?:Width|Height|Count|Total|Index|Length|Size))$)'
           # Attribute values spliced in by concatenation ('="' + value + '"' or "=\"" + v + "\"";
           # SQL's ='" + v + "'" quoting is a different shape). The leading
           # character class keeps out jQuery attribute selectors ([name="' + v + '"]),
