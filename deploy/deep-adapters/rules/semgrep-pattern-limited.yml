@@ -4009,7 +4009,7 @@ rules:
               - pattern: '$A + "$SQL" + $X'
           # Literal gate for OpenGrep's prefilter (the taint source has none): without it every
           # Java file is fully parsed. The match spans the literal and its concatenated operand.
-          - pattern-regex: '(?i)"[^"\n]*\b(?:select|insert|update|delete|create|merge|where|order|group|having|values|and|or|set|from|into)\b[^"\n]*"\s*\+[^;]*'
+          - pattern-regex: '(?i)"[^"\n]*\b(?:select|insert|update|delete|create|merge|where|order|group|having|values|and|or|set|from|into)\b[^"\n]*"\s*\+(?!\s*")[^;]*'
           - metavariable-regex:
               metavariable: $SQL
               regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
