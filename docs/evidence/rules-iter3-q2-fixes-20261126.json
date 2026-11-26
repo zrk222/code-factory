@@ -1,0 +1,570 @@
+{
+ "schema": "factory.detector-iteration-receipt.v1",
+ "date": "2026-11-26",
+ "tuning_use": "Q2 used for tuning by user decision on 2026-11-26; Q2 numbers after this commit are not held-out",
+ "scope": "Pattern-rule iteration 3: fixes for detector findings surfaced by the Q2 regression replays and the blinded Q2 review, directed by the user (\"fix findings from Q2 before Q3\"). Q2 (manifest 28063dd5) is a tuning/spent cohort from the first commit of this iteration. Validated on exposed-161 (manifest 7036f848), the 18 benign control repositories and synthetic controls. The Q3 cohort (its manifest, plan and report directory) was not read, scanned or referenced; it remains the clean test for the frozen candidate below.",
+ "rules": {
+  "previous_candidate_sha256": "8d8a46c582e712eaff52445e5844c73a5c7dc488fb96c6e5a71c76e684bf915f",
+  "final_sha256": "e375016eea86245444035f433bc802eb9eeadf8880714ef3f9fa3e0a260315be",
+  "profile_ruleset_sha256": "e375016eea86245444035f433bc802eb9eeadf8880714ef3f9fa3e0a260315be",
+  "frozen_candidate_for_q3": "e375016eea86245444035f433bc802eb9eeadf8880714ef3f9fa3e0a260315be"
+ },
+ "engines": {
+  "evaluation": "/opt/og21/bin/opengrep_linux_x86 2.1.0 d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+  "controls": [
+   "OpenGrep 1.15.0 (/opt/og/opengrep/v1.15.0, --legacy shim)",
+   "OpenGrep 2.1.0 d6a68a84"
+  ],
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6"
+ },
+ "method": {
+  "annotated_controls": "scripts/verify_semgrep_surface.mjs --fixtures-only, then opengrep --test on both engines, then a native scan of the fixture directory with the profile argv (--sarif, rule ids under opt.factory.rules) on both engines, compared exactly (rule, file, line, one finding per line) with the ruleid annotations; standalone fixtures (typescript-*.ts) are covered only by the native comparison. At every commit.",
+  "matrix": "fixedReviewedFindingCounts, REVIEWED_FINDINGS and the test constants rewritten from the native OpenGrep 1.15.0 counts after checking they equal the annotations; the TypeScript endpoint manifest lists the new standalone sink lines. Profile ruleset_sha256 rebound to each commit's rule bytes.",
+  "exposed": "scripts/recall_harness.mjs evaluate --baseline 8d8a46c5 --probe-coverage true --control-timeout 15 --max-control-increase 0 --dir /home/claude/synthctl, manifest /home/claude/pins/exposed-161-5f332b15.json (denominator 161), existing gate and residual tolerance (0.48 per hit), packets hard-linked from run-r161/captures, fresh checkpoint dir shared by the per-change runs (baseline arm resumed by exact fingerprint), under flock /tmp/recall-replay.lock. Gate and scoring code untouched.",
+  "benign_controls": "scripts/recall_harness.mjs controls over the 18 control repositories, before 816bbef3, --control-plan with only candidate_sha256 changed from control-plan-8d8a46c5.json, --scanner-path-policy true, --control-exclude build/test, --control-timeout 15, under the replay lock; compared per repository and per finding with recall-controls-8d8a46c5-benign18.json.",
+  "q2": "PRIVATE replay 3 in /home/claude/report/q2-regression-replay-3 (not committed): pinned harness copy 52eb74dc, engine d6a68a84, profile 8ec08b71, --scope ecosystem --jobs 4 --extra-arg --timeout=15 --extra-arg --jobs=1 --scanner-path-policy true; packets hard-linked from q2-regression-replay/work/cases-v4; baseline 816bbef3 reused only through exact-fingerprint checkpoint resume (279/282 resumed; 3 rows the harness never checkpoints re-observed); fresh checkpoint dir per candidate; pairing with the pinned harness gate(); substitute file-level metric recomputed from sha-verified old.sarif captures."
+ },
+ "changes": [
+  {
+   "id": "A",
+   "commit": "ab2ceefb",
+   "title": "rules: backtick identifiers sanitize only their own operand; quoting array_map",
+   "rules": [
+    "php.parameter-sql-text"
+   ],
+   "rule_bytes": "7a0f9b83a1a50495fe3b4a03a935c55a8b5145e6697c8c28c18dadcbd735cd62",
+   "finding": "1 (GHSA-r2f4-ff2p-xc64 lost by 8d8a46c5)",
+   "cause": "a7d7b5ef added a $QL . $QX . $QR backtick-identifier sanitizer; OpenGrep matches concatenation chains associatively, so $QX/$QR spanned later operands and sanitized the unquoted column list in ALTER TABLE `t` ADD INDEX `k` (cols).",
+   "controls": "2 positives (not reported by 8d8a46c5), 4 ok controls (3 reported by 8d8a46c5); matrix 322 -> 325; pass on 1.15.0 and 2.1.0",
+   "state": "7a0f9b83",
+   "exposed_161": {
+    "receipt_sha256": "70a7217bc6c14e231f10259e8fa388a98451f9f310eb38a5423e0fb80bb06311",
+    "decision": "ACCEPT",
+    "failures": [],
+    "hits": [
+     51,
+     51
+    ],
+    "gained": [],
+    "lost": [],
+    "new_errors": [],
+    "new_coverage_gaps": [],
+    "fixed_side_residuals": [
+     16,
+     16
+    ],
+    "per_hit": [
+     0.31,
+     0.31
+    ],
+    "synthetic_control_increase": 0,
+    "fixed_side_span_delta": {
+     "added": 0,
+     "removed": 0
+    }
+   },
+   "benign_18": {
+    "after_8d8a46c5": 31,
+    "after": 31,
+    "delta": 0,
+    "new_findings": 0,
+    "errors": 0,
+    "method": "direct run"
+   },
+   "q2_deltas": {
+    "vs_previous_state": "8d8a46c5",
+    "hunk_hits": [
+     27,
+     28
+    ],
+    "gained": [
+     "GHSA-r2f4-ff2p-xc64"
+    ],
+    "lost": [],
+    "substitute_file_level": [
+     55,
+     56
+    ],
+    "fixed_side_residual_alerts": [
+     44,
+     43
+    ],
+    "timeouts": 0,
+    "coverage_incomplete": 0,
+    "errors": 0
+   }
+  },
+  {
+   "id": "B",
+   "commit": "e4aaf6b9",
+   "title": "rules: SQL-text builders are not PHP SQL sanitizers",
+   "rules": [
+    "php.parameter-sql-text"
+   ],
+   "rule_bytes": "52278305910febb275a65dac83ceaadfe1b9c7d966d6628f8bc19b9e6975dc01",
+   "finding": "1 (GHSA-3234-gxc3-pq6f lost since b2a2800f)",
+   "cause": "5559c883 (in b2a2800f) made any build* method a sanitizer, so $this->buildQueryString($configuration) became clean; the only guard in the code is a keyword deny-list, which no rule treats as a sanitizer.",
+   "controls": "1 positive (not reported by 7a0f9b83), 1 ok control (value-quoting buildArray); matrix 325 -> 326",
+   "state": "52278305",
+   "exposed_161": {
+    "receipt_sha256": "a2a078e57ca8e9c823aa78a32727f57feff3a653d27ae8ba043de734bbea0bca",
+    "decision": "ACCEPT",
+    "failures": [],
+    "hits": [
+     51,
+     51
+    ],
+    "gained": [],
+    "lost": [],
+    "new_errors": [],
+    "new_coverage_gaps": [],
+    "fixed_side_residuals": [
+     16,
+     16
+    ],
+    "per_hit": [
+     0.31,
+     0.31
+    ],
+    "synthetic_control_increase": 0,
+    "fixed_side_span_delta": {
+     "added": 0,
+     "removed": 0
+    }
+   },
+   "benign_18": {
+    "after_8d8a46c5": 31,
+    "after": 31,
+    "delta": 0,
+    "new_findings": 0,
+    "errors": 0,
+    "method": "rule independence (see benign_note)"
+   },
+   "q2_deltas": {
+    "vs_previous_state": "7a0f9b83",
+    "hunk_hits": [
+     28,
+     29
+    ],
+    "gained": [
+     "GHSA-3234-gxc3-pq6f"
+    ],
+    "lost": [],
+    "substitute_file_level": [
+     56,
+     56
+    ],
+    "fixed_side_residual_alerts": [
+     43,
+     44
+    ],
+    "timeouts": 0,
+    "coverage_incomplete": 0,
+    "errors": 0
+   }
+  },
+  {
+   "id": "C",
+   "commit": "d028dfd9",
+   "title": "rules: local aliases of SQL identifier quoting helpers",
+   "rules": [
+    "javascript.parameter-sql-text"
+   ],
+   "rule_bytes": "9dd30a1d7882ba43989df88a5521046b620f1cf6e2a1bc8dcbef762eb95e2311",
+   "finding": "2 (nocobase quoted identifiers and $n placeholders)",
+   "cause": "the fixed-side alerts were all q(...) with const q = queryInterface.quoteIdentifier.bind(queryInterface); the $n placeholders were already sanitized by a7d7b5ef. The old-side value list IN ('${nodeIds.join(\"','\")}') stays reported.",
+   "controls": "2 ok controls (reported by 52278305), 3 positives that stay reported; matrix 326 -> 329",
+   "state": "9dd30a1d",
+   "exposed_161": {
+    "receipt_sha256": "a0b266810dc2887e4869bdd88a860aa35d4772b727da530f1afd78e8983bd97b",
+    "decision": "ACCEPT",
+    "failures": [],
+    "hits": [
+     51,
+     51
+    ],
+    "gained": [],
+    "lost": [],
+    "new_errors": [],
+    "new_coverage_gaps": [],
+    "fixed_side_residuals": [
+     16,
+     16
+    ],
+    "per_hit": [
+     0.31,
+     0.31
+    ],
+    "synthetic_control_increase": 0,
+    "fixed_side_span_delta": {
+     "added": 0,
+     "removed": 0
+    }
+   },
+   "benign_18": {
+    "after_8d8a46c5": 31,
+    "after": 31,
+    "delta": 0,
+    "new_findings": 0,
+    "errors": 0,
+    "method": "rule independence (see benign_note)"
+   },
+   "q2_deltas": {
+    "vs_previous_state": "52278305",
+    "hunk_hits": [
+     29,
+     29
+    ],
+    "gained": [],
+    "lost": [],
+    "substitute_file_level": [
+     56,
+     56
+    ],
+    "fixed_side_residual_alerts": [
+     44,
+     33
+    ],
+    "timeouts": 0,
+    "coverage_incomplete": 0,
+    "errors": 0
+   }
+  },
+  {
+   "id": "D",
+   "commit": "cc8c3f70",
+   "title": "rules: fail-closed containment checks clear JavaScript request path joins",
+   "rules": [
+    "javascript.request-path-traversal"
+   ],
+   "rule_bytes": "72e6c69a9f9f1a3826578edda9a142e2aed8bbec8f7f0ca590c99668915a6465",
+   "finding": "2 (thrift :454, vite :163/:170)",
+   "cause": "the join sink fired on joins later rejected by a separator-aware prefix check (thrift) or a named containment predicate (vite isOptimizedDepFile), and reads after the check were still tainted.",
+   "controls": "new typescript-path-guard.ts: 7 ok controls (reported by 9dd30a1d), 6 positives (prefix-only, existence-only, non-exiting check, read before check); matrix 329 -> 335",
+   "state": "72e6c69a",
+   "revised": "First version (bytes ebad0fea, cumulative 3bbad0f7) used a generic $F = $JOINED; first statement: exposed-161 REJECT with new engine timeouts on GHSA-gvg7 (c3.js, 8,200 lines) and GHSA-jj45 (internal.js), reproduced standalone (15 s timeout vs 1.4 s before). The commit was rebuilt with the assignment matched by its path.join/resolve call (2.4 s on both files) before any push; the per-change results below are for the rebuilt bytes.",
+   "exposed_161": {
+    "receipt_sha256": "9797d4645778a686cb90fb103ff3e7d3814bb3b38d8871f2ee37e9f31147bd00",
+    "decision": "ACCEPT",
+    "failures": [],
+    "hits": [
+     51,
+     51
+    ],
+    "gained": [],
+    "lost": [],
+    "new_errors": [],
+    "new_coverage_gaps": [],
+    "fixed_side_residuals": [
+     16,
+     16
+    ],
+    "per_hit": [
+     0.31,
+     0.31
+    ],
+    "synthetic_control_increase": 0,
+    "fixed_side_span_delta": {
+     "added": 0,
+     "removed": 0
+    }
+   },
+   "benign_18": {
+    "after_8d8a46c5": 31,
+    "after": 31,
+    "delta": 0,
+    "new_findings": 0,
+    "errors": 0,
+    "method": "rule independence (see benign_note)"
+   },
+   "q2_deltas": {
+    "vs_previous_state": "9dd30a1d",
+    "hunk_hits": [
+     29,
+     29
+    ],
+    "gained": [],
+    "lost": [],
+    "substitute_file_level": [
+     56,
+     56
+    ],
+    "fixed_side_residual_alerts": [
+     33,
+     30
+    ],
+    "timeouts": 0,
+    "coverage_incomplete": 0,
+    "errors": 0
+   }
+  },
+  {
+   "id": "E",
+   "commit": "ffcd5fec",
+   "title": "rules: deserialization behind an off-by-default environment opt-in",
+   "rules": [
+    "python.unsafe-deserialization-unscoped"
+   ],
+   "rule_bytes": "df425b7f626bdf6574315ca5f218c2bb805fc56306c273a00daaa8a3727883b6",
+   "finding": "2 (ray :144); feast dill.loads after the permission check stays reported",
+   "cause": "the loader call is inside if FLAG: with FLAG = os.environ.get(\"X\", \"0\") == \"1\"; the rule had no guard recognition.",
+   "controls": "2 ok controls (reported by 72e6c69a), 3 positives (unguarded fallback, on-by-default flag, load after an access check); matrix 335 -> 338",
+   "state": "df425b7f",
+   "exposed_161": {
+    "receipt_sha256": "91a4e0f6c0063c355a05a061775c06134e3cd7ec6514a44663aceafe200bedb2",
+    "decision": "ACCEPT",
+    "failures": [],
+    "hits": [
+     51,
+     51
+    ],
+    "gained": [],
+    "lost": [],
+    "new_errors": [],
+    "new_coverage_gaps": [],
+    "fixed_side_residuals": [
+     16,
+     16
+    ],
+    "per_hit": [
+     0.31,
+     0.31
+    ],
+    "synthetic_control_increase": 0,
+    "fixed_side_span_delta": {
+     "added": 0,
+     "removed": 0
+    }
+   },
+   "benign_18": {
+    "after_8d8a46c5": 31,
+    "after": 31,
+    "delta": 0,
+    "new_findings": 0,
+    "errors": 0,
+    "method": "rule independence (see benign_note)"
+   },
+   "q2_deltas": {
+    "vs_previous_state": "72e6c69a",
+    "hunk_hits": [
+     29,
+     29
+    ],
+    "gained": [],
+    "lost": [],
+    "substitute_file_level": [
+     56,
+     56
+    ],
+    "fixed_side_residual_alerts": [
+     30,
+     29
+    ],
+    "timeouts": 0,
+    "coverage_incomplete": 0,
+    "errors": 0
+   }
+  },
+  {
+   "id": "F",
+   "commit": "a33be57a",
+   "title": "rules: template values inside inline event-handler attributes",
+   "rules": [
+    "javascript.html-template-unescaped-interpolation"
+   ],
+   "rule_bytes": "e375016eea86245444035f433bc802eb9eeadf8880714ef3f9fa3e0a260315be",
+   "finding": "3 (appium-mcp mcp-ui-utils.ts:723-740 missed by every arm)",
+   "cause": "the rule covered only attribute values that start with ${...}; onclick=\"testLocator('${strategy}', ...)\" interpolates inside the attribute.",
+   "controls": "new typescript-html-event-handler.ts: 2 positives (not reported by df425b7f), 5 ok controls; matrix 338 -> 340",
+   "state": "e375016e",
+   "partial": "Fixed via :740 (event handler). The element-text values at :723 and :730-:739 (<h3>${element.tagName}</h3>) are still not reported: a text-content branch was tried and dropped (see dropped).",
+   "exposed_161": {
+    "receipt_sha256": "80d3eb23e2fcb126d97bd3b6fc019f4932e86d5f4b3733b16260587887de98f3",
+    "decision": "ACCEPT",
+    "failures": [],
+    "hits": [
+     51,
+     51
+    ],
+    "gained": [],
+    "lost": [],
+    "new_errors": [],
+    "new_coverage_gaps": [],
+    "fixed_side_residuals": [
+     16,
+     16
+    ],
+    "per_hit": [
+     0.31,
+     0.31
+    ],
+    "synthetic_control_increase": 0,
+    "fixed_side_span_delta": {
+     "added": 0,
+     "removed": 0
+    }
+   },
+   "benign_18": {
+    "after_8d8a46c5": 31,
+    "after": 31,
+    "delta": 0,
+    "new_findings": 0,
+    "errors": 0,
+    "method": "direct run"
+   },
+   "q2_deltas": {
+    "vs_previous_state": "df425b7f",
+    "hunk_hits": [
+     29,
+     30
+    ],
+    "gained": [
+     "GHSA-x975-rgx4-5fh4"
+    ],
+    "lost": [],
+    "substitute_file_level": [
+     56,
+     56
+    ],
+    "fixed_side_residual_alerts": [
+     29,
+     29
+    ],
+    "timeouts": 0,
+    "coverage_incomplete": 0,
+    "errors": 0
+   }
+  }
+ ],
+ "benign_note": "Per-change benign counts: the 18-repository run of the final bytes e375016e and of the intermediate PHP state 7a0f9b83 emit exactly the 8d8a46c5 findings in every repository (31 -> 31, 0 new). Changes 3-6 each touch one rule that no other change touches (JS SQL, JS path, Python deserialization, JS HTML template); OpenGrep evaluates rules independently, so every intermediate state emits the same 31 findings.",
+ "final": {
+  "commit": "a33be57a (rules); this evidence commit follows",
+  "exposed_161": {
+   "receipt": "docs/evidence/recall-evaluation-e375016e-exposed161-opengrep210.json",
+   "receipt_sha256": "80d3eb23e2fcb126d97bd3b6fc019f4932e86d5f4b3733b16260587887de98f3",
+   "decision": "ACCEPT",
+   "failures": [],
+   "hits": [
+    51,
+    51
+   ],
+   "gained": [],
+   "lost": [],
+   "new_errors": [],
+   "new_coverage_gaps": [],
+   "fixed_side_residuals": [
+    16,
+    16
+   ],
+   "per_hit": [
+    0.31,
+    0.31
+   ],
+   "synthetic_control_increase": 0,
+   "fixed_side_span_delta": {
+    "added": 0,
+    "removed": 0
+   },
+   "limit_per_hit": 0.48,
+   "denominator": 161,
+   "note": "No gains or losses on exposed-161: every finding fixed here comes from Q2 cases. GHSA-gvg7 is coverage_incomplete on both arms (no timeout)."
+  },
+  "benign_controls": {
+   "receipt": "docs/evidence/recall-controls-e375016e-benign18.json",
+   "receipt_sha256": "f1cc6530bd91137a866712d4f2c0d326742c440d9203ec880ee2f12da201be90",
+   "plan": "docs/evidence/qualification-3b5b28ff/control-plan-e375016e.json (only candidate_sha256 changed)",
+   "plan_sha256": "71339391e332f55fde87c5dc43d2fff5efc801087d56b02cae06c6e2289b2843",
+   "after_8d8a46c5": 31,
+   "after_final": 31,
+   "delta": 0,
+   "new_findings_vs_8d8a46c5": 0,
+   "errors": 0,
+   "intermediate_7a0f9b83": {
+    "receipt_sha256": "31d27d914e6c61d3369bef4a90771b712309c374ed575fea807b0feddd71a2e9",
+    "after": 31,
+    "new_findings_vs_8d8a46c5": 0,
+    "errors": 0
+   }
+  },
+  "q2_replay_3_deltas": {
+   "label": "PRIVATE outputs; tuning cohort, not held-out. Counts only, on 261 scored of 282 registered.",
+   "hunk_hits": {
+    "baseline_816bbef3": 22,
+    "b2a2800f": 28,
+    "8d8a46c5": 27,
+    "final": 30
+   },
+   "substitute_file_level": {
+    "baseline_816bbef3": 42,
+    "b2a2800f": 56,
+    "8d8a46c5": 55,
+    "final": 56
+   },
+   "fixed_side_residual_alerts": {
+    "baseline_816bbef3": 31,
+    "b2a2800f": 47,
+    "8d8a46c5": 44,
+    "final": 29
+   },
+   "losses_vs": {
+    "baseline": [],
+    "b2a2800f": [],
+    "8d8a46c5": []
+   },
+   "gains_vs_8d8a46c5": [
+    "GHSA-x975-rgx4-5fh4",
+    "GHSA-r2f4-ff2p-xc64",
+    "GHSA-3234-gxc3-pq6f"
+   ],
+   "timeouts": 0,
+   "coverage_incomplete": 0,
+   "residuals_kept": "feast stream_feature_view.py:335 (dill.loads after the permission check) and electerm fs.js:94 (getFolderSizeWin PowerShell) stay reported on the fixed side."
+  },
+  "tests": {
+   "node": "scripts/semgrep_mutation_controls.test.mjs: 22 pass at every commit",
+   "pytest": "tests/test_deep_audit*.py -k 'semgrep or deep_audit': 1681 passed",
+   "py_files": 464
+  },
+  "pre_existing": "OpenGrep 2.1.0 still misses ruby.request-command-injection semgrep-pattern-limited.rb:90 (unchanged since 8cd65488); every other annotated control passes on both engines."
+ },
+ "not_fixed": [
+  {
+   "finding": "appium-mcp element text (mcp-ui-utils.ts:723, :730-:739)",
+   "reason": "Element text content is not a sink. The case is now a hit through the :740 event handler, but the text-content values remain unreported."
+  },
+  {
+   "finding": "pimcore Sql.php:73 fixed side",
+   "reason": "Reported again, as by the baseline. It still runs configuration-built SQL behind a keyword deny-list, and the blinded review marked it UNCLEAR. It is not suppressed because a deny-list is not a sanitizer."
+  }
+ ],
+ "dropped": [
+  {
+   "change": "JS path guard, first version (generic $F = $JOINED; sequence start, bytes ebad0fea)",
+   "reason": "exposed-161 REJECT: new engine timeouts and coverage gaps on GHSA-gvg7 and GHSA-jj45, reproduced standalone. Replaced by the call-anchored sequence in cc8c3f70 before push."
+  },
+  {
+   "change": "JS path guard with two ellipses ($F = ...; ... $NB = ...; ... if)",
+   "reason": "timed out on thrift web_server.js during design; the timeout silently dropped the rule's findings for that file. Not committed."
+  },
+  {
+   "change": "HTML element-text branch (<h3>${el.name}</h3>, </strong> ${x}</p>)",
+   "reason": "on appium-mcp alone it added about 8 template-rendering alerts per side outside the fix, so the noise risk was too high for the benign gate. Not committed; only the event-handler branch shipped."
+  },
+  {
+   "change": "path.relative(...).startsWith(\"..\") containment form",
+   "reason": "not needed for any finding, so it was left out to keep the rule cost down. It is not recognized; such code stays reported."
+  }
+ ],
+ "access_record": [
+  "q2-regression-replay-2: per-case-transitions.json, paired-receipt.json, reuse-decisions.md, scanner-access-log.md, arms/*.cmd, tools/pair.mjs and build_receipt.py, candidate-8d8a46c5.score.json (ghsa, diff and capture fields), pins/pin-verification.json",
+  "q2-regression-replay: pins (harness copy, manifest, profile, baseline rules), checkpoints (copied), work/cases-v4 and scan-THoRbD (hard-linked), arms/candidate-1673ec5d.score.json and work/scan-99lpO9 (read-only, for the b2a2800f pairing)",
+  "q2-blind-review/review.json and access-log.md",
+  "Q2 packets of the 9 named cases (old/new changed files, diff.patch), with single-rule probe scans of those files on OpenGrep 2.1.0 and 1.15.0",
+  "docs/evidence/rules-iter2-20261126.json, recall-evaluation-8d8a46c5-exposed161-opengrep210.json, recall-controls-8d8a46c5-benign18.json, qualification-3b5b28ff/control-plan-8d8a46c5.json",
+  "/home/claude/pins (exposed manifest, profile, baseline 816bbef3), /home/claude/run-r161/captures/cases-v4 (hard-linked), /home/claude/synthctl, /home/claude/ctl, ctl-pinned, r6/ctl-mastodon (benign controls, scanned; finding lists compared). The 3 benign files that timed out (hugo renderkatex.bundle.js, pdf.js openjpeg_nowasm_fallback.js and glyphlist.js) were rescanned with the changed JS rules to check their cost.",
+  "Exposed packets for GHSA-gvg7 (c3.js) and GHSA-jj45 (internal.js), rescanned to reproduce the timeout",
+  "git show of a7d7b5ef, a31503c0, 5559c883, e1cb77ca and 1673ec5d/1f8098b6 rule bytes, used to bisect the two pimcore losses",
+  "Not accessed: the Q3 cohort files, wt-audit, cf, wt-q7.",
+  "Disk incident: another agent filled the disk around 17:41-17:42Z. Every receipt and capture used here was produced after 17:50Z, or re-verified (pins re-hashed, patch scripts regenerated byte-identically, git fsck clean)."
+ ]
+}
