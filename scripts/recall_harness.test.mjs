@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
-import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { hunkAdjudicationIdentity, hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
-  familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact } from './recall_harness.mjs';
+  familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
+  publishPreparedCase } from './recall_harness.mjs';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
@@ -168,6 +169,15 @@ test('gate rejects dropped, added and duplicate case IDs and scores reordered ca
   assert.match(compare(result([a, a])).failures[0], /Duplicate advisory ID/);
   assert.match(gate({ dev: [{ before: result([a, a]), after: before }], controls: [] }).failures[0], /Duplicate advisory ID/);
   assert.match(compare({ ...before, scope: 'scannable' }).failures[0], /scoring scope differs/);
+  const gain = { before: result([b]), after: result([{ ...b, hunk_hit: true }]) };
+  const separate = { before: result([a]), after: result([a]) };
+  const independent = gate({ dev: [gain, separate], controls: [] });
+  assert.equal(independent.decision, 'ACCEPT');
+  assert.deepEqual(independent.gained, ['B']);
+  const duplicated = gate({ dev: [gain, gain], controls: [] });
+  assert.equal(duplicated.decision, 'REJECT');
+  assert.match(duplicated.failures[0], /Duplicate advisory ID across paired recall cohorts: B/);
+  assert.deepEqual(duplicated.gained, ['B']);
 });
 
 test('gainRetention requires the archived cohort, hit and exact source packets', () => {
@@ -255,6 +265,40 @@ test('hash-bound adjudicated losses exempt only complete FP-only hunk removals',
     assert.throws(() => loadAdjudicatedLosses(path, '0'.repeat(64)), /engine differs/);
     writeFileSync(join(root, 'adjudication.json'), '{}');
     assert.throws(() => loadAdjudicatedLosses(path, engine), /source fingerprint differs/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('line-only adjudication cannot waive two alerts on the same line', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-loss-same-line-'));
+  try {
+    const { ghsa, score, plan, engine, loc, path } = savedAdjudication(root);
+    const row = score.dev[0].cases[0];
+    row.hunk_findings = [loc, loc];
+    const adjudication = JSON.parse(readFileSync(join(root, plan.adjudication.path), 'utf8'));
+    adjudication.rows = [adjudication.rows[0], { ...adjudication.rows[0], item: 'second-position' }];
+    const persist = () => {
+      for (const [reference, value] of [[plan.score, score], [plan.adjudication, adjudication]]) {
+        const bytes = JSON.stringify(value);
+        writeFileSync(join(root, reference.path), bytes);
+        reference.sha256 = sha256(bytes);
+      }
+      writeFileSync(path, JSON.stringify(plan));
+      return loadAdjudicatedLosses(path, engine);
+    };
+    assert.equal(persist().cases.has(ghsa), false);
+    row.hunk_spans = [[1, 0, 4], [6, 0, 9]];
+    assert.equal(hunkAdjudicationIdentity({ ...row, hunk_spans: [[1, 0, null], [6, 0, 9]] }, true), null);
+    assert.equal(persist().cases.has(ghsa), false);
+    adjudication.rows.forEach((vote, index) => { vote.span = row.hunk_spans[index]; });
+    assert.equal(persist().cases.has(ghsa), true);
+    row.hunk_findings.push(loc);
+    row.hunk_spans.push(row.hunk_spans[0]);
+    assert.equal(persist().cases.has(ghsa), true);
+    adjudication.rows[1].span = [6, 0, 10];
+    assert.equal(persist().cases.has(ghsa), false);
+    adjudication.rows[1].span = row.hunk_spans[1];
+    adjudication.rows[1].source_sha256 = 'b'.repeat(64);
+    assert.equal(persist().cases.has(ghsa), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -491,7 +535,7 @@ async function feederFixture(run, row = feederRow) {
 
     const scanner = join(root, 'scanner.mjs');
     writeFileSync(scanner, [
-      "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
+      "import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';",
       "import { basename, dirname } from 'node:path';",
       "if (process.argv.includes('--dump-ast')) { if (process.env.FIXTURE_PARSER_LIMIT === 'true') { console.error('node type: ERROR'); process.exit(3); } process.exit(0); }",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
@@ -502,19 +546,32 @@ async function feederFixture(run, row = feederRow) {
       "const control = basename(process.cwd()) === 'control';",
       "const ruleText = readFileSync(rules, 'utf8');",
       "if (old && ruleText.includes('# rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
+      "const driftMarker = dirname(rules) + '/group-drift';",
+      "if (old && ruleText.includes('# group-drift ' + basename(dirname(process.cwd()))) && !existsSync(driftMarker)) {",
+      "  writeFileSync(driftMarker, '');",
+      "  appendFileSync(rules, '# drifted during scan\\n');",
+      "}",
+      "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
+      "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const disputedParse = old && ruleText.includes('# candidate-parse');",
       "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
+      "if (results.length && ruleText.includes('# hunk-spans')) {",
+      "  const span = (startColumn, endColumn) => ({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn, endColumn } } }] });",
+      "  results.splice(0, 1, span(1, 4), span(6, 9));",
+      "}",
       "if (control && ruleText.includes('# control-missing-path')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 } } }] });",
       "if (control && ruleText.includes('# reviewed-control')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
       "if (devTimeout || controlTimeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
       "const defaultIgnored = files.filter(path => path === 'ignored.py' || (path === 'candidate-only.py' && ruleText.includes('# candidate-default-ignore')));",
-      "const skipped = [...defaultIgnored.map(path => ({ path, reason: 'semgrepignore_patterns_match' })), ...(files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [])];",
+      "const sizeLimit = Number(process.argv.find(arg => arg.startsWith('--max-target-bytes='))?.split('=')[1] ?? 1000000);",
+      "const oversized = files.filter(path => path.startsWith('large-') && statSync(path).size > sizeLimit);",
+      "const skipped = [...defaultIgnored.map(path => ({ path, reason: 'semgrepignore_patterns_match' })), ...[...(files.includes('skipped.py') ? ['skipped.py'] : []), ...oversized].map(path => ({ path, reason: 'exceeded_size_limit' }))];",
       "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'unreported.py' && !skipped.some(item => item.path === path)), skipped }, errors: [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])] }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
@@ -549,15 +606,32 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
     sha256(readFileSync(join(workdir, before.scan_directory, feederRow.ghsa, 'old.sarif.coverage.json'))));
   assert.equal(before.cases[0].file_coverage.fixed[0].reason, 'engine_scan_paths');
 
+  const expectedEngine = {
+    executable: basename(process.execPath), executable_sha256: sha256(readFileSync(process.execPath)), version: process.version,
+  };
+  const scoreOutput = join(root, 'score.json');
+  const scoreArgs = ['scripts/recall_harness.mjs', 'score', '--manifest', manifest,
+    '--rules', baseline, '--workdir', workdir, '--opengrep', process.execPath, '--jobs', '1'];
+  const score = spawnSync(process.execPath, [...scoreArgs, '--profile', profile, '--out', scoreOutput], { encoding: 'utf8' });
+  assert.equal(score.status, 0, score.stderr);
+  const savedScore = JSON.parse(readFileSync(scoreOutput, 'utf8'));
+  assert.deepEqual(savedScore.engine, expectedEngine);
+  assert.deepEqual(savedScore.cases[0].source_packets, before.cases[0].source_packets);
+  const invalidProfile = join(root, 'invalid-engine-profile.json');
+  const rejectedOutput = join(root, 'rejected-score.json');
+  writeFileSync(invalidProfile, JSON.stringify({ ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: 'wrong-version' }));
+  const rejected = spawnSync(process.execPath, [...scoreArgs, '--profile', invalidProfile, '--out', rejectedOutput], { encoding: 'utf8' });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /engine version differs from profile/);
+  assert.equal(existsSync(rejectedOutput), false);
+
   const output = join(root, 'evaluation.json');
   const engine = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
     '--baseline', baseline, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
     '--opengrep', process.execPath, '--jobs', '1', '--out', output], { encoding: 'utf8' });
   assert.equal(engine.status, 2, engine.stderr);
   const evaluation = JSON.parse(readFileSync(output, 'utf8'));
-  assert.deepEqual(evaluation.engine, {
-    executable: basename(process.execPath), executable_sha256: sha256(readFileSync(process.execPath)), version: process.version,
-  });
+  assert.deepEqual(evaluation.engine, expectedEngine);
   assert.equal(evaluation.profile_sha256, sha256(readFileSync(profile)));
   assert.equal(evaluation.baseline_sha256, sha256(readFileSync(baseline)));
   assert.equal(evaluation.candidate_sha256, sha256(readFileSync(candidate)));
@@ -605,7 +679,7 @@ test('evaluation refuses a missing or mismatched engine and ruleset drift withou
     writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# rules-drift\n');
     const drift = evaluate(process.execPath);
     assert.notEqual(drift.status, 0);
-    assert.match(drift.stderr, /Evaluation ruleset bytes changed during scoring/);
+    assert.match(drift.stderr, /Scan ruleset byte fingerprint differs/);
     assert.equal(existsSync(output), false);
   }));
 
@@ -676,6 +750,34 @@ test('evaluation retries both control arms once with a bounded timeout and recor
     assert.equal(persistent.result.controls[0].scan_sides.before.timeouts, 1);
     assert.equal(persistent.result.controls[0].scan_sides.after.timeouts, 1);
   }));
+
+test('evaluation rejects overlapping manifests before resolving the scanner', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline, candidate } = fixture;
+  const overlap = join(root, 'another-cohort.json');
+  const output = join(root, 'overlap-evaluation.json');
+  writeFileSync(overlap, readFileSync(manifest));
+  const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate',
+    '--manifest', manifest, '--manifest', overlap, '--baseline', baseline, '--candidate', candidate,
+    '--profile', profile, '--workdir', workdir, '--opengrep', join(root, 'missing-scanner'), '--out', output],
+  { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Duplicate advisory ID across paired recall cohorts/);
+  assert.equal(existsSync(output), false);
+  assert.equal(readdirSync(workdir).some(path => path.startsWith('scan-')), false);
+}));
+
+test('evaluation refuses a manifest changed during the paired scan', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline, candidate } = fixture;
+  const output = join(root, 'drifted-evaluation.json');
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# manifest-drift\n');
+  const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate',
+    '--manifest', manifest, '--baseline', baseline, '--candidate', candidate,
+    '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath, '--out', output],
+  { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Evaluation manifest bytes changed during scoring/);
+  assert.equal(existsSync(output), false);
+}));
 
 test('changed prepared source, diff and inventory bytes cannot yield a measured case', () => feederFixture(async fixture => {
   const { source, manifest, baseline, diffPath, inventoryPath, opts, old, diff } = fixture;
@@ -880,19 +982,23 @@ test('a fixed parser probe classifies only reproduced engine limits', () => feed
   }
 }));
 
-test('evaluate preserves the raw lost hit with a pinned all-FP adjudication plan', () => feederFixture(async fixture => {
+test('evaluate preserves a raw lost hit with two pinned all-FP spans on the same line', () => feederFixture(async fixture => {
   const { root, workdir, manifest, profile, baseline, candidate, opts } = fixture;
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n');
   writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# clean-miss\n');
   const before = await scoreManifest(manifest, baseline, opts);
   const prior = before.cases[0], expected = prior.ghsa;
+  assert.deepEqual(prior.hunk_spans, [[1, 0, 4], [6, 0, 9]]);
   const score = { schema: 'factory.recall-evaluation.v1', candidate_sha256: before.ruleset_sha256,
     engine: { executable_sha256: sha256(readFileSync(process.execPath)) }, gained: [expected],
     dev: [{ manifest_cases_sha256: before.manifest_cases_sha256, after_evidence: before,
-      cases: [{ ghsa: expected, before: 'miss', after: 'hit', hunk_findings: prior.hunk_findings }] }] };
+      cases: [{ ghsa: expected, before: 'miss', after: 'hit',
+        hunk_findings: prior.hunk_findings, hunk_spans: prior.hunk_spans }] }] };
   const adjudication = { schema: 'factory.adjudicated-precision.v1', cohort: 'owned (spent)',
     candidate: `owned (ruleset ${before.ruleset_sha256.slice(0, 8)})`,
     rows: prior.hunk_findings.map(([rule, file, line], index) => ({ item: `owned-${index}`,
-      repository_case: `example/label-demo ${expected}`, rule, file, line, on_fix_hunk: true, final: 'FP' })) };
+      repository_case: `example/label-demo ${expected}`, rule, file, line, on_fix_hunk: true, final: 'FP',
+      span: prior.hunk_spans[index], source_sha256: prior.source_packets.old[0].sha256 })) };
   const save = (name, value) => {
     const bytes = JSON.stringify(value);
     writeFileSync(join(root, name), bytes);
@@ -976,6 +1082,156 @@ test('paired controls record only shared scanner ignores and keep candidate skip
   assert.deepEqual(rejected.scan_sides.after.control_coverage.excluded, exclusions);
 }));
 
+test('controls scan bounded larger files on both arms and preserve explicit size limits', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline } = fixture;
+  const control = join(root, 'control'), output = join(root, 'sizes.json');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), 'VALUE = 1\n');
+  writeFileSync(join(control, 'large-table.py'), Buffer.alloc(1_428_813, 32));
+  const run = (...extra) => {
+    const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls',
+      '--rules', baseline, '--rules', baseline, '--profile', profile, '--workdir', workdir,
+      '--opengrep', process.execPath, '--dir', control, '--out', output, ...extra],
+    { encoding: 'utf8', timeout: 30000 });
+    return { status: result.status, delta: JSON.parse(readFileSync(output, 'utf8')).deltas[0] };
+  };
+  const recovered = run();
+  assert.equal(recovered.status, 0);
+  assert.equal(recovered.delta.max_target_bytes, 1_428_813);
+  for (const side of Object.values(recovered.delta.scan_sides)) {
+    assert.deepEqual(side.control_coverage, { complete: true, expected: 2, reported: 2, gaps: [] });
+  }
+  const explicit = run('--extra-arg', '--max-target-bytes=1000000');
+  assert.equal(explicit.status, 2);
+  assert.equal(explicit.delta.max_target_bytes, undefined);
+  writeFileSync(join(control, 'large-over-budget.py'), Buffer.alloc(2_097_153, 32));
+  const beyond = run();
+  assert.equal(beyond.status, 2);
+  for (const side of Object.values(beyond.delta.scan_sides)) {
+    assert.deepEqual(side.control_coverage.gaps, [{ path: 'large-over-budget.py', reason: 'exceeded_size_limit' }]);
+  }
+}));
+
+test('control checkpoints resume only while the final and retry reports still match', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate } = fixture;
+  const control = join(root, 'control'), output = join(root, 'controls.json');
+  const checkpoint = join(root, 'control-checkpoints');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), 'VALUE = 1\n');
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# control-timeout\n');
+  const run = () => {
+    const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls',
+      '--rules', baseline, '--rules', candidate, '--profile', profile, '--workdir', workdir,
+      '--opengrep', process.execPath, '--dir', control, '--out', output, '--checkpoint-dir', checkpoint],
+    { encoding: 'utf8', timeout: 30000 });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(readFileSync(output, 'utf8')).deltas[0];
+  };
+  const fresh = run();
+  assert.equal(fresh.initial_scan_sides.after.timeouts, 1);
+  assert.equal(run().resumed_from_checkpoint, true);
+  const reports = readdirSync(workdir, { recursive: true });
+  const coverage = reports.find(path => path.endsWith('after-retry.sarif.coverage.json'));
+  assert.ok(coverage);
+  writeFileSync(join(workdir, coverage), '{}');
+  const rescanned = run();
+  assert.equal(rescanned.resumed_from_checkpoint, undefined);
+  assert.equal(rescanned.control_scope_sha256, fresh.control_scope_sha256);
+  const firstReport = rescanned.initial_scan_sides.after.reports.sarif.path;
+  rmSync(join(workdir, firstReport));
+  assert.equal(run().resumed_from_checkpoint, undefined);
+  assert.equal(run().resumed_from_checkpoint, true);
+}));
+
+test('standalone controls bind the scanner and reject rules changed during scanning', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate, manifest } = fixture;
+  const control = join(root, 'control'), output = join(root, 'controls.json');
+  const checkpoint = join(root, 'control-checkpoints');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), 'VALUE = 1\n');
+  writeFileSync(profile, JSON.stringify(JSON.parse(readFileSync(profile, 'utf8')), null, 2) + '\n');
+  const run = () => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls', '--rules', baseline,
+    '--rules', candidate, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+    '--dir', control, '--out', output, '--checkpoint-dir', checkpoint], { encoding: 'utf8', timeout: 30000 });
+
+  const original = readFileSync(baseline);
+  const drifting = Buffer.concat([original, Buffer.from('# control-rules-drift\n')]);
+  writeFileSync(candidate, drifting);
+  const drift = run();
+  assert.notEqual(drift.status, 0, 'changed rules were accepted');
+  assert.match(drift.stderr, /ruleset byte fingerprint differs/);
+  assert.equal(existsSync(output), false);
+  assert.equal(existsSync(checkpoint) ? readdirSync(checkpoint).length : 0, 0);
+
+  writeFileSync(candidate, drifting);
+  const evaluationOutput = join(root, 'evaluation.json');
+  const evaluation = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
+    '--baseline', baseline, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--jobs', '1', '--dir', control, '--out', evaluationOutput],
+  { encoding: 'utf8', timeout: 30000 });
+  assert.notEqual(evaluation.status, 0);
+  assert.match(evaluation.stderr, /ruleset byte fingerprint differs/);
+  assert.equal(existsSync(evaluationOutput), false);
+
+  writeFileSync(candidate, original);
+  const stable = run();
+  assert.equal(stable.status, 0, stable.stderr);
+  const receipt = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(receipt.engine.version, process.version);
+  assert.equal(receipt.engine.executable_sha256, sha256(readFileSync(process.execPath)));
+  assert.equal(receipt.profile_sha256, sha256(readFileSync(profile)));
+  assert.equal(receipt.before_sha256, sha256(readFileSync(baseline)));
+  assert.equal(receipt.after_sha256, sha256(original));
+
+  rmSync(output);
+  writeFileSync(profile, JSON.stringify({ ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: 'wrong-version' }));
+  const mismatchedVersion = run();
+  assert.notEqual(mismatchedVersion.status, 0);
+  assert.match(mismatchedVersion.stderr, /engine version differs from profile/);
+  assert.equal(existsSync(output), false);
+}));
+
+
+test('case publication retries transient Windows locks and preserves a competing receipt', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-publish-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stage = join(root, 'staged'), destination = join(root, 'committed');
+  mkdirSync(stage);
+  writeFileSync(join(stage, 'case.json'), 'staged');
+  const failed = code => Object.assign(new Error(code), { code });
+  let attempts = 0;
+  const rename = (source, target) => {
+    if (++attempts === 1) throw failed('EPERM');
+    renameSync(source, target);
+  };
+  await publishPreparedCase(stage, destination, { rename, platform: 'win32' });
+  assert.equal(attempts, 2);
+  assert.equal(readFileSync(join(destination, 'case.json'), 'utf8'), 'staged');
+
+  let competitors = 0;
+  await publishPreparedCase(stage, destination, { platform: 'win32', rename: () => {
+    competitors++;
+    throw failed('EEXIST');
+  } });
+  assert.equal(competitors, 1);
+  assert.equal(readFileSync(join(destination, 'case.json'), 'utf8'), 'staged');
+
+  for (const [platform, code] of [['linux', 'EPERM'], ['win32', 'EXDEV']]) {
+    let errors = 0;
+    await assert.rejects(publishPreparedCase(stage, join(root, 'missing'), { platform, rename: () => {
+      errors++;
+      throw failed(code);
+    } }), { code });
+    assert.equal(errors, 1);
+  }
+
+  let locks = 0;
+  await assert.rejects(publishPreparedCase(stage, join(root, 'missing'), { platform: 'win32', rename: () => {
+    locks++;
+    throw failed('EACCES');
+  } }), { code: 'EACCES' });
+  assert.equal(locks, 4);
+});
 
 test('local Git source bytes survive preparation, scanning, and the reported packet inventory', () =>
   feederFixture(async ({ root, workdir, manifest, baseline, profile }) => {
@@ -1109,11 +1365,72 @@ test('checkpoint records are bound to their full input fingerprint', async () =>
     writeCheckpoint(root, inputs, { outcome: 'hit' });
     assert.deepEqual(readCheckpoint(root, inputs), { outcome: 'hit' });
     assert.equal(readCheckpoint(root, { ...inputs, ruleset_sha256: 'c' }), null);
+    const recordPath = join(root, `${checkpointKey(inputs)}.json`);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    record.result.outcome = 'miss';
+    writeFileSync(recordPath, JSON.stringify(record));
+    assert.equal(readCheckpoint(root, inputs), null);
     // A record whose stored inputs do not match its name is ignored.
-    writeFileSync(join(root, `${checkpointKey(inputs)}.json`), JSON.stringify({ inputs: { other: 1 }, result: { outcome: 'hit' } }));
+    writeFileSync(recordPath, JSON.stringify({ ...record, inputs: { other: 1 } }));
     assert.equal(readCheckpoint(root, inputs), null);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('scored cases reach the checkpoint directory only under the verified executable pin', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, baseline, profile, opts } = fixture;
+  const checkpoints = join(root, 'case-engine-checkpoints');
+  const settings = { ...opts, 'checkpoint-dir': checkpoints };
+  const rulesBytes = readFileSync(baseline), profileBytes = readFileSync(profile);
+  const stale = '1'.repeat(64);
+  const engine = { path: process.execPath, receipt: { executable: basename(process.execPath),
+    executable_sha256: stale, version: process.version } };
+  const context = { profile: JSON.parse(profileBytes), profileSha256: sha256(profileBytes),
+    bin: engine.path, engine, rules: baseline, rulesSha256: sha256(rulesBytes),
+    ruleMap: ruleFamilies(rulesBytes.toString('utf8')), extra: [], workdir, scope: 'ecosystem' };
+  await assert.rejects(scoreManifest(manifest, baseline, settings, context), /engine executable bytes changed during case scoring/);
+  assert.equal(existsSync(checkpoints), false);
+
+  const actual = sha256(readFileSync(engine.path));
+  const verified = { ...context, engine: { ...engine, receipt: { ...engine.receipt, executable_sha256: actual } } };
+  const fresh = await scoreManifest(manifest, baseline, settings, verified);
+  assert.equal(fresh.cases[0].status, 'scored');
+  const records = readdirSync(checkpoints);
+  assert.equal(records.length, 1);
+  assert.equal(JSON.parse(readFileSync(join(checkpoints, records[0]), 'utf8')).inputs.engine_sha256, actual);
+  const warm = await scoreManifest(manifest, baseline, settings, verified);
+  assert.deepEqual(warm.resumed_cases, [fresh.cases[0].ghsa]);
+  await assert.rejects(scoreManifest(manifest, baseline, settings, { ...verified, engine: { ...verified.engine, path: profile } }),
+    /engine executable bytes changed during case scoring/);
+  assert.deepEqual(readdirSync(checkpoints), records);
+}));
+
+test('an interrupted scoring group preserves only earlier verified checkpoints', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, baseline, opts } = fixture;
+  const checkpoints = join(root, 'group-checkpoints');
+  const casesRoot = join(workdir, 'cases-v4');
+  const original = join(casesRoot, caseDigest([feederRow]));
+  const record = JSON.parse(readFileSync(join(original, 'case.json'), 'utf8'));
+  const cases = Array.from({ length: 18 }, (_, index) => ({ ...feederRow, ghsa: `GHSA-test-bulk-${String(index).padStart(4, '0')}` }));
+  for (const row of cases) {
+    const key = caseDigest([row]);
+    const folder = join(casesRoot, key);
+    cpSync(original, folder, { recursive: true });
+    writeFileSync(join(folder, 'case.json'), JSON.stringify({ ...record, case_sha256: key }));
+  }
+  writeFileSync(manifest, JSON.stringify({ cases, cases_sha256: caseDigest(cases) }));
+  const rules = readFileSync(baseline, 'utf8') + `# group-drift ${caseDigest([cases.at(-1)])}\n`;
+  writeFileSync(baseline, rules);
+  const settings = { ...opts, jobs: 1, 'checkpoint-dir': checkpoints };
+  await assert.rejects(scoreManifest(manifest, baseline, settings), /Scan ruleset byte fingerprint differs/);
+  assert.equal(existsSync(join(root, 'group-drift')), true);
+  assert.equal(readdirSync(checkpoints).length, 16);
+
+  writeFileSync(baseline, rules);
+  const resumed = await scoreManifest(manifest, baseline, settings);
+  assert.deepEqual(resumed.resumed_cases, cases.slice(0, 16).map(row => row.ghsa));
+  assert.equal(resumed.cases.filter(row => row.outcome === 'hit').length, cases.length);
+  assert.equal(readdirSync(checkpoints).length, cases.length);
+}));
 
 test('incomplete cases and rows with missing artifacts are rescanned, never resumed', () => feederFixture(async fixture => {
   const { root, workdir, manifest, baseline, candidate, opts } = fixture;

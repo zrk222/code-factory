@@ -18,6 +18,8 @@ deploy/deep-adapters/rules/tests/**/*.txt text eol=lf
 deploy/deep-adapters/rules/tests/**/*.fixture text eol=lf
 .factory/independent-ai/* text eol=lf
 deploy/deep-adapters/rules/semgrep-pattern-limited.yml text eol=lf
+# Docker copies this worker module byte for byte. Keep its checkout size stable.
+factoryline/deep_audit.py text eol=lf
 # Offline publication catalog has a reviewed byte-level digest.
 factoryline/data/protocol_publications.json text eol=lf
 docs/evidence/*-exposed-*.json text eol=lf

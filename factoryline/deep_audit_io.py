@@ -128,9 +128,9 @@ def _finite(value: str) -> None:
     raise RuntimeAuditError("E_NONFINITE", "non-finite JSON number")
 
 
-def strict_json(raw: bytes) -> dict:
+def strict_json(raw: bytes, *, max_bytes: int = LIMIT) -> dict:
     """Decode bounded JSON, rejecting duplicate fields, nonfinite values and excessive parser recursion."""
-    if len(raw) > LIMIT:
+    if len(raw) > max_bytes:
         raise RuntimeAuditError("E_REPORT_SIZE", "JSON exceeds byte budget")
     try:
         value = json.loads(raw, object_pairs_hook=_object, parse_constant=_finite)
