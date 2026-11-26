@@ -396,8 +396,10 @@ async function readBatchBlob(stream, path) {
   return raw;
 }
 
-async function materialize(repo, revision, paths, target) {
-  if (!paths.length) return [];
+async function materialize(repo, sources) {
+  const requests = sources.flatMap(({ revision, paths }) => paths.map(path => revision + ':' + path + '\0'));
+  const packets = sources.map(() => []);
+  if (!requests.length) return packets;
   // NUL-delimited requests preserve arbitrary Git paths. Read one blob at a time.
   const child = spawn('git', ['-C', repo, 'cat-file', '--batch=%(objecttype) %(objectsize)', '-z'],
     { stdio: ['pipe', 'pipe', 'ignore'] });
@@ -407,21 +409,24 @@ async function materialize(repo, revision, paths, target) {
   });
   const timer = setTimeout(() => child.kill('SIGKILL'), 900000);
   child.stdin.on('error', () => {}); // Child failure is checked via the stream and exit code.
-  child.stdin.end(paths.map(path => revision + ':' + path + '\0').join(''));
+  child.stdin.end(requests.join(''));
   const stream = { reader: child.stdout[Symbol.asyncIterator](), pending: Buffer.alloc(0) };
-  const packets = [];
   try {
-    for (const path of paths) {
-      const raw = await readBatchBlob(stream, path);
-      const location = join(target, path);
-      mkdirSync(dirname(location), { recursive: true });
-      writeFileSync(location, raw);
-      packets.push(packet(path, raw));
+    for (const [index, { paths, target }] of sources.entries()) {
+      if (!paths.length) continue;
+      timer.refresh();
+      for (const path of paths) {
+        const raw = await readBatchBlob(stream, path);
+        const location = join(target, path);
+        mkdirSync(dirname(location), { recursive: true });
+        writeFileSync(location, raw);
+        packets[index].push(packet(path, raw));
+      }
     }
     if (stream.pending.length || !(await stream.reader.next()).done || await status !== 0) {
       throw new Error('Unexpected Git response while preparing source blobs');
     }
-    return packets.sort(byPath);
+    return packets.map(side => side.sort(byPath));
   } finally {
     clearTimeout(timer);
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
@@ -560,9 +565,12 @@ async function prepareChanges(repo, dir, parent, fix, extensions) {
     ...extensions.map(ext => '*.' + ext));
   if (diff.status !== 0) throw new Error('Prepared case diff could not be read');
   const hunks = parseHunks(diff.stdout.toString('utf8'), extensions);
-  const old = await materialize(repo, parent, Object.keys(hunks).filter(path => !additions.has(path)), join(dir, 'old'));
+  const oldPaths = Object.keys(hunks).filter(path => !additions.has(path));
   const fixedPaths = [...new Set(Object.values(hunks).map(entry => entry.new_path).filter(Boolean))];
-  const fixed = await materialize(repo, fix, fixedPaths, join(dir, 'new'));
+  const [old, fixed] = await materialize(repo, [
+    { revision: parent, paths: oldPaths, target: join(dir, 'old') },
+    { revision: fix, paths: fixedPaths, target: join(dir, 'new') },
+  ]);
   writeFileSync(join(dir, 'changes.z'), inventory.stdout);
   writeFileSync(join(dir, 'diff.patch'), diff.stdout);
   return { status: 'ready', revisions: { old: parent, fixed: fix },
