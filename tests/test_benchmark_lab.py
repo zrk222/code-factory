@@ -3165,3 +3165,16 @@ def test_review_parts_reject_tampering_drift_and_gaps(tmp_path, capsys):
                 {"item": "a", "verdict": "FP", "reason": "x"},
             ],
         )
+
+
+def test_recall_paths_accept_git_punctuation_but_never_escape(tmp_path):
+    contained = _gain["_recall_contained"]
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "component#old%20.js").write_text("x")
+    target = contained(tmp_path, "src/component#old%20.js")
+    with pytest.raises(ValueError):
+        contained(tmp_path, "src/%2E%2E/x.js")
+    assert target.read_text() == "x"
+    for bad in ("../x.js", "/etc/passwd", "src//x.js", "src/./x.js", "C:/x.js", "a\\b.js", ""):
+        with pytest.raises(ValueError):
+            contained(tmp_path, bad)

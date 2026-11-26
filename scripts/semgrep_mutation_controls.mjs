@@ -176,16 +176,16 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.tls-peer-not-verified': 2,
   'opt.factory.rules.java.archive-path-traversal': 3,
   'opt.factory.rules.java.disabled-hostname-verification': 4,
-  'opt.factory.rules.java.parameter-sql-text': 5,
+  'opt.factory.rules.java.parameter-sql-text': 7,
   'opt.factory.rules.java.request-command-injection': 3,
   'opt.factory.rules.java.request-html-injection': 1,
   'opt.factory.rules.java.request-path-traversal': 1,
   'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
-  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 1,
+  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 2,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 4,
-  'opt.factory.rules.javascript.parameter-shell-command': 6,
+  'opt.factory.rules.javascript.parameter-shell-command': 7,
   'opt.factory.rules.javascript.parameter-sql-text': 3,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
@@ -267,6 +267,10 @@ export function javascriptControlManifest() {
       path: 'typescript-html-escaped-local.ts', line: 15 },
     { rule: 'opt.factory.rules.javascript.parameter-sql-text',
       path: 'typescript-html-escaped-local.ts', line: 35 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable',
+      path: 'typescript-html-escaped-local.ts', line: 51 },
+    { rule: 'opt.factory.rules.javascript.parameter-shell-command',
+      path: 'typescript-html-escaped-local.ts', line: 56 },
   ];
 }
 
@@ -278,9 +282,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 256 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 260 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 256;
+const REVIEWED_FINDINGS = 260;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

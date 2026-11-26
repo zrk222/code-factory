@@ -40,3 +40,18 @@ export function anchor(href: string) {
   // ok: javascript.html-template-unescaped-interpolation
   return '<a href="' + href + '">';
 }
+
+export function appendSeparator(e: any) {
+  // ok: javascript.dom-innerhtml-from-variable
+  e.innerHTML = e.innerHTML + "&nbsp;";
+}
+
+export function appendFragment(e: any, htmlFragment: string) {
+  // ruleid: javascript.dom-innerhtml-from-variable
+  e.innerHTML = e.innerHTML + htmlFragment;
+}
+
+export function aliasedRunner(folder: string, processTools: any) {
+  // ruleid: javascript.parameter-shell-command
+  return processTools.execSync(`git -C "${folder}" status`);
+}

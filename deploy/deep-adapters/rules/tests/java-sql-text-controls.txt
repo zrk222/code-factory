@@ -39,5 +39,15 @@ class SearchStore {
         return "select obj.id from " + object.getClass().getName();
     }
 
+    String byOwner(String owner) {
+        // ruleid: java.parameter-sql-text
+        return "select id from documents where owner = " + (owner);
+    }
+
+    String byIdWithSuffix(String id, String suffix) {
+        // ruleid: java.parameter-sql-text
+        return String.format("select name from documents where id = %s", id) + suffix;
+    }
+
     static final String KIND_DOCUMENT = "1";
 }

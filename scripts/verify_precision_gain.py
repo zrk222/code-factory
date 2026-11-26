@@ -785,21 +785,39 @@ def verify_recall(record: dict) -> dict:
 
 def _cache_path(cache: Path, case: dict, item: dict) -> Path:
     _recall_case_name(case)
-    from factoryline.deep_audit_io import relative_path
 
     if not isinstance(item["parent"], str) or not _SHA1.fullmatch(item["parent"]):
         raise ValueError("invalid source parent")
 
-    relative = relative_path(f"{case['ghsa']}/{item['parent'][:12]}/{item['path']}")
-    return _recall_contained(cache, relative)
+    return _recall_contained(cache, f"{case['ghsa']}/{item['parent'][:12]}/{item['path']}")
+
+
+def _filesystem_relative(value) -> Path:
+    """A relative filesystem path: any legal Git filename, never absolute or upward.
+
+    Unlike the wire-protocol validator, '#' and other punctuation are kept as literal
+    filename characters; escaping the root, drive prefixes and encoded dots or
+    separators are refused.
+    """
+    if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
+        raise ValueError("invalid relative path")
+    parts = value.split("/")
+    if value.startswith("/") or any(
+        part in ("", ".", "..") or re.match(r"^[A-Za-z]:", part) for part in parts
+    ):
+        raise ValueError("invalid relative path")
+    # Percent-encoded dots and separators are refused, as a consumer that decodes
+    # them would see a different path; other '%' and '#' characters stay literal.
+    if re.search(r"%(?:2e|2f|5c)", value, re.IGNORECASE):
+        raise ValueError("encoded path separators forbidden")
+    return Path(*parts)
 
 
 def _recall_contained(root, relative):
-    from factoryline.deep_audit_io import relative_path
     import stat
 
     root = Path(root).absolute()
-    target = root / relative_path(relative)
+    target = root / _filesystem_relative(relative)
     for path in [
         *root.parents,
         root,

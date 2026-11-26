@@ -3393,17 +3393,43 @@ rules:
           - focus-metavariable: $CMD
       # Shell command text assembled from a parameter (`rm -rf "${dir}"`) and handed
       # to a run/exec wrapper elsewhere; reported at the first placeholder.
-      # A command template passed straight to exec/execSync is reported once, as that
-      # call's command argument; this branch covers templates built elsewhere.
+      # A command template passed straight to a call that a direct sink above already
+      # reports (same receivers, same child_process bindings) is reported once, there.
+      # Templates built elsewhere, or passed to any other receiver, stay reported here.
       - patterns:
           - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
           - pattern-not-inside:
-              pattern-either:
-                - pattern: 'exec(`...`, ...)'
-                - pattern: 'execSync(`...`, ...)'
-                - pattern: 'execAsync(`...`, ...)'
-                - pattern: '$CP.exec(`...`, ...)'
-                - pattern: '$CP.execSync(`...`, ...)'
+              patterns:
+                - pattern-either:
+                    - pattern: '$CP.exec(`...`, ...)'
+                    - pattern: '$CP.execSync(`...`, ...)'
+                - metavariable-regex: {metavariable: $CP, regex: '^(cp|child_process|childProcess|child|proc|shell)$'}
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        import { ... } from "$CPMOD"
+                        ...
+                    - pattern-inside: |
+                        import $CPX from "$CPMOD"
+                        ...
+                    - pattern-inside: |
+                        import * as $CPX from "$CPMOD"
+                        ...
+                    - pattern-inside: |
+                        $CPX = require("$CPMOD")
+                        ...
+                    - pattern-inside: |
+                        $CPX = require("$CPMOD").$CPM
+                        ...
+                    - pattern-inside: |
+                        const {...} = require("$CPMOD")
+                        ...
+                - metavariable-regex: {metavariable: $CPMOD, regex: '^(?:(?:node:)?child_process|shelljs(?:\.exec)?|execa|cross-spawn)$'}
+                - pattern-either:
+                    - pattern: 'exec(`...`, ...)'
+                    - pattern: 'execSync(`...`, ...)'
+                    - pattern: 'execAsync(`...`, ...)'
       - patterns:
           - pattern: $RUN($CMD, ...)
           - metavariable-regex:
@@ -3983,7 +4009,7 @@ rules:
               - pattern: '$A + "$SQL" + $X'
           # Literal gate for OpenGrep's prefilter (the taint source has none): without it every
           # Java file is fully parsed. The match spans the literal and its concatenated operand.
-          - pattern-regex: '(?i)"[^"\n]*\b(?:select|insert|update|delete|create|merge|where|order|group|having|values|and|or|set|from|into)\b[^"\n]*"\s*\+\s*[\w$.]+(?:\((?:[^()\n]|\([^()\n]*\))*\))?'
+          - pattern-regex: '(?i)"[^"\n]*\b(?:select|insert|update|delete|create|merge|where|order|group|having|values|and|or|set|from|into)\b[^"\n]*"\s*\+[^;]*'
           - metavariable-regex:
               metavariable: $SQL
               regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
@@ -3993,7 +4019,7 @@ rules:
               - pattern: 'String.format("$SQL", ...)'
               - pattern: '"$SQL".formatted(...)'
           # Gate on the call itself: a bare "format" literal also matches words like "information".
-          - pattern-regex: '(?s)(?:\bString\s*\.\s*format\s*\(|"\s*\.\s*formatted\s*\().*?\)\s*;'
+          - pattern-regex: '(?s)(?:\bString\s*\.\s*format|"\s*\.\s*formatted)\s*\([^;]*'
           # Only string placeholders carry text; %d and the like format numbers.
           - metavariable-regex: {metavariable: $SQL, regex: '(?s).*%s'}
           - metavariable-regex:
@@ -4684,8 +4710,8 @@ rules:
       # Empty placeholders, UPPER_CASE template constants and values already named as
       # sanitized or purified are not raw markup.
       - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)(?![A-Z_][A-Z0-9_]*$)(?!(?i:\w*(?:sanitiz|purif)\w*|empty\w*)$)'}
-      # Appending a literal to an element's own markup re-parses what is already there.
-      - pattern-not: $E.innerHTML = $E.innerHTML + $X
+      # Appending a string literal to an element's own markup adds no outside data.
+      - pattern-not: $E.innerHTML = $E.innerHTML + "..."
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
