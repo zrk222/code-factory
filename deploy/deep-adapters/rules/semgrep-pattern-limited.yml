@@ -1008,7 +1008,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-502"]
-      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+      scope: Local PHP request taint and a file-backed call with a misspelled class filter; no interprocedural guarantees.
   - id: go.disabled-tls-verification
     message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
     severity: INFO
@@ -1397,7 +1397,7 @@ rules:
       cwe: ["CWE-89"]
       scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
   - id: java.request-command-injection
-    message: Request data reaches a command operand; review this local source-to-sink candidate.
+    message: Review request-controlled command operands or public script evaluators using Nashorn with Java access enabled.
     severity: INFO
     languages: [java]
     mode: taint
@@ -1417,6 +1417,8 @@ rules:
               - pattern-inside: "$RET $F(..., @PathVariable $T $P, ...) { ... }"
               - pattern-inside: "$RET $F(..., @PathVariable(...) $T $P, ...) { ... }"
           - pattern: $P
+      - pattern: new javax.script.ScriptEngineManager().getEngineByName("Nashorn")
+        exact: true
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -1434,6 +1436,20 @@ rules:
               - pattern: "Runtime.getRuntime().exec($VALUE)"
               - pattern: "(java.lang.Runtime $R).exec($VALUE)"
           - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: $ENGINE = $INITIALIZER
+          - pattern-inside: |
+              class $OWNER {
+                ...
+                static javax.script.ScriptEngine $ENGINE;
+                ...
+                public static $RESULT $RUN(String $CODE, ...) {
+                  ...
+                  return $ENGINE.eval($CODE, ...);
+                }
+                ...
+              }
+          - focus-metavariable: $INITIALIZER
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1441,7 +1457,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-78"]
-      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+      scope: Local request taint to command operands, or a class-bound Nashorn initializer used by a public script evaluator.
   - id: java.request-sql-injection
     message: Request data reaches a sql operand; review this local source-to-sink candidate.
     severity: INFO
