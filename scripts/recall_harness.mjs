@@ -6,6 +6,7 @@
 //            [--exclude-dir docs/evidence] [--per-repo 3] [--per-ecosystem N]
 //   score    --manifest manifest.json --rules ruleset.yml --out results.json
 //            [--opengrep BIN] [--profile profile.json] [--workdir DIR] [--jobs 6] [--extra-arg ARG]...
+//            [--scanner-path-policy true]
 //   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... [--control-timeout SECONDS]
 //            [--parallel-controls WORKERS_PER_ARM] [--control-plan plan.json] --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
@@ -34,6 +35,7 @@ import { basename, delimiter, dirname, extname, isAbsolute, join, relative, reso
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
+import { compileScannerPathPolicy, engineTargetIgnores, PARSER_LANGUAGE } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
@@ -722,7 +724,43 @@ function reportReferences(context, report, diagnostics) {
   const coverage = coverageReportPath(context.profile, report, true);
   return { sarif: diagnostics.report_sha256 ? { path: local(report), sha256: diagnostics.report_sha256 } : null,
     native_report: coverage && diagnostics.coverage_report_sha256
-      ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null };
+      ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null,
+    ...(diagnostics.target_inventory_sha256 ? {
+      target_inventory: { path: local(`${report}.targets`), sha256: diagnostics.target_inventory_sha256 },
+    } : {}) };
+}
+
+function uncoveredPolicyPaths(paths, findings) {
+  const { coverage, notes } = findings;
+  if (!coverage || notes.failed_exit !== false || notes.timeouts || notes.other || notes.blocking_parse_errors) return [];
+  const reported = new Set(findings.map(finding => finding.path));
+  return [...paths].filter(path => !reported.has(path) && !coverage.scanned.has(path) && !coverage.problems.has(path)
+    && (!coverage.skipped.has(path) || coverage.skipped.get(path) === 'semgrepignore_patterns_match'));
+}
+
+async function observePathPolicy(context, source, report, paths, findings) {
+  if (!context.pathPolicy) return;
+  const unresolved = uncoveredPolicyPaths(paths, findings);
+  if (!unresolved.length) return;
+  const { coverage, notes } = findings;
+  const policy = new Map(unresolved.filter(context.pathPolicy).map(path => [path, 'rule_path_exclusions']));
+  const targets = unresolved.filter(path => !policy.has(path));
+  if (targets.length) {
+    const [bin, ...argv] = profileArgv(context.profile, { bin: context.bin, rules: context.rules,
+      report, source: '.', extra: context.extra });
+    const outputArg = argv.indexOf('--sarif-output');
+    if (outputArg < 0) return;
+    argv.splice(outputArg, 2);
+    argv.splice(argv.length - 1, 0, '--x-ls-long');
+    const observed = await runProcess(bin, argv, { cwd: source, timeout: 30000 });
+    const ignored = observed.status === 0 && engineTargetIgnores(observed.stdout, source);
+    if (ignored) {
+      writeFileSync(`${report}.targets`, observed.stdout);
+      notes.target_inventory_sha256 = sha256(observed.stdout);
+      for (const path of targets.filter(ignored)) policy.set(path, 'engine_target_ignore');
+    }
+  }
+  coverage.policyExclusions = policy;
 }
 
 function captureReference(context, source, report, diagnostics) {
@@ -756,6 +794,7 @@ async function observeSide(context, source, report, expected) {
     const packetPaths = new Set(expected.map(row => row.path));
     const findings = await withOpenGrepSource(context.profile, source, packetPaths, async scanSource => {
       const result = await scan({ ...context, packetPaths }, scanSource, report, true);
+      await observePathPolicy(context, scanSource, report, packetPaths, result);
       if (scanSource !== source) result.notes.windows_source_alias = true;
       return result;
     });
@@ -843,11 +882,21 @@ function scoringContext(opts, rulesPath) {
   // evaluate() reads the profile once so a working-tree edit during a long
   // paired run cannot give the two sides different profiles.
   const profileBytes = opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
-  return { profile: JSON.parse(utf8(profileBytes)), profileSha256: sha256(profileBytes),
+  const profile = JSON.parse(utf8(profileBytes));
+  return { profile, profileSha256: sha256(profileBytes),
+    pathPolicy: optionalScannerPolicy(opts, profile, rulesBytes),
     bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', rules: resolve(rulesPath),
     rulesSha256: sha256(rulesBytes), ruleMap: ruleFamilies(utf8(rulesBytes)),
     extra: [].concat(opts['extra-arg'] ?? []), workdir: resolve(opts.workdir ?? '.factory/recall-work'),
     scope: opts.scope === 'scannable' ? 'scannable' : 'ecosystem' };
+}
+
+function optionalScannerPolicy(opts, profile, rulesBytes) {
+  if (opts['scanner-path-policy'] !== 'true') return null;
+  if (profile.engine !== 'semgrep' || profile.tool_version !== '2.1.0') {
+    throw new Error('Scanner path evidence requires the verified OpenGrep 2.1.0 target inventory');
+  }
+  return compileScannerPathPolicy(utf8(rulesBytes));
 }
 
 // Restartable qualification: a completed scored case (or control pair) is
@@ -903,7 +952,8 @@ function checkpointCaptureIntact(root, capture, notes, packets, checkedSources) 
   if (!capture) return packets.length === 0;
   if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
     || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
-  const artifacts = [capture.sarif, capture.native_report].filter(Boolean);
+  if (capture.target_inventory?.sha256 !== notes?.target_inventory_sha256) return false;
+  const artifacts = [capture.sarif, capture.native_report, capture.target_inventory].filter(Boolean);
   if (!artifacts.every(artifact => sha256(readFileSync(reviewCapturePath(root, artifact.path))) === artifact.sha256)) return false;
   const source = reviewCapturePath(root, capture.source_root);
   if (!checkedSources.has(source)) {
@@ -961,7 +1011,7 @@ async function scorePreparedManifest(manifest, opts, context) {
   const checkpointInputs = row => ({ schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
     manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
     profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
-    engine_args: context.extra, scope: context.scope });
+    engine_args: context.extra, scope: context.scope, scanner_path_policy: Boolean(context.pathPolicy) });
   const checkpointed = async (row, staged) => {
     const inputs = checkpointInputs(row);
     const saved = readCheckpoint(checkpoints, inputs);
@@ -1009,6 +1059,7 @@ async function scorePreparedManifest(manifest, opts, context) {
   return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
     manifest_sha256: manifest.sha256, ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scope: context.scope, engine_args: context.extra,
+    ...(context.pathPolicy ? { scanner_path_policy: 'opengrep-2.1.0-target-inventory-v1' } : {}),
     scan_directory: basename(context.scanRoot),
     ...(checkpoints ? { resumed_cases: resumed.sort() } : {}),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
@@ -1068,13 +1119,13 @@ function recordLostHit(changes, pair, old, row) {
 function newCoverageEntries(before, after, side) {
   const key = ({ path, state, reason }) => JSON.stringify([path, state, reason]);
   const previous = new Set(coverageGapEntries(before.file_coverage?.[side]).map(key));
-  return coverageGapEntries(after.file_coverage?.[side]).filter(file => !previous.has(key(file)));
+  const candidate = after.file_coverage?.[side] ?? [];
+  const nativeScanned = new Set((before.file_coverage?.[side] ?? [])
+    .filter(file => file.state === 'reported_scanned').map(file => file.path));
+  const lostScope = candidate.filter(file => file.reason === 'scanner_path_policy' && nativeScanned.has(file.path))
+    .map(file => ({ ...file, state: 'partial', reason: 'scanner_policy_scope_loss' }));
+  return [...coverageGapEntries(candidate).filter(file => !previous.has(key(file))), ...lostScope];
 }
-
-const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
-  go: 'go', java: 'java', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
-  php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
-  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' };
 
 const isParserGap = file => file.state === 'partial' && file.reason === 'parse';
 
@@ -1637,6 +1688,7 @@ function controlScanCoverage(eligible, engine) {
   const gaps = [];
   for (const path of eligible) {
     const reason = !engine ? 'missing_engine_coverage' : engine.problems.get(path)
+      ?? (engine.policyExclusions?.has(path) ? 'scanner_policy_scope_loss' : null)
       ?? (engine.skipped.has(path) ? engine.skipped.get(path) ?? 'engine_reported_skip' : null)
       ?? (engine.scanned.has(path) ? null : 'absent_from_engine_paths');
     if (reason) gaps.push({ path, reason });
@@ -1650,6 +1702,7 @@ async function controlObservation(context, directory, report, source) {
   try {
     if (context.rulesSha256) verifyRulesBytes(context);
     findings = await scan({ ...context, packetPaths: source.paths }, directory, report, true);
+    await observePathPolicy(context, directory, report, source.eligible, findings);
     notes = findings.notes;
     coverage = findings.coverage;
     if (context.rulesSha256) verifyRulesBytes(context);
@@ -1678,6 +1731,14 @@ async function controlObservation(context, directory, report, source) {
   return { findings, notes, coverage };
 }
 
+function sharedControlPathExclusion(sides, path) {
+  const [left, right] = sides.map(({ coverage }) => coverage.policyExclusions?.get(path));
+  if (left && left === right) return `shared_${left}`;
+  const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
+    && !coverage.scanned.has(path) && !coverage.problems.has(path));
+  return agreed ? 'shared_semgrepignore_patterns_match' : null;
+}
+
 function pairedControlScope(source, sides) {
   const exclusions = new Map(source.excluded);
   const targets = new Set(source.plan?.targets);
@@ -1687,9 +1748,8 @@ function pairedControlScope(source, sides) {
     const reported = new Set(sides.flatMap(side => side.findings.map(finding => finding.path)));
     for (const path of source.eligible) {
       if (targets.has(path) || (registered.size && !registered.has(path))) continue;
-      const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
-        && !coverage.scanned.has(path) && !coverage.problems.has(path));
-      if (agreed && !reported.has(path)) exclusions.set(path, 'shared_semgrepignore_patterns_match');
+      const reason = sharedControlPathExclusion(sides, path);
+      if (reason && !reported.has(path)) exclusions.set(path, reason);
     }
   }
   const eligible = source.eligible.filter(path => !exclusions.has(path));
@@ -1880,6 +1940,7 @@ async function controlReportsIntact(root, notes, required) {
   const matches = await Promise.all([
     retainedReportMatches(root, notes.reports?.sarif, notes.report_sha256, required),
     retainedReportMatches(root, notes.reports?.native_report, notes.coverage_report_sha256, required),
+    retainedReportMatches(root, notes.reports?.target_inventory, notes.target_inventory_sha256, false),
   ]);
   return matches.every(Boolean);
 }
@@ -1904,11 +1965,14 @@ async function controlDeltas_(opts, engine, controlSettings, plan = null) {
   const parallel = control_parallel_workers_per_arm !== undefined;
   const firstPass = parallel ? [`--jobs=${control_parallel_workers_per_arm}`] : [];
   const rules = opts.ruleFingerprints;
-  const base = { profile: JSON.parse(utf8(opts.profileBytes)),
+  const profile = JSON.parse(utf8(opts.profileBytes));
+  const pathPolicy = name => opts['scanner-path-policy'] === 'true'
+    ? optionalScannerPolicy(opts, profile, readFileSync(name)) : null;
+  const base = { profile,
     bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
-    rules: resolve(before), rulesSha256: rules.baseline_sha256 };
+    rules: resolve(before), rulesSha256: rules.baseline_sha256, pathPolicy: pathPolicy(before) };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
-    rules: resolve(after), rulesSha256: rules.candidate_sha256 };
+    rules: resolve(after), rulesSha256: rules.candidate_sha256, pathPolicy: pathPolicy(after) };
   const checkpointProfile = sha256(Buffer.from(JSON.stringify(base.profile)));
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
@@ -1959,6 +2023,7 @@ async function controlDeltas_(opts, engine, controlSettings, plan = null) {
         source_tree: source.evidence, excluded: excludedDirs, ...rules, ...controlSettings,
         ...(plan ? { control_plan_sha256: plan.digest } : {}), ...scope,
         profile_sha256: checkpointProfile,
+        scanner_path_policy: Boolean(base.pathPolicy),
         engine_sha256: engine.receipt.executable_sha256, extra: effectiveBase.extra,
         candidate_extra: effectiveCandidate.extra } : null;
       const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
