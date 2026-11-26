@@ -3175,6 +3175,14 @@ def test_recall_paths_accept_git_punctuation_but_never_escape(tmp_path):
     with pytest.raises(ValueError):
         contained(tmp_path, "src/%2E%2E/x.js")
     assert target.read_text() == "x"
-    for bad in ("../x.js", "/etc/passwd", "src//x.js", "src/./x.js", "C:/x.js", "a\\b.js", ""):
+    for bad in (
+        "../x.js",
+        "/etc/passwd",
+        "src//x.js",
+        "src/./x.js",
+        "C:/x.js",
+        "a\\b.js",
+        "",
+    ):
         with pytest.raises(ValueError):
             contained(tmp_path, bad)
