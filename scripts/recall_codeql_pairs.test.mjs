@@ -245,22 +245,36 @@ test('native and pattern hits join only on identical evidence and are counted on
 });
 
 test('registered CodeQL plans reconcile the exact query set and keep absent cases visible', t => {
-  const { root, row, value, inputSha256, json, write, run } = stagedPair(t);
+  const { root, row, value, binding, inputSha256, json, write, run } = stagedPair(t);
   const pair = value.cases[0];
   const unobserved = { ...row, ghsa: 'GHSA-3333-4444-5555', cwes: ['CWE-295'] };
   const unsupported = { ...row, ghsa: 'GHSA-4444-5555-6666', ecosystem: 'npm' };
-  const cases = [row, unobserved, unsupported];
+  const alias = { ...row, ghsa: 'GHSA-5555-6666-7777' };
+  const divergent = { ...row, ghsa: 'GHSA-6666-7777-8888' };
+  const reuse = (registration, packets = binding.source_packets) => {
+    const input = { ...binding, ghsa: registration.ghsa, source_packets: packets };
+    const prepared = json(registration.ghsa + '.json',
+      { ...input, status: 'ready', case_sha256: caseDigest([registration]) });
+    return { observation: { advisory: registration.ghsa, after: 'miss', input_sha256: sha256(JSON.stringify(sortKeys(input))) },
+      row: { advisory: registration.ghsa, prepared, capture_reused_from: row.ghsa } };
+  };
+  const linked = reuse(alias);
+  const wrongFamily = reuse(unobserved);
+  const wrongSource = reuse(divergent, { ...binding.source_packets,
+    old: [{ ...binding.source_packets.old[0], sha256: 'f'.repeat(64) }] });
+  const cases = [row, unobserved, unsupported, alias, divergent];
   const manifest = json('registry.json', { cases, cases_sha256: caseDigest(cases) });
   const previous = JSON.parse(readFileSync(join(root, value.reference.path), 'utf8'));
-  const reference = json('registered-reference.json', { ...previous, candidate: { registered: 3, hunk_hits: 0 },
+  const reference = json('registered-reference.json', { ...previous, candidate: { registered: 5, hunk_hits: 0 },
     manifest_sha256: manifest.sha256, manifest_cases_sha256: caseDigest(cases),
-    cases: [...previous.cases, ...[unobserved, unsupported].map(r => ({ advisory: r.ghsa, after: 'miss' }))] });
+    cases: [...previous.cases, { advisory: unsupported.ghsa, after: 'miss' },
+      ...[wrongFamily, linked, wrongSource].map(item => item.observation)] });
   const extra = { id: 'test/other-family',
     source: write('extra.ql', '/**\n * @id test/other-family\n * @tags external/cwe/cwe-079\n */\n') };
   const queries = [{ id: pair.query_id, source: pair.query }, extra];
   const plan = json('plan.json', { schema: 'factory.recall-codeql-plan.v1', engine_version: value.engine_version,
     manifest_sha256: manifest.sha256, reference_sha256: reference.sha256, policies: [{ ecosystem: 'PyPI', queries }],
-    advisory_schedule: [row.ghsa, unobserved.ghsa] });
+    advisory_schedule: [row, unobserved, alias, divergent].map(item => item.ghsa) });
   const queries_sha256 = caseDigest(queries.map(({ id, source }) => ({ id, sha256: source.sha256 })));
   const capture = (side, complete = true) => {
     const raw = JSON.parse(readFileSync(join(root, pair[side].sarif.path), 'utf8'));
@@ -281,14 +295,27 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
     cases: [{ ...pair, old: capture('old'), fixed: capture('fixed') }] };
   const scored = run(bundle);
   assert.equal(scored.scope, 'registered-codeql-plan');
-  assert.equal(scored.planned_cases, 2);
-  assert.deepEqual(scored.unobserved_advisories, [unobserved.ghsa]);
+  assert.equal(scored.planned_cases, 4);
+  assert.deepEqual(scored.unobserved_advisories, [unobserved.ghsa, alias.ghsa, divergent.ghsa]);
   assert.deepEqual(scored.unsupported_advisories, [unsupported.ghsa]);
   assert.deepEqual(scored.uncovered_advisory_families, [{ advisory: unobserved.ghsa, families: ['tls'] }]);
   assert.equal(scored.strict_hunk_hits, 1);
   assert.equal(scored.fixed_hunk_residuals, 0);
   assert.equal(scored.cases[0].native_alerts.fixed, 1);
   assert.equal(scored.cases[0].input_sha256, inputSha256);
+  const withReuse = run({ ...bundle, cases: [linked.row, ...bundle.cases] });
+  assert.equal(withReuse.scored_pairs, 2);
+  assert.equal(withReuse.captured_pairs, 1);
+  assert.equal(withReuse.reused_capture_pairs, 1);
+  assert.equal(withReuse.strict_hunk_hits, 2);
+  assert.equal(withReuse.cases[0].capture_reused_from, row.ghsa);
+  assert.equal(withReuse.cases[0].input_sha256, linked.observation.input_sha256);
+  assert.deepEqual(withReuse.cases[0].fingerprints, withReuse.cases[1].fingerprints);
+  for (const item of [{ ...linked.row, old: pair.old }, { ...linked.row, capture_reused_from: alias.ghsa }]) {
+    assert.throws(() => run({ ...bundle, cases: [...bundle.cases, item] }), /directly captured pair/);
+  }
+  assert.throws(() => run({ ...bundle, cases: [...bundle.cases, wrongFamily.row] }), /scored families differ/);
+  assert.throws(() => run({ ...bundle, cases: [...bundle.cases, wrongSource.row] }), /source inputs differ/);
   const frozenPlan = JSON.parse(readFileSync(join(root, plan.path), 'utf8'));
   const truncated = json('truncated.json', { ...frozenPlan, advisory_schedule: [row.ghsa] });
   assert.throws(() => run({ ...bundle, plan: truncated }), /schedule omits or adds registered cases/);

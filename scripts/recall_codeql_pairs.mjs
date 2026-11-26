@@ -3,6 +3,7 @@
 // A v1 bundle pins the query for each targeted case. A v2 bundle pins a
 // separate plan that assigns one query inventory to each supported ecosystem.
 // Each old/fixed capture pins observation JSON, SARIF and the CodeQL source ZIP.
+// A v2 row may reuse a verified capture from another advisory in the same plan.
 // Artifact paths are relative to the bundle, and archive prefixes identify source roots.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -340,7 +341,7 @@ function crossFileTraceMatches(old, fixed, hunks, families, rules) {
   return matches;
 }
 
-function scorePreparedPair(row, { root, cases, referenceCases, policies, engineVersion, archives }) {
+function verifiedPairInput(row, { root, cases, referenceCases }) {
   const registered = cases.get(row.advisory);
   const before = referenceCases.get(row.advisory);
   requireProof(registered && before, 'CodeQL advisory is absent from the registered cohort');
@@ -352,7 +353,15 @@ function scorePreparedPair(row, { root, cases, referenceCases, policies, engineV
     diff_sha256: prepared.diff_sha256, changed_files_sha256: prepared.changed_files_sha256 };
   requireProof(inputFingerprint(input) === before.input_sha256,
     'Prepared case bytes differ from the reference for ' + row.advisory);
+  const preparedDir = dirname(row.prepared.path);
+  const patch = artifact(root, { path: join(preparedDir, 'diff.patch'), sha256: input.diff_sha256 });
+  artifact(root, { path: join(preparedDir, 'changes.z'), sha256: input.changed_files_sha256 });
+  return { registered, before, input, patch };
+}
 
+function scorePreparedPair(row, context) {
+  const { root, policies, engineVersion, archives } = context;
+  const { registered, before, input, patch } = verifiedPairInput(row, context);
   const families = familiesFor(registered.cwes);
   const policy = policies ? policies.get(registered.ecosystem) : { queries: [queryBinding(root, row.query_id, row.query)] };
   requireProof(policy, 'No registered CodeQL ecosystem policy for ' + row.advisory);
@@ -364,9 +373,6 @@ function scorePreparedPair(row, { root, cases, referenceCases, policies, engineV
   const fixed = nativeCapture(root, row.fixed, 'fixed', input, engineVersion, policy);
   archives.push(old.archive, fixed.archive);
 
-  const preparedDir = dirname(row.prepared.path);
-  const patch = artifact(root, { path: join(preparedDir, 'diff.patch'), sha256: input.diff_sha256 });
-  artifact(root, { path: join(preparedDir, 'changes.z'), sha256: input.changed_files_sha256 });
   const editedLines = {};
   const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(registered.ecosystem), editedLines);
   const rules = Object.fromEntries(policy.queries.map(query => [query.id, query.families]));
@@ -381,6 +387,21 @@ function scorePreparedPair(row, { root, cases, referenceCases, policies, engineV
     native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
     fingerprints: { old: old.fingerprints, fixed: fixed.fingerprints },
     packets: { old: old.archive.packets.length, fixed: fixed.archive.packets.length } };
+}
+
+function reuseCapture(row, captured, context) {
+  const source = captured.get(row.capture_reused_from);
+  requireProof(context.policies && source && !Object.hasOwn(row, 'old') && !Object.hasOwn(row, 'fixed'),
+    'Capture reuse requires a directly captured pair in the same registered plan');
+  const { registered, before, input } = verifiedPairInput(row, context);
+  const original = context.cases.get(source.advisory);
+  requireProof(registered.repository === original.repository && registered.ecosystem === original.ecosystem
+    && caseDigest(familiesFor(registered.cwes)) === caseDigest(familiesFor(original.cwes)),
+  'Capture reuse repository, ecosystem or scored families differ for ' + row.advisory);
+  requireProof(inputFingerprint({ ...input, ghsa: source.advisory }) === source.input_sha256,
+    'Capture reuse source inputs differ for ' + row.advisory);
+  return { ...source, advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
+    capture_reused_from: source.advisory };
 }
 
 function verifySourceArchives(archives) {
@@ -436,15 +457,18 @@ export function scoreCodeqlPairs(bundlePath, patternPin = null) {
   const policies = bundle.schema === PLAN_BUNDLE ? registeredPolicies(root, bundle, manifest) : null;
 
   const archives = [];
-  const observations = bundle.cases.map(row => scorePreparedPair(row, { root, cases, referenceCases,
-    policies, engineVersion: bundle.engine_version, archives }));
-  bindTraceSources(observations, verifySourceArchives(archives));
+  const context = { root, cases, referenceCases, policies, engineVersion: bundle.engine_version, archives };
+  const captured = new Map(bundle.cases.filter(row => !Object.hasOwn(row, 'capture_reused_from'))
+    .map(row => [row.advisory, scorePreparedPair(row, context)]));
+  bindTraceSources(captured.values(), verifySourceArchives(archives));
+  const observations = bundle.cases.map(row => captured.get(row.advisory) ?? reuseCapture(row, captured, context));
   const cohortCoverage = scheduledCoverage(bundle.plan, policies, manifest, observations);
   const patternJoin = patternPin && joinPatternScore(patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations);
   return { schema: 'factory.recall-codeql-pair-score.v1', scope: policies ? 'registered-codeql-plan' : 'supplemental',
     input_sha256: sha256(bytes), ...cohortCoverage, ...(patternJoin ? { pattern_join: patternJoin } : {}),
     reference_sha256: bundle.reference.sha256, registered_cases: cases.size, reference_hunk_hits: reference.candidate.hunk_hits,
-    scored_pairs: observations.length, strict_hunk_hits: observations.filter(row => row.hunk_hit).length,
+    scored_pairs: observations.length, captured_pairs: captured.size, reused_capture_pairs: observations.length - captured.size,
+    strict_hunk_hits: observations.filter(row => row.hunk_hit).length,
     changed_file_hits: observations.filter(row => row.file_hit).length,
     cross_file_trace_hits: observations.filter(row => row.cross_file_trace_matches.length > 0).length,
     strict_hits_on_reference_misses: observations.filter(row => row.reference === 'miss' && row.hunk_hit).length,
