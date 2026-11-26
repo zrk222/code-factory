@@ -14,6 +14,13 @@ For a control that repeatedly finishes only after the bounded timeout retry,
 pass `--control-timeout 15` to the OpenGrep `controls` or `evaluate` command.
 Both control arms use that budget from their first scan. Advisory scans keep
 their configured budget, and the receipt records the control timeout.
+Use a longer explicit budget for measured slow controls, within the scanner
+process deadline. The default retry budget remains 15 seconds.
+
+Use `--parallel-controls 3` to give each control arm three OpenGrep workers and
+run the first pair concurrently on a host with at least six available CPUs.
+The option owns both arms' worker settings, and any timeout retry runs with
+one worker per arm in sequence. The receipt records the first-pass worker count.
 
 ## Parser coverage
 

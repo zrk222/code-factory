@@ -579,6 +579,15 @@ async function feederFixture(run, row = feederRow) {
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
+      "if (control && ruleText.includes('# require-parallel-controls')) {",
+      "  const arm = basename(report).startsWith('before') ? 'before' : 'after';",
+      "  const other = dirname(rules) + '/parallel-' + (arm === 'before' ? 'after' : 'before');",
+      "  if (!process.argv.includes('--jobs=1')) throw Error('Unbounded control worker arguments');",
+      "  writeFileSync(dirname(rules) + '/parallel-' + arm, '');",
+      "  const deadline = Date.now() + 5000;",
+      "  while (!existsSync(other) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));",
+      "  if (!existsSync(other)) throw Error('The second control arm did not start');",
+      "}",
       "if (control && ruleText.includes('# assert-directory-excludes')) {",
       "  const exclusions = process.argv.flatMap((arg, index) => arg === '--exclude' ? [process.argv[index + 1]] : []);",
       "  if (JSON.stringify(exclusions) !== JSON.stringify(['build/', 'fixture.py/', 'test/'])) throw Error('Wrong scanner directory exclusions');",
@@ -866,15 +875,60 @@ test('an explicit first-pass timeout covers both control arms and leaves develop
     const controlReceipt = JSON.parse(readFileSync(output, 'utf8'));
     assert.equal(controlReceipt.control_timeout_seconds, 15);
     assert.equal(controlReceipt.deltas[0].initial_scan_sides, undefined);
+    writeFileSync(baseline, readFileSync(baseline, 'utf8').replace('# control-first-pass', ''));
+    writeFileSync(candidate, readFileSync(baseline, 'utf8'));
+    const longer = run('evaluate', evaluation, '--control-timeout', '60');
+    assert.equal(longer.status, 0, longer.stderr);
+    const longerReceipt = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(longerReceipt.control_timeout_seconds, 60);
+    assert.deepEqual(longerReceipt.extra_args, []);
+    assert.equal(longerReceipt.dev[0].after.hunk_hits, 1);
     rmSync(output);
     for (const extra of [
-      ['--control-timeout', '16'],
+      ['--control-timeout', '1800'],
       ['--control-timeout', '15', '--candidate-extra-arg', '--timeout=5'],
       ['--control-timeout', '15', '--control-timeout', '5'],
     ]) {
       const invalid = run('evaluate', evaluation, ...extra);
       assert.equal(invalid.status, 1);
       assert.match(invalid.stderr, /--control-timeout/);
+      assert.equal(existsSync(output), false);
+    }
+  }));
+
+test('parallel control arms share a bounded worker setting and complete the same source scope', () =>
+  feederFixture(({ root, workdir, profile, baseline, candidate }) => {
+    const control = join(root, 'control');
+    mkdirSync(control);
+    writeFileSync(join(control, 'sample.py'), '# benign input\n');
+    const rules = readFileSync(baseline, 'utf8') + '# require-parallel-controls\n';
+    writeFileSync(baseline, rules);
+    writeFileSync(candidate, rules);
+    const output = join(root, 'parallel-controls.json');
+    const run = (workers, ...extra) => spawnSync(process.execPath, [
+      'scripts/recall_harness.mjs', 'controls', '--rules', baseline, '--rules', candidate,
+      '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath, '--dir', control,
+      '--out', output, '--parallel-controls', workers, ...extra,
+    ], { encoding: 'utf8', timeout: 20000 });
+    const result = run('1');
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(receipt.control_parallel_workers_per_arm, 1);
+    assert.equal(receipt.deltas[0].initial_scan_sides, undefined);
+    for (const side of Object.values(receipt.deltas[0].scan_sides)) {
+      assert.equal(side.control_coverage.complete, true);
+      assert.equal(side.control_coverage.reported, 1);
+    }
+    rmSync(output);
+    for (const [workers, ...extra] of [
+      ['1', '--candidate-extra-arg', '--jobs=1'],
+      ['0'],
+      [String(Number.MAX_SAFE_INTEGER)],
+      ['1', '--parallel-controls', '1'],
+    ]) {
+      const invalid = run(workers, ...extra);
+      assert.equal(invalid.status, 1);
+      assert.match(invalid.stderr, /--parallel-controls/);
       assert.equal(existsSync(output), false);
     }
   }));

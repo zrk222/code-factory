@@ -6,10 +6,12 @@
 //            [--exclude-dir docs/evidence] [--per-repo 3] [--per-ecosystem N]
 //   score    --manifest manifest.json --rules ruleset.yml --out results.json
 //            [--opengrep BIN] [--profile profile.json] [--workdir DIR] [--jobs 6] [--extra-arg ARG]...
-//   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... [--control-timeout SECONDS] --out deltas.json
+//   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... [--control-timeout SECONDS]
+//            [--parallel-controls WORKERS_PER_ARM] --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
 //            [--probe-coverage true] [--control-exclude DIRECTORY]... [--control-timeout SECONDS]
+//            [--parallel-controls WORKERS_PER_ARM]
 //            [--adjudicated-losses plan.json] [--checkpoint-dir DIR]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
@@ -26,7 +28,7 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -338,7 +340,9 @@ export function summarize(rows) {
 }
 
 // Async child processes so --jobs really runs cases side by side.
-function runProcess(command, args, { cwd, env, timeout = 1800000, bytes = false, discardStdout = false } = {}) {
+const SCAN_PROCESS_TIMEOUT_MS = 30 * 60_000;
+
+function runProcess(command, args, { cwd, env, timeout = SCAN_PROCESS_TIMEOUT_MS, bytes = false, discardStdout = false } = {}) {
   return new Promise(done => {
     const child = spawn(command, args, { cwd, env: { ...process.env, ...env },
       ...(discardStdout ? { stdio: ['ignore', 'ignore', 'pipe'] } : {}) });
@@ -1299,7 +1303,7 @@ async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
   const profile = JSON.parse(utf8(opts.profileBytes));
-  const controlSettings = controlTimeoutSettings(opts, profile);
+  const controlSettings = { ...controlTimeoutSettings(opts, profile), ...parallelControlSettings(opts, profile) };
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
   const excludedDirs = controlExcludedDirectories(opts);
   const labels = suppliedLabels(opts);
@@ -1362,6 +1366,7 @@ async function evaluate(input) {
 
 const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
 const OPENGREP_TIMEOUT_FLAG = /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/;
+const OPENGREP_WORKER_FLAG = /^(?:--jobs(?:=|$)|-j(?:=|\d|$))/;
 const OPENGREP_DEFAULT_TARGET_BYTES = 1_000_000;
 const CONTROL_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
 const CONTROL_HASH_BATCH_SIZE = 16;
@@ -1386,7 +1391,7 @@ function controlRetryArgs(profile, baselineArgs, candidateArgs) {
     retry.push(`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`);
   }
   // Retry under a single worker to keep the existing per-rule budget usable under load.
-  if (!argv.some(arg => /^(?:--jobs(?:=|$)|-j(?:=|\d|$))/.test(arg))) retry.push('--jobs=1');
+  if (!argv.some(arg => OPENGREP_WORKER_FLAG.test(arg))) retry.push('--jobs=1');
   return retry;
 }
 
@@ -1554,10 +1559,19 @@ function recordControlCoverage(side, scope) {
   }
 }
 
-async function controlPair({ base, candidate, directory, reports, source, workdir }, suffix, retryArgs = []) {
-  const old = await controlObservation({ ...base, workdir, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
-  const now = old.sourceInvalid ? { findings: [], notes: null }
-    : await controlObservation({ ...candidate, workdir, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
+async function controlPair({ base, candidate, directory, reports, source, workdir }, suffix, scanArgs = [], parallel = false) {
+  const observeArm = (settings, arm) => controlObservation({ ...settings, workdir, extra: [...settings.extra, ...scanArgs] },
+    directory, `${reports}/${arm}${suffix}.sarif`, source);
+  let old, now;
+  if (parallel) {
+    const observations = await Promise.allSettled([observeArm(base, 'before'), observeArm(candidate, 'after')]);
+    const failed = observations.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+    [old, now] = observations.map(result => result.value);
+  } else {
+    old = await observeArm(base, 'before');
+    now = old.sourceInvalid ? { findings: [], notes: null } : await observeArm(candidate, 'after');
+  }
   const scope = pairedControlScope(source, [old, now]);
   for (const side of [old, now]) recordControlCoverage(side, scope);
   const scan_sides = { before: old.notes, after: now.notes };
@@ -1590,8 +1604,9 @@ function controlExcludedDirectories(opts) {
 function controlTimeoutSettings(opts, profile) {
   if (!('control-timeout' in opts)) return {};
   const value = opts['control-timeout'];
-  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) > CONTROL_TIMEOUT_RETRY_SECONDS) {
-    throw new Error(`--control-timeout requires a single integer from 1 to ${CONTROL_TIMEOUT_RETRY_SECONDS}`);
+  const processLimitSeconds = SCAN_PROCESS_TIMEOUT_MS / 1000;
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) >= processLimitSeconds) {
+    throw new Error(`--control-timeout requires positive whole seconds below the ${processLimitSeconds}-second scan deadline`);
   }
   if (!opts.dir || profile.engine !== 'semgrep') {
     throw new Error('--control-timeout requires OpenGrep controls');
@@ -1601,6 +1616,20 @@ function controlTimeoutSettings(opts, profile) {
     throw new Error('--control-timeout conflicts with an existing scanner timeout flag');
   }
   return { control_timeout_seconds: Number(value) };
+}
+
+function parallelControlSettings(opts, profile) {
+  if (!('parallel-controls' in opts)) return {};
+  const value = opts['parallel-controls'];
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) * 2 > availableParallelism()) {
+    throw new Error('--parallel-controls requires a positive worker count per arm within the available CPU budget');
+  }
+  if (!opts.dir || profile.engine !== 'semgrep') throw new Error('--parallel-controls requires OpenGrep controls');
+  const argv = profile.commands[0].argv.concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []);
+  if (argv.some(arg => OPENGREP_WORKER_FLAG.test(arg))) {
+    throw new Error('--parallel-controls conflicts with an existing scanner worker flag');
+  }
+  return { control_parallel_workers_per_arm: Number(value) };
 }
 
 async function retainedReportMatches(root, reference, expected, required) {
@@ -1633,12 +1662,15 @@ async function controlCheckpointIntact(root, delta) {
   } catch { return false; }
 }
 
-async function controlDeltas_(opts, engine, { control_timeout_seconds }) {
+async function controlDeltas_(opts, engine, controlSettings) {
   const [before, after] = [].concat(opts.rules);
   const excludedDirs = controlExcludedDirectories(opts);
   // A directory-only ignore pattern covers all depths and preserves files with the same name.
   const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/`]);
+  const { control_timeout_seconds, control_parallel_workers_per_arm } = controlSettings;
   const timeoutArgs = control_timeout_seconds === undefined ? [] : [`--timeout=${control_timeout_seconds}`];
+  const parallel = control_parallel_workers_per_arm !== undefined;
+  const firstPass = parallel ? [`--jobs=${control_parallel_workers_per_arm}`] : [];
   const rules = opts.ruleFingerprints;
   const base = { profile: JSON.parse(utf8(opts.profileBytes)),
     bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], timeoutArgs, exclusionArgs),
@@ -1663,7 +1695,7 @@ async function controlDeltas_(opts, engine, { control_timeout_seconds }) {
       const effectiveCandidate = { ...candidate, extra: [...candidate.extra, ...targetArgs] };
       const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v3',
         scorer_sha256: scorerSha256(), dir,
-        source_tree: source.evidence, excluded: excludedDirs, ...rules,
+        source_tree: source.evidence, excluded: excludedDirs, ...rules, ...controlSettings,
         profile_sha256: checkpointProfile,
         engine_sha256: engine.receipt.executable_sha256, extra: effectiveBase.extra,
         candidate_extra: effectiveCandidate.extra } : null;
@@ -1675,7 +1707,7 @@ async function controlDeltas_(opts, engine, { control_timeout_seconds }) {
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
       const context = { base: effectiveBase, candidate: effectiveCandidate, directory, source,
         workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
-      let attempt = await controlPair(context, '');
+      let attempt = await controlPair(context, '', firstPass, parallel);
       const sizing = maxTargetBytes ? { max_target_bytes: maxTargetBytes } : {};
       let recovery = sizing;
       if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
@@ -1933,7 +1965,7 @@ async function controls(opts) {
   const [before, after] = [].concat(opts.rules);
   const profileBytes = readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
   const profile = JSON.parse(utf8(profileBytes));
-  const controlSettings = controlTimeoutSettings(opts, profile);
+  const controlSettings = { ...controlTimeoutSettings(opts, profile), ...parallelControlSettings(opts, profile) };
   const settings = { ...opts, baseline: before, candidate: after, profileBytes };
   const rules = evaluationRules(settings);
   const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
