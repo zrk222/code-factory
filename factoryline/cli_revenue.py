@@ -164,7 +164,9 @@ def add_parser(sub: Any) -> None:
     revenue_appforge_init.add_argument("--bundle-identifier", required=True)
     revenue_appforge_init.add_argument("--version", required=True)
     revenue_appforge_init.add_argument("--build-number", required=True)
-    revenue_appforge_init.add_argument("--source-commit", required=True)
+    revenue_appforge_init.add_argument(
+        "--source-commit", help="40-character build commit; defaults to HEAD of a clean git checkout"
+    )
     revenue_appforge_init.add_argument("--audience", required=True)
     revenue_appforge_init.add_argument("--primary-job", required=True)
     revenue_appforge_init.add_argument("--desired-emotion", required=True)

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 import hashlib
 import json
+import re
+import subprocess
 
 from .app_review_gate import RULES
 from .appforge_quality_audit import CONDITIONAL_CHECKS, DESIGN_CHECKS, STACK_CHECKS
@@ -52,6 +54,33 @@ def _text(value: object, field: str) -> str:
             f"{field} must be a non-empty bounded string",
         )
     return result
+
+
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+def resolve_source_commit(root: Path, value: str | None) -> tuple[str, bool]:
+    """Validate an explicit 40-hex commit, or derive HEAD from a clean git checkout: (commit, derived)."""
+    if value:
+        commit = value.strip().lower()
+        if not _COMMIT.fullmatch(commit):
+            raise RevenueForgeError(
+                "APPFORGE_INIT_COMMIT_INVALID",
+                "--source-commit must be the full 40-character commit SHA of the build",
+            )
+        return commit, False
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=10)
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        head = dirty = None
+    commit = head.stdout.strip() if head and head.returncode == 0 else ""
+    if not _COMMIT.fullmatch(commit) or dirty is None or dirty.returncode != 0 or dirty.stdout.strip():
+        raise RevenueForgeError(
+            "APPFORGE_INIT_COMMIT_REQUIRED",
+            "pass --source-commit, or run from a clean git checkout so HEAD can be used",
+        )
+    return commit, True
 
 
 def _read_candidate(root: Path, path: Path) -> tuple[dict[str, str], Path]:
@@ -179,18 +208,19 @@ def initialize_appforge(
     bundle_identifier: str,
     version: str,
     build_number: str,
-    source_commit: str,
+    source_commit: str | None,
     audience: str,
     primary_job: str,
     desired_emotion: str,
 ) -> dict[str, Any]:
     """Capture user-supplied AppForge mission inputs into a safe local start."""
     workspace = Path(root).resolve()
+    commit, commit_derived = resolve_source_commit(workspace, source_commit)
     candidate = {
         "bundle_identifier": _text(bundle_identifier, "bundle_identifier"),
         "version": _text(version, "version"),
         "build_number": _text(build_number, "build_number"),
-        "source_commit": _text(source_commit, "source_commit"),
+        "source_commit": commit,
     }
     mission = {
         "app_name": _text(app_name, "app_name"),
@@ -234,11 +264,12 @@ def initialize_appforge(
             ],
         },
     )
+    here = destination.relative_to(workspace).as_posix()
     next_file.write_text(
         "# AppForge Init — next safe actions\n\n"
         "1. Edit `user-design-input.md` with the user's actual constraints and approval notes.\n"
-        "2. Compile the storyboard: `factory revenue appforge-design --root . --brief appforge-design-brief.json --out-dir .factory/appforge/design --json`.\n"
-        "3. Create the evidence workspace: `factory revenue evidence-kit --root . --candidate release-candidate.json --design-input user-design-input.md --out-dir .factory/appforge/evidence --json`.\n"
+        f"2. Compile the storyboard: `factory revenue appforge-design --root . --brief {here}/appforge-design-brief.json --out-dir .factory/appforge/design --json`.\n"
+        f"3. Create the evidence workspace: `factory revenue evidence-kit --root . --candidate {here}/release-candidate.json --design-input {here}/user-design-input.md --out-dir .factory/appforge/evidence --json`.\n"
         "4. Validate the reviewed EAS profiles with `factory revenue appforge-eas`; do not put tokens or credential values in `eas.json`.\n"
         "5. Collect real evidence. The kit is not a TestFlight upload or Apple submission action.\n",
         encoding="utf-8",
@@ -256,6 +287,7 @@ def initialize_appforge(
         "ok": True,
         "action_summary": "Record the user-supplied app mission and exact release candidate, then write an AppForge start workspace and next safe actions; do not infer design decisions, collect evidence, access credentials, run devices, or submit to Apple.",
         "candidate": candidate,
+        "source_commit_derived": commit_derived,
         "mission": mission,
         "artifacts": {
             key: value.relative_to(workspace).as_posix()
