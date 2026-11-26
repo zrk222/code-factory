@@ -101,6 +101,22 @@ class QuotedIdentifierStore {
     }
 }
 
+class ReportAdapter {
+    public function columns($db, $configuration) {
+        $sql = $this->buildQueryString($configuration);
+        if (!preg_match('/(ALTER|CREATE|DROP|DELETE) /i', $sql)) {
+            // ruleid: php.parameter-sql-text
+            return $db->fetchAssociative($sql . ' LIMIT 0,1');
+        }
+        return [];
+    }
+
+    public function update($db, array $values) {
+        // ok: php.parameter-sql-text
+        return $db->query('UPDATE items SET ' . $this->buildArray('UPDATE', $values));
+    }
+}
+
 class AdodbStyleDriver extends ADOConnection {
     public function columns($table) {
         // ruleid: php.parameter-sql-text

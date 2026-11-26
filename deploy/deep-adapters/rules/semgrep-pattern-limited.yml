@@ -4005,8 +4005,10 @@ rules:
           - pattern: $OBJ->$M(...)
           - metavariable-regex:
               metavariable: $M
-              # ADOdb quotes with qstr()/addQ().
-              regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build\w*|in_set|wrap\w*|qstr|addq)$
+              # ADOdb quotes with qstr()/addQ(). A builder named for the SQL text it
+              # returns (buildQueryString, buildSql) assembles that text from its
+              # arguments; it is not a sanitizer, and neither is a keyword deny-list.
+              regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build(?!\w*(?:query|sql|string|statement))\w*|in_set|wrap\w*|qstr|addq)$
       - patterns:
           - pattern: $FN(...)
           - metavariable-regex:
