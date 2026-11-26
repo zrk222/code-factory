@@ -55,3 +55,13 @@ export function aliasedRunner(folder: string, processTools: any) {
   // ruleid: javascript.parameter-shell-command
   return processTools.execSync(`git -C "${folder}" status`);
 }
+
+export function styleMatcher(id: string) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return new RegExp(`(<style id="${id.value}">.*?)(</style>)`);
+}
+
+export function warnParent(parent: { path: string }) {
+  // ok: javascript.html-template-unescaped-interpolation
+  console.warn(`Please change the parent <Route path="${parent.path}"> to a splat route.`);
+}
