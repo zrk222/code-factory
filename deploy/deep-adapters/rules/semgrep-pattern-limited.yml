@@ -1644,7 +1644,65 @@ rules:
           - pattern: "\"'\" + (string)$VALUE + \"'\""
         label: SQL_LITERAL_VALUE
         exact: true
+      # The older C# parser needs the property span backed by the exact constructor and builder use.
+      - patterns:
+          - pattern-inside: |
+              class $OWNER : ISqlFragment {
+                  ...
+                  public $OWNER(..., string $INPUT = $DEFAULT, ...) {
+                      ...
+                      $FIELD = $INPUT;
+                      ...
+                  }
+                  ...
+                  public void $APPLY(ICommandBuilder $BUILDER) {
+                      ...
+                      $BUILDER.AppendWithParameters($SQL, ...)[...].Value = $PARAM;
+                      ...
+                  }
+                  ...
+              }
+          - pattern-regex: >-
+              (?mx)
+              ^[ \t]*public\s+[A-Za-z_]\w*\s*\(
+              [^(){};]{0,350}?\bstring\s+(?P<arg>[A-Za-z_]\w*)\s*=[^(){};]{1,120}?
+              \)\s*\{[^}]{0,500}?
+              \b(?P<field>[A-Za-z_]\w*)\s*=\s*\k<arg>\s*;
+              [\s\S]{0,1800}?
+              ^[ \t]*private\s+string\s+(?P<property>[A-Za-z_]\w*)\s*=>\s*(?://[^\r\n]*\s*)*
+              (?P<VALUE>\$"[^"\r\n]*\x27\{\k<field>\}\x27::regconfig[^"\r\n]*");
+              [\s\S]{0,600}?
+              \b[A-Za-z_]\w*\.AppendWithParameters\(\s*\k<property>\b
+          - pattern-not-inside: |
+              class $OWNER : ISqlFragment {
+                  ...
+                  private static readonly System.Text.RegularExpressions.Regex $FILTER = new(
+                      @"^[a-zA-Z_][a-zA-Z0-9_]{0,62}(\.[a-zA-Z_][a-zA-Z0-9_]{0,62})?$",
+                      System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                  ...
+                  public $OWNER(..., string $INPUT = $DEFAULT, ...) {
+                      ...
+                      $VALIDATE($INPUT);
+                      $FIELD = $INPUT;
+                      ...
+                  }
+                  ...
+                  private static void $VALIDATE(string $ARG) {
+                      if ($ARG is null) {
+                          throw ...;
+                      }
+                      if (!$FILTER.IsMatch($ARG)) {
+                          throw ...;
+                      }
+                  }
+                  ...
+              }
+          - focus-metavariable: $VALUE
+        label: SQL_REGCONFIG_EXPRESSION
+        exact: true
     pattern-sinks:
+      - pattern-regex: '\$"[^"\r\n]*::regconfig[^"\r\n]*"'
+        requires: SQL_REGCONFIG_EXPRESSION
       - patterns:
           - pattern-either:
               - pattern: new System.Data.SqlClient.SqlCommand($VALUE, ...)
