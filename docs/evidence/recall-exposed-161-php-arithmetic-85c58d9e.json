@@ -240,5 +240,48 @@
     "paired_remaining_controls": 8,
     "blinded_candidate_precision": "NOT_RUN",
     "held_out_q2": "SEALED"
+  },
+  "additional_exposed_php_sql_replay": {
+    "case": "GHSA-6pvm-2vjj-rx4w",
+    "manifest_sha256": "23ff0cca82496bc04fa9b73f34d9697bea499d360913f1741b9683de4f1a437a",
+    "adjudication_sha256": "861e8a5a508090934383d32d6aed6a7c04633dfa80070f97ac603594fa590ff5",
+    "scored_in_registered_161": false,
+    "filename": "phpmyfaq/src/phpMyFAQ/Chat.php",
+    "line": 403,
+    "span": [
+      56,
+      0,
+      62
+    ],
+    "removed_alert_source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+    "label": "FP",
+    "removed_exact_alerts": 1,
+    "added_exact_alerts": 0,
+    "hunk_finding_retained": [
+      [
+        "php.parameter-sql-text",
+        "phpmyfaq/src/phpMyFAQ/Chat.php",
+        311
+      ]
+    ],
+    "fixed_side_residual_alerts": 1,
+    "exact_revisions": {
+      "old": "ba729961c1ad1ff86d15bc623863387238d3f149",
+      "fixed": "bd4b08b012234ccfcff07bfe6518062475b29e0a"
+    },
+    "comparison": [
+      {
+        "rules_sha256": "e07f6514e86d12835ba13ef17f998718ca465e9d9c96d34df99047be6e009c0f",
+        "score_sha256": "58015b855ef628e4162b3fa24d6f62327ee9d0284f89652eee895f0d88a68ef9",
+        "replay_alerts_sha256": "bfa1f43ce347e8fd925495c718679f45824bd10cefa7422d73050955fb2bcf31",
+        "outcome": "hit"
+      },
+      {
+        "rules_sha256": "85c58d9e00a5cb20df62345f3a64a97de89b3f823f5c0bd656c18dcf1396736d",
+        "score_sha256": "3f4c3b6ea4c1d6b51d97056817c5db77b10abdf9b4ba02e7d19b98b062b910b5",
+        "replay_alerts_sha256": "442ae1c5002e9fc32dbf751266144639047f138bdb8fbc3c2db635f38829e69a",
+        "outcome": "hit"
+      }
+    ]
   }
 }
