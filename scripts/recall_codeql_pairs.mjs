@@ -209,6 +209,9 @@ function nativeCapture(root, capture, side, input, engineVersion, policy) {
     && Array.isArray(run.results) && Array.isArray(run.invocations) && run.invocations.length > 0
     && run.invocations.every(call => call.executionSuccessful === true
       && !call.toolExecutionNotifications?.some(note => note.level === 'error')), 'Unqualified CodeQL report for ' + side);
+  requireProof(!run.invocations.some(call => call.toolExecutionNotifications?.some(note =>
+    note.descriptor?.id === 'java/autobuilder/buildless/classpath-from-tool-failed')),
+    'Unqualified CodeQL Java classpath for ' + side);
   const descriptors = new Map((driver.rules ?? []).map(rule => [rule.id, rule]));
   requireProof(descriptors.size === policy.queries.length && descriptors.size === driver.rules?.length
     && run.results.every(result => descriptors.has(result.ruleId)) && run.results.length === observed.reported_alerts,

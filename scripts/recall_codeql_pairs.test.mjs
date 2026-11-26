@@ -80,6 +80,18 @@ test('paired CodeQL scoring requires both revisions and verifies actual source a
   assert.throws(() => run(withPair({ old: capture('old', undefined, false) })), /Native alert location is missing/);
 });
 
+test('CodeQL Java scoring requires complete classpath resolution on both revisions', t => {
+  const { value, capture, run } = stagedPair(t);
+  const [pair] = value.cases;
+  const replay = (old = capture('old'), fixed = capture('fixed')) => run({ ...value, cases: [{ ...pair, old, fixed }] });
+  const note = id => [{ executionSuccessful: true, toolExecutionNotifications: [{ level: 'note', descriptor: { id } }] }];
+  const failed = note('java/autobuilder/buildless/classpath-from-tool-failed');
+  assert.throws(() => replay(capture('old', failed)), /Unqualified CodeQL Java classpath for old/);
+  assert.throws(() => replay(undefined, capture('fixed', failed)), /Unqualified CodeQL Java classpath for fixed/);
+  const download = note('java/autobuilder/buildless/maven-download-failed');
+  assert.equal(replay(capture('old', download)).scored_pairs, 1);
+});
+
 test('CodeQL uses the same source-root resolution for indexed endpoints and trace steps', t => {
   const { root, value, json, run } = stagedPair(t, 'D_/workspace archive/src');
   const pair = value.cases[0];
