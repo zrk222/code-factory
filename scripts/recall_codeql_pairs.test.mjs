@@ -35,7 +35,7 @@ function stagedPair(t, archivePrefix = 'src') {
   const id = 'test/fixture.scope.detail';
   const query = write('query.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
   const zip = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c',
-    'import json, sys, zipfile\nfor side, text in json.load(sys.stdin).items():\n with zipfile.ZipFile(side + ".zip", "w") as archive: archive.writestr(sys.argv[1] + "/sample.py", text)',
+    'import json, sys, zipfile\nfor side, text in json.load(sys.stdin).items():\n with zipfile.ZipFile(side + ".zip", "w") as a:\n  a.writestr(sys.argv[1] + "/sample.py", text)\n  a.writestr(sys.argv[1] + "/helper.py", "VALUE = 0\\n")',
     archivePrefix],
   { cwd: root, input: JSON.stringify(source), encoding: 'utf8', windowsHide: true });
   assert.equal(zip.status, 0, zip.stderr ?? zip.error?.message);
@@ -96,7 +96,10 @@ test('CodeQL uses the same source-root resolution for indexed endpoints and trac
     const observed = json('locations.json', { ...observation, native_sha256: sarif.sha256 });
     return run({ ...value, cases: [{ ...pair, old: { ...pair.old, sarif, observation: observed } }] }).cases[0];
   };
-  assert.equal(review().hunk_hit, true);
+  const direct = review();
+  assert.equal(direct.hunk_hit, true);
+  assert.equal(direct.fingerprints.old.archive_sha256, pair.old.archive.sha256);
+  assert.equal(direct.fingerprints.fixed.sarif_sha256, pair.fixed.sarif.sha256);
   native.originalUriBaseIds['%SRCROOT%'].uri = 'file:///D:/workspace%20archive/src/';
   native.artifacts[0].location.uri = 'file:///D:/workspace%20archive/src/sample.py';
   assert.equal(review().hunk_hit, true);
@@ -104,12 +107,28 @@ test('CodeQL uses the same source-root resolution for indexed endpoints and trac
   assert.equal(review().hunk_hit, true);
   physical.artifactLocation = { uri: 'sample.py', uriBaseId: '%SRCROOT%', index: 0 };
   physical.region.startLine = 4;
-  result.codeFlows = [{ threadFlows: [{ locations: [{ location: { physicalLocation: {
-    artifactLocation: { index: 0 }, region: { startLine: 1 },
-  } } }] }] }];
+  const step = (artifactLocation, startLine) => ({ location: { physicalLocation: {
+    artifactLocation, region: { startLine },
+  } } });
+  result.codeFlows = [{ threadFlows: [{ locations: [
+    step({ index: 0 }, 1), step({ uri: 'helper.py' }, 1), step({ uri: 'missing.py' }, 1),
+    step({ uri: 'helper.py' }, 0), { location: { logicalLocations: [{ name: 'fixture' }] } },
+  ] }] }];
   const traced = review();
   assert.equal(traced.hunk_hit, false);
   assert.equal(traced.trace_hit, true);
+  assert.equal(traced.file_hit, true);
+  assert.equal(traced.fingerprints.old.packet_list_sha256, direct.fingerprints.old.packet_list_sha256);
+  assert.notEqual(traced.fingerprints.old.sarif_sha256, direct.fingerprints.old.sarif_sha256);
+  assert.notEqual(traced.fingerprints.old.location_trace_sha256, direct.fingerprints.old.location_trace_sha256);
+  assert.notEqual(traced.fingerprints.old.flow_trace_sha256, direct.fingerprints.old.flow_trace_sha256);
+  assert.notEqual(traced.fingerprints.old.trace_sources_sha256, direct.fingerprints.old.trace_sources_sha256);
+  assert.deepEqual(traced.fingerprints.old.trace_source_states, { archive_verified: 1, missing: 1, packet_verified: 1 });
+  assert.equal(traced.fingerprints.old.trace_steps, 5);
+  assert.equal(traced.fingerprints.old.nonphysical_trace_steps, 1);
+  assert.equal(traced.fingerprints.old.invalid_trace_steps, 1);
+  assert.equal(traced.fingerprints.old.traced_findings, 1);
+  assert.deepEqual(traced.fingerprints.fixed, direct.fingerprints.fixed);
   physical.artifactLocation.uri = 'other.py';
   assert.throws(review, /inline and indexed artifacts disagree/);
   physical.artifactLocation = { index: 1 };
@@ -126,24 +145,30 @@ test('CodeQL uses the same source-root resolution for indexed endpoints and trac
 
 test('native and pattern hits join only on identical evidence and are counted once', t => {
   const { root, row, value, binding, json, run } = stagedPair(t);
-  const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, hunk_findings: [],
+  const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false, hunk_findings: [],
     file_coverage: { fixed: binding.source_packets.fixed.map(packet => ({
       ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths',
     })) }, fix_side_residual: [] };
-  const score = candidate => {
+  const score = (candidate, summary = {}) => {
     const pins = json('pattern-score.json', {
       schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: value.manifest.sha256,
       manifest_cases_sha256: caseDigest([row]), ruleset_sha256: 'c'.repeat(64), profile_sha256: 'd'.repeat(64),
-      engine: { executable_sha256: 'e'.repeat(64) }, summary: { cases: 1, hunk_hits: Number(candidate.hunk_hit) },
+      engine: { executable_sha256: 'e'.repeat(64) },
+      summary: { cases: 1, hunk_hits: Number(candidate.hunk_hit), file_hits: Number(candidate.file_hit), ...summary },
       cases: [candidate],
     });
     return { ...pins, path: join(root, pins.path) };
   };
-  const joined = candidate => run(value, score(candidate)).pattern_join;
-  assert.equal(joined(base).eligible_native_additions, 1);
-  const found = joined({ ...base, outcome: 'hit', hunk_hit: true, hunk_findings: [['test/rule', 'sample.py', 1]] });
+  const joined = (candidate, bundle = value) => run(bundle, score(candidate)).pattern_join;
+  const detected = joined(base);
+  assert.equal(detected.eligible_native_additions, 1);
+  assert.equal(detected.observed_union_hunk_hits, 1);
+  assert.equal(detected.observed_union_file_hits, 1);
+  const found = joined({ ...base, outcome: 'hit', hunk_hit: true, file_hit: true,
+    hunk_findings: [['test/rule', 'sample.py', 1]] });
   assert.equal(found.cases[0].disposition, 'overlap');
   assert.equal(found.combined_hunk_hits, 1);
+  assert.equal(found.observed_union_file_hits, 1);
   assert.equal(found.eligible_native_additions, 0);
   assert.equal(joined({ ...base, fix_side_residual: [['test/rule', 'sample.py', 1]] }).cases[0].disposition,
     'fixed_side_residual');
@@ -153,6 +178,35 @@ test('native and pattern hits join only on identical evidence and are counted on
     'fixed_coverage_unresolved');
   assert.throws(() => joined({ ...base, diff_sha256: '0'.repeat(64) }), /Pattern case input differs/);
   assert.throws(() => run(value, { ...score(base), sha256: '0'.repeat(64) }), /Pattern score digest mismatch/);
+  assert.throws(() => run(value, score(base, { file_hits: 1 })), /Pattern hit count differs/);
+
+  const pair = value.cases[0];
+  const nativeReport = JSON.parse(readFileSync(join(root, pair.old.sarif.path), 'utf8'));
+  nativeReport.runs[0].results[0].locations[0].physicalLocation.region.startLine = 4;
+  const sarif = json('file-only.sarif', nativeReport);
+  const originalObservation = JSON.parse(readFileSync(join(root, pair.old.observation.path), 'utf8'));
+  const observation = json('file-only.json', { ...originalObservation, native_sha256: sarif.sha256 });
+  const fileOnly = { ...value, cases: [{ ...pair, old: { ...pair.old, sarif, observation } }] };
+  const fileMatch = joined(base, fileOnly);
+  assert.equal(fileMatch.observed_union_hunk_hits, 0);
+  assert.equal(fileMatch.observed_union_file_hits, 1);
+  assert.equal(fileMatch.eligible_native_additions, 0);
+  assert.equal(joined({ ...base, file_hit: true }, fileOnly).observed_union_file_hits, 1);
+
+  const result = nativeReport.runs[0].results[0];
+  result.locations[0].physicalLocation.region.startLine = 1;
+  result.codeFlows = [{ threadFlows: [{ locations: [{ location: { physicalLocation: {
+    artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 },
+  } } }] }] }];
+  const missingSarif = json('missing-source.sarif', nativeReport);
+  const missingObservation = json('missing-source.json', { ...originalObservation, native_sha256: missingSarif.sha256 });
+  const missingSource = { ...value, cases: [{ ...pair, old: {
+    ...pair.old, sarif: missingSarif, observation: missingObservation,
+  } }] };
+  const unresolved = joined(base, missingSource);
+  assert.equal(unresolved.observed_union_hunk_hits, 1);
+  assert.equal(unresolved.eligible_native_additions, 0);
+  assert.equal(unresolved.cases[0].disposition, 'native_trace_source_unresolved');
 });
 
 test('registered CodeQL plans reconcile the exact query set and keep absent cases visible', t => {
