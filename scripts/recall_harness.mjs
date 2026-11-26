@@ -1523,6 +1523,13 @@ function recordedGainsIn(block, required, engineArgs) {
     });
 }
 
+// Gains are only comparable on one scanner binary: a retention checkpoint must name the bound engine.
+export function assertPinnedRetention(bytes, engineSha256) {
+  const pin = JSON.parse(utf8(bytes))?.engine?.executable_sha256;
+  if (!/^[a-f0-9]{64}$/.test(pin ?? '')) throw new Error('Retention checkpoint is not engine-pinned');
+  if (pin !== engineSha256) throw new Error('Retention checkpoint engine differs from the current execution');
+}
+
 function recordedGains(reference) {
   if (reference?.schema !== 'factory.recall-evaluation.v1' || !Array.isArray(reference.gained)
       || !reference.gained.length || !Array.isArray(reference.dev)) throw new Error('Invalid recall gain checkpoint');
@@ -1644,6 +1651,7 @@ async function evaluate(input) {
   }
   const manifests = readEvaluationManifests(opts.manifest);
   const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  if (checkpoint) assertPinnedRetention(checkpoint, engine.receipt.executable_sha256);
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
   const gainPolicy = gainPlan

@@ -1,0 +1,129 @@
+{
+ "schema": "factory.adjudicated-precision.v1",
+ "candidate": "span review of lost hunk hits (ruleset 816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747)",
+ "cohort": "sepoct 1e7a58f7 (spent)",
+ "reviewers": [
+  "claude-opus-5.5 (session)",
+  "claude-opus-5.5 (blinded arm)",
+  "claude-sonnet-5.5 (blinded arm)"
+ ],
+ "judge": null,
+ "independence": "AI reviewers; unanimous FP on every span, so no judge was needed; independence from AI is unestablished",
+ "rows": [
+  {
+   "item": "GHSA-g4wm-2vf7-vfgr:packages/test-es-module-consumer/suite.mjs:4:9",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "rule": "javascript.parameter-shell-command",
+   "file": "packages/test-es-module-consumer/suite.mjs",
+   "line": 4,
+   "span": [
+    9,
+    0,
+    35
+   ],
+   "source_sha256": "0c06379083736b77caf6a585936bdcdfaebb1cb42eac16ddaa5c52e88a02c6e1",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "exec here is a local test helper that just runs a callback and logs the name; no shell or process execution happens.",
+    "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+   ]
+  },
+  {
+   "item": "GHSA-g4wm-2vf7-vfgr:packages/test-es-module-consumer/suite.mjs:12:9",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "rule": "javascript.parameter-shell-command",
+   "file": "packages/test-es-module-consumer/suite.mjs",
+   "line": 12,
+   "span": [
+    9,
+    0,
+    41
+   ],
+   "source_sha256": "0c06379083736b77caf6a585936bdcdfaebb1cb42eac16ddaa5c52e88a02c6e1",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "Same local exec helper in test code; the template string is only used as a log label, not as a command.",
+    "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+   ]
+  },
+  {
+   "item": "GHSA-g4wm-2vf7-vfgr:packages/test-javascript-consumer/suite.js:5:12",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "rule": "javascript.parameter-shell-command",
+   "file": "packages/test-javascript-consumer/suite.js",
+   "line": 5,
+   "span": [
+    12,
+    0,
+    38
+   ],
+   "source_sha256": "25f5de31e55d3ffb701d3c8030e1b488314f0d8d1ad7d0995b35a50d3de2b115",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "exec is a module-local promise runner that logs; the interpolated name never reaches a shell.",
+    "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+   ]
+  },
+  {
+   "item": "GHSA-g4wm-2vf7-vfgr:packages/test-javascript-consumer/suite.js:13:12",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "rule": "javascript.parameter-shell-command",
+   "file": "packages/test-javascript-consumer/suite.js",
+   "line": 13,
+   "span": [
+    12,
+    0,
+    44
+   ],
+   "source_sha256": "25f5de31e55d3ffb701d3c8030e1b488314f0d8d1ad7d0995b35a50d3de2b115",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "Same local logging helper in a consumer test suite; no command execution sink.",
+    "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+   ]
+  },
+  {
+   "item": "GHSA-3753-m2x2-q623:packages/renderers/doc/src/render/html.ts:270:18",
+   "repository_case": "GHSA-3753-m2x2-q623",
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "file": "packages/renderers/doc/src/render/html.ts",
+   "line": 270,
+   "span": [
+    18,
+    0,
+    106
+   ],
+   "source_sha256": "7b11473d31f8ea9ecf781f9704d2fe75e16b8d0c2632dff50a8be7a9df3bec3b",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "Both the dataUrl and the label are HTML-escaped, so they cannot break out of the attribute, and the attachment dataUrl is an internally built data: URL (with a download attribute), not an attacker-chosen script URL.",
+    "Both the href dataUrl and the download label are passed through escapeHtml before attribute interpolation, so attribute breakout is not possible (scheme is unvalidated but the download attribute and user-click requirement limit impact)."
+   ]
+  }
+ ]
+}

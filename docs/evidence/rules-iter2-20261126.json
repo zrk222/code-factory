@@ -1,0 +1,229 @@
+{
+ "schema": "factory.detector-iteration-receipt.v1",
+ "date": "2026-11-26",
+ "scope": "Pattern-rule iteration 2 (SQL precision, SQL sinks/sources, Python path joins, commands) designed, tuned and validated on the exposed-161 cohort (manifest 7036f848, cases 5f332b15) and synthetic controls only. The Q2 cohort (manifest 28063dd5...), docs/evidence/fresh-test-plan-q2.json, heldout-recall-manifest-20261125-q2.json, origin/codex/recall-rule-speed, /home/claude/report/, /home/claude/run-pp/full-b2a2800f.sh and run-ra.sh results and all held-out checkpoints were not read, scanned or referenced.",
+ "work_list": "docs/evidence/recall-exposed-161-miss-taxonomy-20261126.json/.md (162183e7) and the last issues/415 comment",
+ "rules": {
+  "previous_candidate_sha256": "b2a2800f3b71300f7752ee404bc1c16d6752cf54c6e31219f2174d853dbdf1d6",
+  "rebased_onto": "e1cb77ca (rule bytes 3839aa04a21ef2a2...)",
+  "final_sha256": "8d8a46c582e712eaff52445e5844c73a5c7dc488fb96c6e5a71c76e684bf915f",
+  "profile_ruleset_sha256": "8d8a46c582e712eaff52445e5844c73a5c7dc488fb96c6e5a71c76e684bf915f"
+ },
+ "engines": {
+  "evaluation": "/opt/og21/bin/opengrep_linux_x86 2.1.0 d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+  "controls": [
+   "OpenGrep 1.15.0 (/opt/og/opengrep/v1.15.0, --legacy shim)",
+   "OpenGrep 2.1.0 d6a68a84"
+  ],
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6"
+ },
+ "method": {
+  "annotated_controls": "scripts/verify_semgrep_surface.mjs --fixtures-only, then opengrep --test on both engines and a native-scan emulation (profile argv with --sarif, rule ids under opt/factory/rules, URIs mapped to /src) checked with verifyNativeControlFindings and verifyFindingCountMatrix; docker is not available.",
+  "matrix": "fixedReviewedFindingCounts, REVIEWED_FINDINGS and the test constants rewritten from the native OpenGrep 1.15.0 SARIF counts after checking they equal the annotations, at every commit.",
+  "exposed": "scripts/recall_harness.mjs evaluate --probe-coverage true --control-timeout 15 --max-control-increase 0 --dir /home/claude/synthctl, baseline b2a2800f, residual tolerance unchanged (10%, 0.48 per hit), denominator 161, under flock /tmp/recall-replay.lock. Gate and scoring code untouched.",
+  "benign_controls": "scripts/recall_harness.mjs controls over the 18 control repositories, baseline 816bbef3, --control-plan with only candidate_sha256 changed from control-plan-b2a2800f.json, --scanner-path-policy true, --control-exclude build/test, --control-timeout 15, under the replay lock; compared with the b2a2800f after-counts in qualification-3b5b28ff/recall-evaluation-b2a2800f-pathpolicy.json."
+ },
+ "merge_origin_main": "Not done by this iteration: merging origin/main into carry-forward-39 conflicted only in Codex-owned harness/gate files (recall_harness.mjs 10 hunks, recall_harness.test.mjs 5, recall_coverage.mjs 2; no rule hunk). The merge was aborted rather than writing a union of gate logic. Codex then merged main upstream (3229505e); this branch is rebased onto it and on e1cb77ca.",
+ "rebase": "Rebased onto origin/claude/carry-forward-39 e1cb77ca. Conflicts: the profile ruleset_sha256 line (rebound to each commit's rule bytes), the count matrix (recomputed from native scans at each commit) and python-path-join-controls.txt (both sides appended; Codex's write_checked control kept first, the change C controls after it). The rule YAML merged without conflict; Codex's fail-closed containment alternative is kept unchanged and its controls pass with change C. e1cb77ca turned a ruleid into ok without updating the matrix (293 annotated -> 292 actual); the recomputed matrix corrects this.",
+ "changes": [
+  {
+   "id": "A",
+   "commit_title": "rules: stop flagging quoted SQL identifiers and placeholder lists",
+   "rules": [
+    "javascript.parameter-sql-text",
+    "php.parameter-sql-text",
+    "python.parameter-sql-text",
+    "ruby.parameter-sql-text"
+   ],
+   "controls": "pass on 1.15.0 and 2.1.0; 15 ok controls (reported by b2a2800f, not by this change) and 10 ruleid value controls; matrix 292 -> 302 after rebase",
+   "exposed_pre_rebase": {
+    "receipt_sha256": "96c62e7944619593...",
+    "decision": "ACCEPT",
+    "hits": [
+     40,
+     40
+    ],
+    "fixed_side_residuals": [
+     18,
+     16
+    ],
+    "per_hit": [
+     0.45,
+     0.4
+    ]
+   },
+   "note": "Bracket-quoted identifiers unchanged (GHSA-f3f2 old side is [${col}] identifier injection); MySQL double-quoted values stay reported in PHP (GHSA-4xf2)."
+  },
+  {
+   "id": "B",
+   "commit_title": "rules: SQL sinks and sources for DB wrappers, finders, builders and bound requests",
+   "rules": [
+    "php.parameter-sql-text",
+    "php.request-sql-injection",
+    "ruby.request-sql-injection",
+    "go.parameter-sql-text",
+    "go.request-sql-injection"
+   ],
+   "controls": "pass on 1.15.0 and 2.1.0; 10 positives none reported by b2a2800f; matrix 302 -> 312 after rebase",
+   "exposed_pre_rebase": {
+    "receipt_sha256": "6922e800e482ccc2...",
+    "decision": "ACCEPT",
+    "hits": [
+     40,
+     47
+    ],
+    "gained": [
+     "GHSA-6gm7",
+     "GHSA-85gf",
+     "GHSA-g23g",
+     "GHSA-jjgq",
+     "GHSA-vf2r",
+     "GHSA-vj9x",
+     "GHSA-wc3v"
+    ],
+    "fixed_side_residuals": [
+     18,
+     16
+    ],
+    "per_hit": [
+     0.45,
+     0.34
+    ]
+   },
+   "first_version_rejected": "A first version raised the benign controls from 31 to 58 (+27): ADOdb execute() matched composer ProcessExecutor::execute([...]) and grav PDO execute([...]) (+21), the NAME label reached phpBB \"UPDATE $table SET $column = ...\" through associative concatenation (+4) and the builder method list matched hugo filepath.Join (+2). Fixed by receiver/array limits, NAME only on the interpolated quoted-value sink, and dropping Join/Set/SetMore/SQL/From/Or/Not; each pinned by an ok control. The tightened version replaced it before push.",
+   "note": "GHSA-jjgq is an extra gain: the fix deletes $sql .= \" AND d.fk_statut = \".$statut with $statut from $_GET. OpenGrep 1.15.0 does not evaluate taint sinks on the right of $arr[] = ...; the pimcore fragments are recovered on 2.1.0 and the controls use plain assignments."
+  },
+  {
+   "id": "C",
+   "commit_title": "rules: Python path-join operand shapes, owned-root path helpers, prefix-only tar filters",
+   "rules": [
+    "python.parameter-path-join-without-containment",
+    "python.tarfile-extractall-without-filter"
+   ],
+   "controls": "pass on 1.15.0 and 2.1.0; 5 positives; matrix 312 -> 317 after rebase",
+   "exposed_pre_rebase": {
+    "receipt_sha256": "712b6a3e65e03acf...",
+    "decision": "ACCEPT",
+    "hits": [
+     47,
+     49
+    ],
+    "gained": [
+     "GHSA-8qvf",
+     "GHSA-h36j"
+    ],
+    "fixed_side_residuals": [
+     16,
+     17
+    ],
+    "per_hit": [
+     0.34,
+     0.35
+    ]
+   },
+   "not_recovered": "GHSA-mj4x (trestle): the join is in __init__ with no file access in that function and the path is stored on self; needs attribute or interprocedural flow.",
+   "note": "The path-helper branch is limited to bases the helper owns (self./cls. attribute or module constant) so the original report_path ok control stays unreported. The added residual is onnx/utils.py:292, which keeps the separator-less members filter after the fix."
+  },
+  {
+   "id": "D",
+   "commit_title": "rules: cmd.exe /C interpolation and git positional arguments without \"--\"",
+   "rules": [
+    "csharp.request-command-injection",
+    "go.parameter-shell-command"
+   ],
+   "controls": "pass on 1.15.0 and 2.1.0; 5 positives; matrix 317 -> 322 after rebase",
+   "exposed_pre_rebase": {
+    "receipt_sha256": "0f98da4542b45894...",
+    "decision": "ACCEPT",
+    "hits": [
+     49,
+     51
+    ],
+    "gained": [
+     "GHSA-2jh5",
+     "GHSA-qrg7"
+    ],
+    "fixed_side_residuals": [
+     17,
+     17
+    ],
+    "per_hit": [
+     0.35,
+     0.33
+    ]
+   },
+   "note": "Both new branches carry a literal gate so files without cmd.exe or git are not parsed; without it an Npgsql file (GHSA-x9vc) partial-parsed."
+  }
+ ],
+ "final": {
+  "exposed_161": {
+   "receipt": "docs/evidence/recall-evaluation-8d8a46c5-exposed161-opengrep210.json",
+   "receipt_sha256": "0353195f33dc6aa6fb0e2d9f6f31b55c1019f87f5a85cf271f8061e494156696",
+   "harness": "rebased tree (3229505e harness), fresh checkpoint dir",
+   "decision": "ACCEPT",
+   "hits": [
+    40,
+    51
+   ],
+   "lost": [],
+   "new_errors": [],
+   "new_coverage_gaps": [],
+   "gained": [
+    "GHSA-2jh5",
+    "GHSA-6gm7",
+    "GHSA-85gf",
+    "GHSA-8qvf",
+    "GHSA-g23g",
+    "GHSA-h36j",
+    "GHSA-jjgq",
+    "GHSA-qrg7",
+    "GHSA-vf2r",
+    "GHSA-vj9x",
+    "GHSA-wc3v"
+   ],
+   "fixed_side_residuals": [
+    18,
+    16
+   ],
+   "per_hit": [
+    0.45,
+    0.31
+   ],
+   "limit_per_hit": 0.48,
+   "denominator": 161,
+   "synthetic_control_increase": 0,
+   "note": "GHSA-gvg7 is a timeout on both arms under the rebased harness (baseline included); GHSA-fr3h's residual is cleared by e1cb77ca."
+  },
+  "benign_controls": {
+   "receipt": "docs/evidence/recall-controls-8d8a46c5-benign18.json",
+   "receipt_sha256": "68a8d8e2da9aad6c6e0ab8750deb07cc5625fe591fbae011d25dba91c75f1d05",
+   "plan": "docs/evidence/qualification-3b5b28ff/control-plan-8d8a46c5.json (only candidate_sha256 changed)",
+   "plan_sha256": "545539d0ef8120ccbf28cb205142a3a8e5eb0be43b3a4fe586c4e8d02bc06a05",
+   "after_b2a2800f": 31,
+   "after_final": 31,
+   "delta": 0,
+   "new_findings": 0,
+   "errors": 0
+  },
+  "tests": {
+   "node": "scripts/semgrep_mutation_controls.test.mjs + scripts/recall_harness.test.mjs: 97 pass",
+   "pytest": "tests/test_deep_audit*.py -k 'semgrep or deep_audit': 1681 passed",
+   "py_files": 464
+  },
+  "pre_existing": "OpenGrep 2.1.0 still misses ruby.request-command-injection semgrep-pattern-limited.rb:90 (unchanged since 8cd65488)."
+ },
+ "dropped": [],
+ "access_record": [
+  "docs/evidence/recall-exposed-161-miss-taxonomy-20261126.json/.md (162183e7)",
+  "gh api issues/415/comments (last comment)",
+  "docs/evidence/recall-evaluation-b2a2800f-exposed161-opengrep210.json (exposed receipt)",
+  "docs/evidence/detector-iteration-20261126.json",
+  "docs/evidence/qualification-3b5b28ff/README.md, control-plan-*.json, recall-evaluation-b2a2800f-pathpolicy.json (control settings and after-counts only)",
+  "/home/claude/pins/exposed-161-5f332b15.json, profile-opengrep210.json, baseline-816bbef3.yml",
+  "/home/claude/run-r161.sh (exposed run script), /home/claude/run-r161/captures/cases-v4 (exposed packets, copied), /home/claude/run-r161/checkpoints (listed only)",
+  "/home/claude/synthctl, /home/claude/ctl/*, /home/claude/ctl-pinned/jekyll_jekyll, /home/claude/r6/ctl-mastodon (benign controls, scanned; added-finding lines read)",
+  "deploy/deep-adapters/rules/*, rules/tests/*, profiles/semgrep-pattern-limited.json, scripts/verify_semgrep_surface.mjs, scripts/semgrep_mutation_controls*.mjs, scripts/recall_harness.mjs (options, controls and plan loading; not modified)",
+  "git show e1cb77ca (rule and control diff) for the rebase",
+  "A grep over docs/evidence/* for 'nocobase' was blocked by the permission classifier before it ran (it would have touched sealed files); no Q2 file was opened. The nocobase review was not read; change A follows the coordinator's description."
+ ]
+}

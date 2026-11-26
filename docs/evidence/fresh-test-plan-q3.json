@@ -1,0 +1,120 @@
+{
+  "schema": "factory.recall-heldout-plan.v1",
+  "registered_at": "2026-11-26T16:59:14+00:00",
+  "status": "registered; not opened; nothing scanned",
+  "cohort": {
+    "file": "q3.json",
+    "sha256": "d25432cc177d84c6fc01fb4d151c33d3d8d773570c2adc672c867880e6b48539",
+    "source": "docs/evidence/heldout-recall-manifest-20261126-q3.json",
+    "freeze_commit": "The commit that adds this plan, the manifest and docs/evidence/heldout-q3-selection-log.json together on claude/carry-forward-39.",
+    "cases_sha256": "47a0d89b37940b34b18bebd952b0a804fb1c67a642c767d2217415040ea4afad",
+    "registered": 176,
+    "counts": {
+      "Packagist": 43,
+      "PyPI": 38,
+      "npm": 51,
+      "Maven": 7,
+      "Go": 35,
+      "RubyGems": 2
+    },
+    "window": [
+      "2026-07-01",
+      "2026-11-25"
+    ],
+    "exclusions": {
+      "prior_ids": 839,
+      "prior_fix_commits": 1615
+    },
+    "selection_log": "docs/evidence/heldout-q3-selection-log.json",
+    "selection": "GitHub-reviewed advisories published 2026-07-01..2026-11-25 (strictly after Q2's latest date, 2026-06-30) in Maven, PyPI, Go, npm, Packagist and RubyGems, with exactly one canonical https GitHub fix commit (the rule Q2 followed), frozen by recall_harness freeze with --per-repo 3 and no ecosystem cap, as for Q2. Target was about 280; every qualifying advisory was taken (176, shortfall 104).",
+    "exposure_crosscheck": "Zero advisory ID and fix SHA overlap with Q2 (282), the registered exposed 161, the Sep-Oct (124), overflow (61), Jul-Aug fresh (91) and 20261123 (113) cohorts, and every other GHSA ID or 40-hex SHA in docs/evidence at freeze. Q2 stays the original held-out result; Q3 is reserved for the next fresh measurement."
+  },
+  "candidate": {
+    "file": "candidate.yml",
+    "sha256": "to be frozen before scan",
+    "commit": "to be frozen before scan",
+    "rule": "The candidate ruleset digest is written into this field in one commit before any Q3 source is opened; nothing else in this file changes in that commit."
+  },
+  "baseline": {
+    "file": "baseline.yml",
+    "sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747"
+  },
+  "harness": {
+    "commit": "52eb74dcd53b3531eab7d54aafb491c2e9616b2d",
+    "files": [
+      {
+        "file": "scripts/recall_harness.mjs",
+        "sha256": "a4e4ddd458d74eeb68bfa9ecaeb68d5ecc040888941da2c52b039ee7e42769b2"
+      },
+      {
+        "file": "scripts/recall_coverage.mjs",
+        "sha256": "431f26f4646be156b78cee2c46aae8e1cb27d4f6585fd9a0bae2a624c050c314"
+      },
+      {
+        "file": "scripts/recall_losses.mjs",
+        "sha256": "b5a622969c6f44c1aa267f0780f5083d18e033316e0e0155a9266093349809d8"
+      }
+    ],
+    "note": "Scoring runs on these pinned bytes. The Q3 manifest freezes byte-identically under these bytes and under the harness at e1cb77ca."
+  },
+  "analyses": [
+    {
+      "id": "primary",
+      "engine": "OpenGrep 2.1.0 Linux",
+      "engine_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+      "profile": {
+        "file": "primary-profile.json",
+        "sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6"
+      },
+      "scanner_path_policy": true
+    }
+  ],
+  "settings": {
+    "scope": "ecosystem",
+    "case_workers": 4,
+    "engine_args": [
+      "--timeout=15",
+      "--jobs=1"
+    ],
+    "fresh_evaluation_count": 1,
+    "retry": "Checkpoint-bound identical inputs only. Serial retry for timeouts per the harness. Keep unknown/error/incomplete rows in the denominator."
+  },
+  "scoring_rules": {
+    "hunk_rule": "hunk rule: CWE-family alert on an old-side -U5 hunk line, in-language non-test file, fix parent",
+    "families": "recall_harness FAMILIES map (cmd, sql, path, xss, deser, tls, incl, code); an alert counts only in the advisory's CWE family.",
+    "files": "In-language (ecosystem scope: LANGUAGES[ecosystem]) non-test files (harness isTestPath) changed by the fix.",
+    "revision": "Old side at the fix commit's first parent; new side at the fix commit.",
+    "outcomes": "hit, miss, engine timeout, unknown (no in-language change, unfetchable, incomplete scan) and error, each counted; unknowns and errors stay in the denominator as not hit."
+  },
+  "metrics": {
+    "primary": "Strict old-side hunk hits: a CWE-family alert on an old-side git diff -U5 hunk line in an in-language non-test changed file at the fix parent, out of 176 registered advisories, per arm.",
+    "secondary": "Flagged anywhere, as preregistered in docs/RECALL_PRECISION.md (25 Nov): a case counts when a full-tree scan at the fix parent, with the production profile and in-ecosystem non-test files, yields at least one alert in the advisory's CWE family; denominator the registered cohort, unknowns reported separately and counted as not flagged. Always reported with the same rate at the fix commit (still flagged after fix), same-family alerts per KLOC on the 18 benign controls, and fix-resolved alerts. Reported as pending until both full-tree arms and all 18 control densities exist.",
+    "residual": "Fixed-side residual rate: CWE-family alerts on new-side -U5 hunk lines at the fix commit (harness fix_side_residual), reported as residual alerts per hit and as the share of hit cases with at least one residual, per arm.",
+    "include": [
+      "Wilson 95% intervals on the registered denominator",
+      "per-ecosystem and per-family rates",
+      "paired gains and losses",
+      "fixed-side residuals",
+      "coverage gaps",
+      "timeouts",
+      "unfetchable and unknown counts"
+    ]
+  },
+  "control_protocol": {
+    "panel": "18 historical byte-pinned controls from the #415 locus manifest",
+    "locator_evidence_sha256": "3d503c72e1ecfbe6f84a5a5d2a5f22d0555475afe5a9d8c636d6e3ab2bc9103e",
+    "directory_test_policy": [
+      "build",
+      "test"
+    ],
+    "maximum_net_alert_increase": 0,
+    "exact_exclusions": "All declared paths remain fingerprinted and dispositions compared across arms.",
+    "scope": "Separate qualification. A candidate can be measured on the fresh cohort while release qualification is pending."
+  },
+  "review_protocol": {
+    "state": "pending",
+    "sample": "Candidate primary hunk alerts, deduplicated by exact source/rule/span and capped at 25 per rule, stable seed 20261126.",
+    "review": "Matched fresh high-effort Claude and Codex reviewers use the same blinded context. Fable adjudicates disagreements. Keep the key and fix diffs sealed until labels are complete."
+  },
+  "isolation": "The cohort was frozen from advisory metadata and commit-only fetches; no Q3 source, diff, scan or result has been read. The candidate ruleset is frozen before the scan, with both rule digests, and before any Q3 source is opened. No tuning uses Q3. Report the first completed result regardless of direction. Retire this cohort from fresh evaluation if it informs later tuning."
+}

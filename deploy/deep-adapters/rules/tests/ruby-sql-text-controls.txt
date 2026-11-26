@@ -21,6 +21,21 @@ class CvtModel
     Packet.where("packet_time >= ?", start_time)
   end
 
+  def ordered(column, direction)
+    # ok: ruby.parameter-sql-text
+    Packet.order("`#{column}` ASC")
+  end
+
+  def by_table(table, id)
+    # ok: ruby.parameter-sql-text
+    connection.select_all("SELECT * FROM \"#{table}\" WHERE id = $1", "rows", [id])
+  end
+
+  def by_table_and_value(table, name)
+    # ruleid: ruby.parameter-sql-text
+    connection.select_all("SELECT * FROM `#{table}` WHERE name = '#{name}'")
+  end
+
   def quoted(sql, name)
     # ok: ruby.parameter-sql-text
     sql << " WHERE name = #{connection.quote(name)}"
@@ -39,5 +54,16 @@ class CvtModel
   def cached(account)
     # ok: ruby.parameter-sql-text
     redis.exists?("subscribed:timeline:#{account}")
+  end
+end
+
+class FinderController < ApplicationController
+  def lookup
+    # ruleid: ruby.request-sql-injection
+    @user = User.find_by(params[:user])
+    # ok: ruby.request-sql-injection
+    @user = User.find_by(email: params[:user][:email])
+    # ruleid: ruby.request-sql-injection
+    @account = Account.find_or_create_by!(params[:account])
   end
 end

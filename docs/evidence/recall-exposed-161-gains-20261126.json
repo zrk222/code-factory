@@ -1,0 +1,1634 @@
+{
+  "schema": "factory.recall-development-gain-receipt.v1",
+  "scope": "Previously exposed development set, one registered first fix per advisory. Static pattern lane.",
+  "primary_metric": "Matching CWE-family alert anchored within the old-side Git diff -U5 hunk in the registered ecosystem language.",
+  "secondary_metric": "Matching alert anchored on an actual deleted line.",
+  "source_study": "docs/evidence/advisory-recall-factory-20261121.json",
+  "source_study_sha256": "9589e1d70365c9aedf95f5adb4760b346fdee1ed1d2f3130cfdb6220b81383c8",
+  "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "manifest_cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "source_bindings_sha256": "b363b4e865fe361aa786e06c6ed59e3c95c16462c7e8505835b9f7e8531b0534",
+  "scanner": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "extra_args": [],
+  "comparison": "Cumulative comparison reconstructed from compatible native receipts. Every old/fix pair, diff, inventory and source packet fingerprint was checked for equality.",
+  "baseline_rules_commit": "b101b6d0a897d682681ee3034ebce72664f7ca47",
+  "candidate_rules_path": "deploy/deep-adapters/rules/semgrep-pattern-limited.yml",
+  "baseline": {
+    "rules_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+    "registered": 161,
+    "scored": 156,
+    "hunk_hits": 19,
+    "fraction_of_registered": 0.118012,
+    "wilson95_percent_of_registered": [
+      7.7,
+      17.7
+    ],
+    "deleted_line_hits": 14,
+    "outcomes": {
+      "hit": 19,
+      "miss": 137,
+      "timeout": 0,
+      "unknown": 2,
+      "error": 0,
+      "coverage_incomplete": 3
+    },
+    "fixed_side_residuals": 9
+  },
+  "candidate": {
+    "rules_sha256": "602d11922204a05c0ccee0056a80603fbf8e529727c8f3646336f1e99c255f3a",
+    "registered": 161,
+    "scored": 156,
+    "hunk_hits": 39,
+    "fraction_of_registered": 0.242236,
+    "wilson95_percent_of_registered": [
+      18.3,
+      31.4
+    ],
+    "deleted_line_hits": 32,
+    "outcomes": {
+      "hit": 39,
+      "miss": 117,
+      "timeout": 0,
+      "unknown": 2,
+      "error": 0,
+      "coverage_incomplete": 3
+    },
+    "fixed_side_residuals": 17
+  },
+  "gained": [
+    "GHSA-4pj9-g833-qx53",
+    "GHSA-527r-mfmj-prqf",
+    "GHSA-69p3-xp37-f692",
+    "GHSA-c5r5-7pfh-6qg6",
+    "GHSA-cgfv-jrfp-2r7v",
+    "GHSA-cpv4-ggrr-7j9v",
+    "GHSA-cxwf-qc32-375f",
+    "GHSA-f3f2-mcxc-pwjx",
+    "GHSA-fg4q-ccq8-3r5q",
+    "GHSA-gprp-h92g-gc2h",
+    "GHSA-gr4j-r575-g665",
+    "GHSA-h7cm-jvpp-69xf",
+    "GHSA-hj4w-hm2g-p6w5",
+    "GHSA-jmm9-2p29-vh2w",
+    "GHSA-p9qm-p942-q3w5",
+    "GHSA-r7j3-vvh2-xrpj",
+    "GHSA-rfx3-98h7-v3xp",
+    "GHSA-rp2v-v467-q9vq",
+    "GHSA-v529-vhwc-wfc5",
+    "GHSA-xf96-32q2-9rw2"
+  ],
+  "lost": [],
+  "latest_direct_pair": {
+    "baseline_hunk_hits": 37,
+    "candidate_hunk_hits": 39,
+    "decision": "ACCEPT",
+    "gained": [
+      "GHSA-fg4q-ccq8-3r5q",
+      "GHSA-rfx3-98h7-v3xp"
+    ],
+    "lost": [],
+    "synthetic_controls": 1,
+    "control_added": 0
+  },
+  "evidence": {
+    "baseline_run_sha256": "a0228776afd4c7bee41eca798a516efff735ea75ed2357563bff0c07a14a144b",
+    "baseline_report_digests_verified": 1288,
+    "candidate_run_sha256": "ac8bbe4eb6c2f215290f8b2165e5c1ba27e4cde7c3350a3d751b9e2a7f9a5863",
+    "candidate_report_digests_verified": 1280,
+    "full_synthetic_matrix": {
+      "rules": 64,
+      "registered_positives": 264,
+      "opengrep_1_15": {
+        "positives": 264,
+        "ordered_traces": "PASS"
+      },
+      "opengrep_2_1": {
+        "positives": 263,
+        "existing_missing_control": "opt.factory.rules.ruby.request-command-injection|semgrep-pattern-limited.rb|90",
+        "candidate_regressions": 0
+      }
+    }
+  },
+  "limits": {
+    "fresh_holdout_run": false,
+    "whole_product_recall": false,
+    "precision_estimate": false,
+    "production_performance_claim": false
+  },
+  "cases": [
+    {
+      "advisory": "GHSA-2223-f22x-24cq",
+      "ecosystem": "Packagist",
+      "input_sha256": "927af50985371eee9738d372608c2e8c6c48abd5fb057531546f404ce1b100de",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-23fx-92m6-4f2g",
+      "ecosystem": "PyPI",
+      "input_sha256": "4e84e5047a44cc7731ab3baab231ff4be0d64c5ec81d6b6e9df948019a942b64",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-25gv-mvm7-5h3h",
+      "ecosystem": "Maven",
+      "input_sha256": "e2af662937651ed34f472aae8604701ea6a38803a3b257b224a6d26778bb776a",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-2fmj-p74r-3wjm",
+      "ecosystem": "Packagist",
+      "input_sha256": "daa0a7aea77ed7ec98da6f7af160ea694cdc22e1fc146c338c026b6d5f16c21f",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-2jh5-g5ch-43q5",
+      "ecosystem": "NuGet",
+      "input_sha256": "217866e349a3b1fe10b87752f23df17215eca9d78b44358bac1409652768f8e1",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-2pm6-9fhx-vvg3",
+      "ecosystem": "Packagist",
+      "input_sha256": "c3112bd64e3c5e37507e40be1ce76183234575c10b4f63e5955eb7671962341d",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-2rc4-7jc6-qffh",
+      "ecosystem": "Go",
+      "input_sha256": "6a2d4b581b4ae2032f0718f0bccaaefc9948562f590025deaf41314968373bd4",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-2x7r-93ww-cxrq",
+      "ecosystem": "Packagist",
+      "input_sha256": "29737c28499eac476f57f3643a3ce06c67e5cba9f7673087ccd3ef10992c2abb",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-38jw-g2qx-4286",
+      "ecosystem": "Go",
+      "input_sha256": "37d34514d13f8ae5d2faefd63c2cb28f9d3d5bc7d842b5c44a669946b2ff9deb",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-3hcm-ggvf-rch5",
+      "ecosystem": "npm",
+      "input_sha256": "175c2a9f32d25354c83ae61137b31a3e7205f940fd87be5d3b2cd18c7947f848",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-3p24-9x7v-7789",
+      "ecosystem": "Maven",
+      "input_sha256": "6066d34e9d3d44da521da153892141ee1c8792a17bd34c567489bca8b71afb70",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-3p6w-gv5g-xjw9",
+      "ecosystem": "crates.io",
+      "input_sha256": "6d385097a9e9edb278994c1075db4104dcb91ac256eab1501d9d2372df98287e",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-3xgr-h5hq-7299",
+      "ecosystem": "Maven",
+      "input_sha256": "2d1d4c59facb184e20bc9947f4a672a2f621bc244cb801e1181a809cb10d17eb",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-4574-qv3w-fcmg",
+      "ecosystem": "Packagist",
+      "input_sha256": "fcd83926b84949d82b636457dffdc08c767362f93bdc3950015b545fab179da8",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-463c-jhp2-4mm7",
+      "ecosystem": "Packagist",
+      "input_sha256": "ed8a482848dcfe7cfde6abdb4a8358a655a794e1eba500215f7d40a58bf27a74",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-465w-gg5p-85c9",
+      "ecosystem": "Go",
+      "input_sha256": "317f3ae0f800e65b7089be7f94e9d40b1c7156e0f0903becb61f9b1d6bf2a819",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-4h97-wpxp-3757",
+      "ecosystem": "PyPI",
+      "input_sha256": "a6f2761ef9d65b4771c7da5778a38038163c71da48e2d7807c3441f9ef814dde",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-4m7p-55jm-3vwv",
+      "ecosystem": "Maven",
+      "input_sha256": "25555d526239568440cb397c46091afa095ab4fd98bb6f5831e015524607f025",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-4pj9-g833-qx53",
+      "ecosystem": "crates.io",
+      "input_sha256": "9f6c6c49b3d3c897b50a7b1851077afe7ff52fcccae8711dac6b7f0fbf6184a7",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-4x28-j85r-668q",
+      "ecosystem": "Packagist",
+      "input_sha256": "7bd9239d3fa9dff3a05fa7031b3f9c312def9320a043e42d624f47af88daae33",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-4xf2-7qfv-mgfx",
+      "ecosystem": "Packagist",
+      "input_sha256": "2f8d4e89fe5c19e7204cff6f0edd80c637238c332388f13f6fa34aef21478fe3",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-527r-mfmj-prqf",
+      "ecosystem": "RubyGems",
+      "input_sha256": "bd900077e9bf3c00256ae1cb0c20afa6461ff862b0e1e23989b5f1333aa9bb1a",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-5j9f-5wmp-7f8h",
+      "ecosystem": "Maven",
+      "input_sha256": "036f6cb03fea198d71b7679437dcb84ed96a2f39ad6be06fec28f88fb0922e37",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-5jpj-293f-rhvj",
+      "ecosystem": "Go",
+      "input_sha256": "cfa355272325c21bedbd4e403a14dcd6801f56a48b622ca3cd93349813593c79",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-5m9f-rphj-c435",
+      "ecosystem": "Maven",
+      "input_sha256": "ff23c851f8ed43c9f1411ec02ec010d209129085934dee072432e37f5fafd403",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-5mq7-rwhj-4fh9",
+      "ecosystem": "NuGet",
+      "input_sha256": "567ceb64c474757578b0717ffdc87b3bd3d4aadb3d16481a96ba35eee4526a6c",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-5xpp-75jx-m839",
+      "ecosystem": "npm",
+      "input_sha256": "cd5b080288464774bbe507395aa8576b3df103fcec6dc629317513e630ce6d90",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-63q7-h895-m982",
+      "ecosystem": "npm",
+      "input_sha256": "5dca9250083695316a67da0fb76c4e2f5acd6591b8cfd2225c7a795b687099f5",
+      "before": "coverage_incomplete",
+      "after": "coverage_incomplete",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-68wg-qv6r-j4vp",
+      "ecosystem": "Packagist",
+      "input_sha256": "cf9c977180057b89c8507db746caba0d20fa03b7bb32fa5cd801fbc2eee4b0b2",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-69p3-xp37-f692",
+      "ecosystem": "RubyGems",
+      "input_sha256": "8f59be60e4664f5932e779c12dcaec6de937f269b287e6f62a1b366c661e37c5",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-6g56-v9qg-jp92",
+      "ecosystem": "Go",
+      "input_sha256": "c20164df7a4e42d4d479038ea99bff413442e6da922f0d0206b148a8e1681692",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6gm7-j668-w6h9",
+      "ecosystem": "Packagist",
+      "input_sha256": "80172dbb0475e4a7742d1965b69f70200c255ac9a0b8ee4b7bba646287237d82",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6j63-35hj-vmcg",
+      "ecosystem": "RubyGems",
+      "input_sha256": "fc2ea4ef6b62f4dc4c75f66dbe08505837802df53e9f70b3dc769c766641d900",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6m7c-xfhp-p9fh",
+      "ecosystem": "npm",
+      "input_sha256": "a6f8e5b9a03984b4885061f7b9a2dbda72339fb85b16e3542decdf26f6b35ec5",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6m8w-jc87-6cr7",
+      "ecosystem": "Go",
+      "input_sha256": "60adfa211877bb3c26230c7ffd9d1a4a5c99a6bac89ef80b97aad8eb6f93aaa2",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6qjf-g333-pv38",
+      "ecosystem": "RubyGems",
+      "input_sha256": "69c110acf44fbf3d273a94fd3c365b310d5767abfd0183a9fdc4bd94c0fd8ab7",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6vmq-24h2-pj7j",
+      "ecosystem": "PyPI",
+      "input_sha256": "b55836aff052ee0b69a736ec967a47720912d7a5a2c93dd5b47e7d4e3c5f7b1a",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6w89-c65w-jx2c",
+      "ecosystem": "Maven",
+      "input_sha256": "81ff7f8a7083123689e4021dbe93a282386e97ea394c8aa2a1082af78b295294",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-6xxq-j39w-g3f6",
+      "ecosystem": "RubyGems",
+      "input_sha256": "d3e5042285733a8021916fc5ca7567f300135a5eac23c6ff8896edaaa026206b",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-72c7-4g63-hpw5",
+      "ecosystem": "Go",
+      "input_sha256": "b740293b1b117596165f370670131ffd28ce28c437e871eb1cd87af49192af94",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-72qq-p3r5-f7wq",
+      "ecosystem": "npm",
+      "input_sha256": "72f17d88bf8b7e20f4527e1b8537144e40b47e1ef3dc42d58edcddf8d0ef9f55",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-7359-3c6r-hfc2",
+      "ecosystem": "RubyGems",
+      "input_sha256": "eb1483a57de030b8848e2ceada6e5c30c1172df9672f0178eaf2eb09dfe8c980",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-73wf-9vmv-5pv9",
+      "ecosystem": "PyPI",
+      "input_sha256": "444758069e5fc43c0518f675770a1bf0a3daca200f6c04b5a586b18db87c0735",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-74hp-mggr-hv58",
+      "ecosystem": "Go",
+      "input_sha256": "084dff53a36848ce6b097117d0f88dad4f89272fc52bceae24a3e51f820c6b78",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-76wq-xw4h-f8wj",
+      "ecosystem": "RubyGems",
+      "input_sha256": "f7ddceb5c00cd182b13ae107163e964523711a374ca7e0404af58cc6534d3716",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-784x-7w88-w564",
+      "ecosystem": "Maven",
+      "input_sha256": "ac474de1a2a46d838817c218f8a60de57b7e0fff73ece49181a67c04e6f5a0c7",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-79qw-g77v-2vfh",
+      "ecosystem": "Go",
+      "input_sha256": "4eb5c42e1664b16b578d72bd2726be461385999e9e5437dda91c36d9a47fe101",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-7cj7-rcw6-p68v",
+      "ecosystem": "Maven",
+      "input_sha256": "60892503b92084f5ce4e301bbc1177085ee3d0a726485b80c212ac516b649454",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-7hxc-f267-h5q7",
+      "ecosystem": "Packagist",
+      "input_sha256": "6d26bc7716ec7f9acba42b54f2edec63993dfb9f45feac9c8253e5a6733e5cdd",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-7vxr-6cxg-j3x8",
+      "ecosystem": "RubyGems",
+      "input_sha256": "dc3578eead47161f01e658220c8cbdca079e8e0486a48c1ea4baf647ead46d02",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-7wqf-h36w-47mc",
+      "ecosystem": "PyPI",
+      "input_sha256": "5643eec55a4c10737a306e5bae8ee6b5b9dcc58f03b10aef8bd489cd6160df8e",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-85gf-wr67-f83w",
+      "ecosystem": "RubyGems",
+      "input_sha256": "142c9cffe3491fa92529bcea1b16dfec2b96deb53d37729a70face84e35fbd6f",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-8832-4mm5-x2r6",
+      "ecosystem": "RubyGems",
+      "input_sha256": "cfde60ab0916374d52172cbc42339eef88bb605981a42a225b909a8f1f5ec1a4",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-8gqp-hr9g-pg62",
+      "ecosystem": "Maven",
+      "input_sha256": "67808310dfcc921abf1aa4ff67152edbc60394619f5c232140e40323ef992b0f",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-8grg-q944-cch5",
+      "ecosystem": "Maven",
+      "input_sha256": "fd037dda83fc757e3ac272b46d351e5a0570ba3d188f6c4c3ebc0e88f0a6b640",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-8qvf-mr4w-9x2c",
+      "ecosystem": "PyPI",
+      "input_sha256": "e9d9633d6e8c717155707aa06a5f6f06ad3167f346a0397af1adfbb4cbdcd442",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-97jv-2hp6-3frj",
+      "ecosystem": "Packagist",
+      "input_sha256": "a09c058bb64619c25ad5f75653a49b566139adca01da689174ef4450968f9167",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-9mh6-g99m-ppcw",
+      "ecosystem": "Packagist",
+      "input_sha256": "19985bfe57ad357398562d38d878c479b31b6b28bd542c721e136ebd87efc526",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-c5r5-7pfh-6qg6",
+      "ecosystem": "RubyGems",
+      "input_sha256": "d7a8cdb167c999abcf74f03e9199e775652dfba7fd3d8251c08aa357092e315f",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-cgfv-jrfp-2r7v",
+      "ecosystem": "Maven",
+      "input_sha256": "a27b0a20bd6efe5f04e0a3d7e79aca5b3971902cae84648a253abf36fc26367e",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-cpv4-ggrr-7j9v",
+      "ecosystem": "PyPI",
+      "input_sha256": "178c7801a7a6b8694b58360c263d4aec395fdb32c8c78ebb931ab3338937a92a",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-cxwf-qc32-375f",
+      "ecosystem": "RubyGems",
+      "input_sha256": "2c64afc865e0adc633f84d71beeb51907f388ef95faeee40328ef657d93d54b5",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-f3f2-mcxc-pwjx",
+      "ecosystem": "npm",
+      "input_sha256": "25394173c3cf7acfc791900db66fe8745acadec06354a0913e3b82df25f111a5",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-f6wf-28g6-769x",
+      "ecosystem": "Packagist",
+      "input_sha256": "ab9f1dab25f0c5bc912b619c06b104cf065a0eff9e2df6cf46b292ba533bff43",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-f7w7-6pjc-wwm6",
+      "ecosystem": "Maven",
+      "input_sha256": "6d6f8f561a8febd906e9d3f19272ace73b5893cc27049d8aacf98d34b5ab34e9",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-ff6c-w6qf-7xqc",
+      "ecosystem": "RubyGems",
+      "input_sha256": "0065d23ca1c32e8dd59043e3be67db81008c94ff7db154f44c709d519004a649",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-ff98-w8hj-qrxf",
+      "ecosystem": "npm",
+      "input_sha256": "3a333cd36b7d43be0773ae1e37dbd9e2e6b86acbb7372b9307370c189efeb085",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-fg4q-ccq8-3r5q",
+      "ecosystem": "NuGet",
+      "input_sha256": "c42d781cd7253573f570249e9fb45a24a4a8897f5994a066ebb3f9c0696d5dad",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-fhff-qmm8-h2fp",
+      "ecosystem": "PyPI",
+      "input_sha256": "a814d900bae2953fa4a6f922414bfbcc4f8c3df0dab6976b065a8d4e018ddabc",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-fr3h-cpq2-9496",
+      "ecosystem": "PyPI",
+      "input_sha256": "97e1987e45b52a0fe09ebd4b3a1f78b7cc18ca26ffe6fa04969682ba21292b99",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-fwj4-6wgp-mpxm",
+      "ecosystem": "RubyGems",
+      "input_sha256": "0d693339bf3bf26d754e6a70bfb321e4bb553b1055e083f8ecc142d9ea8ab960",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-g23g-mw97-65c8",
+      "ecosystem": "Go",
+      "input_sha256": "a815df5a24f743fdcb629713f88c51e1616a92fefc0aa891bc8ceb8efeb55a68",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-g72f-jw3w-mgh7",
+      "ecosystem": "npm",
+      "input_sha256": "44bde67b12f1ecfea357a849e197fd1c355a12a602094fd7c7a172ef572f1aa5",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-gjqq-6r35-w3r8",
+      "ecosystem": "Go",
+      "input_sha256": "a16601dd3b42d565d2f6e230f5adfa3b6ff8635893a1fa0d89861694d50f4ed2",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-gpfj-4j6g-c4w9",
+      "ecosystem": "npm",
+      "input_sha256": "6299ccba91c10f3a366ea0da61ef5f7350d34054c073c692de67fae6e21b25d8",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-gprp-h92g-gc2h",
+      "ecosystem": "Maven",
+      "input_sha256": "8ba7532653c6414934ee1576f69965d82a46e4ed0c36dddfad425922da4f1b1c",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-gr4j-r575-g665",
+      "ecosystem": "npm",
+      "input_sha256": "e31315e32e4c5a16da1589b5c6f32c3c64bf83e04b97571cb0a72c98a82ef842",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-gvg7-pp82-cff3",
+      "ecosystem": "npm",
+      "input_sha256": "2de77bf9e9cd63221022edea173d2289186c54f973690986a90ea9a12914abc9",
+      "before": "coverage_incomplete",
+      "after": "coverage_incomplete",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-h36j-8vv3-cj52",
+      "ecosystem": "PyPI",
+      "input_sha256": "d1a9841f997678dee845bfe6c2fafae8aa0617f917ea6205a697ff1a86e79f08",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-h4h6-vccr-44h2",
+      "ecosystem": "Go",
+      "input_sha256": "d3a59051bac5f9c4179183c84c1387b7600fc77f9fc6589e2d2ef70ce612b647",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-h6r4-xvw6-jc5h",
+      "ecosystem": "npm",
+      "input_sha256": "b08dab36311c6979512eb0ee3e96b904f3c0de9f40c45702dd0ff291e2c53747",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-h7cm-jvpp-69xf",
+      "ecosystem": "Go",
+      "input_sha256": "80e70dce663954be5e1f393b078506dec62dffb8aed0a1be1f0f2a39f8bde083",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-hc5w-gxxr-w8x8",
+      "ecosystem": "Go",
+      "input_sha256": "4ea056eb65ec3d5773d8fa5f112ffc98e7184beb1e73821244a4f6fa8118039c",
+      "before": "coverage_incomplete",
+      "after": "coverage_incomplete",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-hj4w-hm2g-p6w5",
+      "ecosystem": "PyPI",
+      "input_sha256": "58b079077bf4ff6097777486bb9c082c4e1b0815071ede61d150027fc30fa8d6",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-hq7p-j377-6v63",
+      "ecosystem": "RubyGems",
+      "input_sha256": "b0a4b8611f4a27e0da1b33e3d6c6096c53146966b59b07870d5257022aea8366",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-hr8g-6v94-x4m9",
+      "ecosystem": "Maven",
+      "input_sha256": "20f194bf13dc66a5a096aff3741a916cd2a129e847d432d86695e05466198812",
+      "before": "unknown",
+      "after": "unknown",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-hw6x-2qwv-rxr7",
+      "ecosystem": "Maven",
+      "input_sha256": "cff559e8581e363009d97b9590cb775712739e97deb2b21ad3956dc37851b35a",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-hwcc-4cv8-cf3h",
+      "ecosystem": "NuGet",
+      "input_sha256": "f7d5085a7acf1ff4e1eabcc834a06cf1b43b7798d897da720aa727c40bf05ec2",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-j3f9-p6hm-5w6q",
+      "ecosystem": "Packagist",
+      "input_sha256": "fd8049bf9da28f9fae7ab6da8432ae3acbb229f8ef0edf1043afb728b9ef1cb2",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-j456-xh4h-cpf2",
+      "ecosystem": "PyPI",
+      "input_sha256": "1a302a21b91e91add580b479bd2701b3dacacc0144d0e5c5d19d2b83d21ea630",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-j6cv-98jx-mrwr",
+      "ecosystem": "PyPI",
+      "input_sha256": "5cc691fed7b1c563b10f3b4da73634b8744a0fc10c7c466f9f379f7ab3f6ff7c",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-j7g8-3qqg-8cvm",
+      "ecosystem": "Packagist",
+      "input_sha256": "551e8e578c1bc94d7a88d7960e7013c038a796462158b74abcd0effe9a768e58",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-j7wh-x834-p3r7",
+      "ecosystem": "Go",
+      "input_sha256": "f6cb86328cbcd69eea4ec8598cd55f6b7df35a9df5d89ab00abd2440823882d2",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jccv-3h4x-35mv",
+      "ecosystem": "Packagist",
+      "input_sha256": "95df279598789b0cdd611b043a65f69a27e3e4ee8d3406e89dc56490e89d9faf",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jj27-h5hq-8x99",
+      "ecosystem": "npm",
+      "input_sha256": "ca543591af4b1cc6b08b85b2d1802b430db5ab48bcdb7e404e7da32211b2ce40",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jj45-24rw-v6jw",
+      "ecosystem": "npm",
+      "input_sha256": "c3c720008f40f8eaa4f8d4126ff7dd052a2e5bfc0c71529ddc1e1badf765d213",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jjgq-jq8g-24w4",
+      "ecosystem": "Packagist",
+      "input_sha256": "325dfaf6d3df03b4fe0416e63520614a11ee35ab381f092449a24c860c6f7277",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jmm9-2p29-vh2w",
+      "ecosystem": "RubyGems",
+      "input_sha256": "3bdc8dd9463c04e45307b6860313c5b7f48b86064939ecf90eebadf3749053d4",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jppv-gw3r-w3q8",
+      "ecosystem": "RubyGems",
+      "input_sha256": "51669208122b9de3748b09f6f5074e278124cf3fc44d565e25cf119b0cc920b4",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jqmf-mx4f-hfr6",
+      "ecosystem": "PyPI",
+      "input_sha256": "6f6aa25fb5460e79e1b65c29fb788ab84005cf0baebf7553c4bdddd6c8e3122b",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-jwhr-h7pc-3974",
+      "ecosystem": "Maven",
+      "input_sha256": "f0b4ac559dab9f3f39d4453a3ea605c6662d19ccfbc33f2d8787bee4e96faf5e",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-m3hq-3qj8-c5fm",
+      "ecosystem": "RubyGems",
+      "input_sha256": "58f65eb93d552e5bd732cbecbb116caf54fa0f859e95343abb0f68ce8cb671d2",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-m445-w3xr-vp2f",
+      "ecosystem": "Go",
+      "input_sha256": "16b5038ffcf9473b89fba020275fdd18229893a0ee781a5d43f94eaafad1e2a6",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-m462-mqw4-2c8m",
+      "ecosystem": "Go",
+      "input_sha256": "7605280de07558886115524e297d800df20cee907baba76a7131fcdededb7f0e",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-m734-r4g6-34f9",
+      "ecosystem": "npm",
+      "input_sha256": "0d54d59a7b6b1f70212b3ace0288358c878cfa2bb4e56f260982443f91286cae",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mc7w-4cjf-c973",
+      "ecosystem": "npm",
+      "input_sha256": "2cca0f0c930a995fc1b948fb7b0a4b13106bd545e525a4f68a4f307a3d17582f",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mf2p-h6hf-fcwm",
+      "ecosystem": "npm",
+      "input_sha256": "ae4cbe42d9e113dfeff97a9a402a8b885e83fcca7233e2cebc3ac8a5f346e563",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mggc-4xg6-vcxf",
+      "ecosystem": "NuGet",
+      "input_sha256": "780d99f493488e36a4a60465e1f02c3ce056173d8198e4e10e85d1faf20efc62",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mhwp-qhpc-h3jm",
+      "ecosystem": "RubyGems",
+      "input_sha256": "f393670f90c3d566b776aa146f11993093aa8ce5ca24fd92f5ce45c5c8e989b7",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mj4x-vf5c-5xg8",
+      "ecosystem": "PyPI",
+      "input_sha256": "abfc213e786b8fe3ce27abfa7a73c34b37c0e3bc03af3e3d9592dd08966e1647",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mmcv-fvq8-r9x3",
+      "ecosystem": "Packagist",
+      "input_sha256": "45c00c03e298613b7c13985fa82518f6b054c4ec0ab5996de27237dc48f56052",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mq84-hjqx-cwf2",
+      "ecosystem": "PyPI",
+      "input_sha256": "3ebe795129926f9d794b8c4c46c6d97868f044c60a6acd88ecbb9bcd7f4c19b7",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mrq8-fv7v-hhjg",
+      "ecosystem": "PyPI",
+      "input_sha256": "b55836aff052ee0b69a736ec967a47720912d7a5a2c93dd5b47e7d4e3c5f7b1a",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mrww-27vc-gghv",
+      "ecosystem": "Go",
+      "input_sha256": "29dd8663516c07a14fd8fc18fde77f6dc099ebe031db0cbcaf15da27af840a68",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mw36-7c6c-q4q2",
+      "ecosystem": "Maven",
+      "input_sha256": "b31df7adb1b7132c3abbaba2d7a768aa306ce369d03033e25e07b7467ba24550",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-mxg3-432p-mr72",
+      "ecosystem": "Go",
+      "input_sha256": "2a8ac9732ac2e104b531fd9d3fe23f5c1c0eaf893bbc4b7640855f584ccd2c54",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-p6w9-r443-r752",
+      "ecosystem": "Packagist",
+      "input_sha256": "ba2d9ec6a1a506ed0ec060a3b0e7e3c210bba3d3e0a593f4223fb9b837b66010",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-p77r-c6m3-gj2r",
+      "ecosystem": "npm",
+      "input_sha256": "b88cc1346228bcfc7c5704c9e61b88d12f4c537ade2015335fc128543aad0df4",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-p9qm-p942-q3w5",
+      "ecosystem": "Maven",
+      "input_sha256": "1328a961c853fea35e2fc2fe0ffd399da865d62e1c5b40f6b060f5ec875dc974",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-pj84-qjm3-77mg",
+      "ecosystem": "Maven",
+      "input_sha256": "f42fda5fa27bbe4df372c5920c79ae1db9295e37b3733c9c3f1e70cf7d335c35",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-pmw4-jgxx-pcq9",
+      "ecosystem": "npm",
+      "input_sha256": "11d646486f7fe56549a4246817b2cf74c9244f1e9feb13d0231dd67eea881a8c",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-pxrr-hq57-q35p",
+      "ecosystem": "PyPI",
+      "input_sha256": "bedca05acd0c60d8a7acaab31d85c9f7b29cbd4c1f193564ed02e42fdf9837c0",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-q27f-v3r6-9v77",
+      "ecosystem": "RubyGems",
+      "input_sha256": "cfea619cde9be2f17523d81a5b6daece6d1a6d514bf9e1ccf8982331d7c55f58",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-q296-9j5x-fxf4",
+      "ecosystem": "Maven",
+      "input_sha256": "4cd6f80042d14d02badfd138d664b2959decb2e3ff03b0a0572b8bf0853e153a",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-q433-mp6c-8v4f",
+      "ecosystem": "Go",
+      "input_sha256": "bbd6985e16ac5d1505e45b9d641fdb58228a49557b683f7a0a19d16a41f40ab0",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-q7m5-3jmv-vm48",
+      "ecosystem": "PyPI",
+      "input_sha256": "038e238a860aeae2b093089cd37e70fb95272032b5bde721fa6c80de55d01b08",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-q9mp-79cp-9g8j",
+      "ecosystem": "Go",
+      "input_sha256": "6d11cc89f8e942e22874e43757bf8f800b2072ffde68833913cfe3559adf5d41",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-qcpp-8x79-hhp3",
+      "ecosystem": "PyPI",
+      "input_sha256": "9178d865ff7aaac09be459fe6fe5192da49d263aec6f8020b715d2d362f9baaa",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-qqh2-wvmv-h72m",
+      "ecosystem": "Maven",
+      "input_sha256": "0c0b2c23da4d43ed6545272f795dd58384bbe345ed2935eebf0e14c93d43b32c",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-qrg7-hfx7-95c5",
+      "ecosystem": "Go",
+      "input_sha256": "1d865a86e19bc547f55d6d1a574b2d182435940baad8724462a44350d64a1f4a",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-r7j3-vvh2-xrpj",
+      "ecosystem": "RubyGems",
+      "input_sha256": "c529235c3c16c0b9b758c02b9ebf5a941612fa365542dbeba8ba5ab66db5edb6",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-r8g5-cgf2-4m4m",
+      "ecosystem": "PyPI",
+      "input_sha256": "773f53d4ff032cb8eba29d34d254ffa9d0467799ad56d5fe369737c518d92392",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-rc6v-5rmx-w5mv",
+      "ecosystem": "Go",
+      "input_sha256": "499fa5d561e7c3071708ff16a9db4c045a0cd16e975df6841ea1770e55d40c83",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-rfx3-98h7-v3xp",
+      "ecosystem": "NuGet",
+      "input_sha256": "42c0c9b4093c0b706e0fef8d997e7e1872ec29c497ffbdeca18377b64927f05f",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-rjjv-87mx-6x3h",
+      "ecosystem": "npm",
+      "input_sha256": "5f847931f407dd5da60a0e1c96ac5a5138cb8bafbfebd538f03a0b6ca825b02d",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-rmjr-87wv-gf87",
+      "ecosystem": "npm",
+      "input_sha256": "07d38b8ec318164dc9abc0993c7081a29ccd86cae4f2b342b0f48ecf298d735f",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-rp2v-v467-q9vq",
+      "ecosystem": "PyPI",
+      "input_sha256": "76e0b44e7900ac1510f7c3eabc76818e061b8d0b0461d777819db3ebb28f9cf4",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-rqw2-ghq9-44m7",
+      "ecosystem": "PyPI",
+      "input_sha256": "b7bc253b0334e951192358728a4f18bd116e4832fa2c98e3568d609e502cb916",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-v222-6mr4-qj29",
+      "ecosystem": "RubyGems",
+      "input_sha256": "1f437b22ffd27e4079cbdf4c432fac9b5ee98e2d23f60aca34937f42454e2034",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-v253-rj99-jwpq",
+      "ecosystem": "npm",
+      "input_sha256": "bebbee62d5a2af6d0a0e11fe6734851a0eec469f8f90ca7fbce181ccc8d63bca",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-v529-vhwc-wfc5",
+      "ecosystem": "RubyGems",
+      "input_sha256": "42425f6924af796f2c1443cefb40a32a4442e3d5d49159dc9e8eab0ddde7a3b7",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-v74c-qc46-9gg9",
+      "ecosystem": "Maven",
+      "input_sha256": "4393c2110a5149263b4afeda7c623925c50eca79dda1feef7048c1711d6a6c5c",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-vf2r-cxg9-p7rf",
+      "ecosystem": "Packagist",
+      "input_sha256": "5b837913a4d7f429a8cf4c972cd49786554ec77aa18ac47beefcae01b8805d8c",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-vj3g-5px3-gr46",
+      "ecosystem": "npm",
+      "input_sha256": "d9f14091a9b4192718c2dd4438855c77f1776e3f02a66b5e01d9c841b1b8d34c",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-vj9x-w7ch-f46p",
+      "ecosystem": "Packagist",
+      "input_sha256": "147f6db37dac5951ec576a1b2591ee9d6cad6b5e657b827fbb5d2ae30814c909",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-vmw2-qwm8-x84c",
+      "ecosystem": "NuGet",
+      "input_sha256": "47873cd11f0c435643a8e4916e322ef4c6ef4e65c8440f735260d701d7447f95",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-vp4f-wxgw-7x8x",
+      "ecosystem": "npm",
+      "input_sha256": "b09fce5ef33ffbde5718f14fa7407eafd26be80d064c86fe0c7539b9a5d8cf53",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-vq7p-f4fv-rr5x",
+      "ecosystem": "Maven",
+      "input_sha256": "770005a1cbdd75e8ef2206df2470c6cf1300d4f33dc24defc1be6b8cb39766f6",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-w2pm-r78h-4m7v",
+      "ecosystem": "Packagist",
+      "input_sha256": "b19839274dbc25097c89a4a084d437e3b2ecfb965fe01fefe9d216cf9c0e13f0",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": true,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-w5ff-2mjc-4phc",
+      "ecosystem": "Packagist",
+      "input_sha256": "7fbd0af6099eedc494918fa821d4decb65ccb07e0c9d097ef26fcb026987a88b",
+      "before": "hit",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-wc3v-3457-c8cm",
+      "ecosystem": "Go",
+      "input_sha256": "c210f77e1e4737914a3daab3f51575e98b61726b804ceefd3a1f498af671c132",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-wm65-ph3w-587c",
+      "ecosystem": "npm",
+      "input_sha256": "347a16b50ad484cc7429b01b14e79f3015c0232587c29ebcce0a528b65e803db",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-wqmh-qccw-pqwf",
+      "ecosystem": "PyPI",
+      "input_sha256": "f972a7c753bfd3857d09366411522d15f96547043092712c556903443fa95ba7",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-wrvw-254r-wpmv",
+      "ecosystem": "NuGet",
+      "input_sha256": "1b38a87db03893b55bbd8581cc6782cf2a09010d9f551784d60992c0bcd37b70",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-x3wm-hffr-chwm",
+      "ecosystem": "Maven",
+      "input_sha256": "257a22869c253622ac41a30ab601a99a1da518632d07f026b01dfd2e377236fb",
+      "before": "unknown",
+      "after": "unknown",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-x485-rhg3-cqr4",
+      "ecosystem": "RubyGems",
+      "input_sha256": "2b31905f7ac71a3c0cee5e50c4700639f544cfacb7a3afdfd85ec8ca91ea2d1f",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-x67c-8pwr-m8g3",
+      "ecosystem": "Go",
+      "input_sha256": "a81ca180efcd71b3cd87a290dbbcac0a2911e9c6bb7076411e0cd8eac6f64c8e",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-x843-g5mx-g377",
+      "ecosystem": "PyPI",
+      "input_sha256": "773f53d4ff032cb8eba29d34d254ffa9d0467799ad56d5fe369737c518d92392",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-x9vc-6hfv-hg8c",
+      "ecosystem": "NuGet",
+      "input_sha256": "29b4f165bb4afb14753c5564ff242cc47a54234100e4f974434172e8ed66ccd3",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    },
+    {
+      "advisory": "GHSA-xf96-32q2-9rw2",
+      "ecosystem": "RubyGems",
+      "input_sha256": "9d0358ba989ce1fb54294287eab53591569e385e57b2ff97b7145d7ccb36aba8",
+      "before": "miss",
+      "after": "hit",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": true
+    },
+    {
+      "advisory": "GHSA-xr9m-gphc-9p63",
+      "ecosystem": "Packagist",
+      "input_sha256": "7aad1d071a893894b67f7c3c7a0db5684e5ee57e154c5a01a549854eb9a430de",
+      "before": "miss",
+      "after": "miss",
+      "before_deleted_line_hit": false,
+      "after_deleted_line_hit": false
+    }
+  ],
+  "broader_promotion_requirements": {
+    "status": "pending_for_broader_promotion",
+    "basis": {
+      "commit": "98e974dbe20f8859f2a22625b4b45dd1227ee7c4",
+      "path": "docs/evidence/recall-evaluation-9b51ef2f-opengrep210-dev.json",
+      "receipt_sha256": "fdab68c3210ed0bce1a37d8fbdecdf6b94cbada1e65e0f3d70e9c670d041d56d"
+    },
+    "exact_span_reviews": [
+      {
+        "advisory": "GHSA-g4wm-2vf7-vfgr",
+        "loss_lane": "baseline",
+        "state": "pending",
+        "evidence_required": "Pinned old source and exact alert span; independent adjudication and a retained hit or review-backed loss disposition."
+      },
+      {
+        "advisory": "GHSA-3753-m2x2-q623",
+        "loss_lane": "baseline",
+        "state": "pending",
+        "evidence_required": "Pinned old source and exact alert span; independent adjudication and a retained hit or review-backed loss disposition."
+      },
+      {
+        "advisory": "GHSA-p849-8hwh-84j9",
+        "loss_lane": "gain_checkpoint",
+        "state": "pending",
+        "evidence_required": "Pinned old source and exact alert span; independent adjudication and a retained hit or review-backed loss disposition."
+      }
+    ],
+    "benign_control_repositories": [
+      {
+        "repository": "jquery/jquery",
+        "state": "incomplete_in_referenced_run",
+        "required": "Complete comparable baseline and candidate coverage on the pinned control source."
+      },
+      {
+        "repository": "laravel/framework",
+        "state": "incomplete_in_referenced_run",
+        "required": "Complete comparable baseline and candidate coverage on the pinned control source."
+      },
+      {
+        "repository": "mastodon/mastodon",
+        "state": "incomplete_in_referenced_run",
+        "required": "Complete comparable baseline and candidate coverage on the pinned control source."
+      },
+      {
+        "repository": "mozilla/pdf.js",
+        "state": "incomplete_in_referenced_run",
+        "required": "Complete comparable baseline and candidate coverage on the pinned control source."
+      },
+      {
+        "repository": "rubygems/rubygems",
+        "state": "incomplete_in_referenced_run",
+        "required": "Complete comparable baseline and candidate coverage on the pinned control source."
+      }
+    ],
+    "control_alert_growth": {
+      "maximum_net_increase": 0,
+      "observed_net_increase_in_referenced_run": 3,
+      "state": "above_limit_in_referenced_run"
+    }
+  }
+}

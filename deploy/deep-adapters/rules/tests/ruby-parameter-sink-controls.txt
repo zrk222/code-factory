@@ -67,3 +67,32 @@ class PluginModel
     end
   end
 end
+
+def open_explicit_path(path)
+  # ruleid: ruby.parameter-shell-command
+  Kernel.open(path, "r")
+end
+
+def read_file_only(path)
+  # ok: ruby.parameter-shell-command
+  File.open(path, "r")
+  # ok: ruby.parameter-shell-command
+  File.read(path)
+end
+
+def open_constant_path
+  # ok: ruby.parameter-shell-command
+  Kernel.open("settings.txt", "r")
+end
+
+def open_application_resource(path, store)
+  # ok: ruby.parameter-shell-command
+  store.open(path, "r")
+end
+
+module ArchiveLoader
+  def self.open_path(path, mode = "r")
+    # ruleid: ruby.parameter-shell-command
+    Kernel.open(path, mode)
+  end
+end

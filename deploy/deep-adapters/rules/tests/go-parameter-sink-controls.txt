@@ -3,7 +3,12 @@ package controls
 import (
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os/exec"
+	"path/filepath"
+
+	"github.com/gin-gonic/gin"
+	"github.com/huandu/go-sqlbuilder"
 )
 
 func archive(name string) error {
@@ -52,4 +57,112 @@ func FindInStore(store *sql.DB, name string) (*sql.Rows, error) {
 func FindInStoreBound(store *sql.DB, name string) (*sql.Rows, error) {
 	// ok: go.parameter-sql-text
 	return store.Query("SELECT * FROM users WHERE name = $1", name)
+}
+
+type jsonPathQuery struct {
+	path string
+}
+
+func (d jsonPathQuery) toSQL() (string, []interface{}) {
+	sb := sqlbuilder.ClickHouse.NewSelectBuilder()
+	// ruleid: go.parameter-sql-text
+	sb.Select(fmt.Sprintf("JSON_VALUE('{}', '%s')", sqlbuilder.Escape(d.path)))
+	return sb.Build()
+}
+
+func (d jsonPathQuery) boundSQL() (string, []interface{}) {
+	// ok: go.parameter-sql-text
+	return sqlbuilder.Buildf("SELECT JSON_VALUE('{}', %v)", d.path).Build()
+}
+
+func (d jsonPathQuery) constantPath(sb *sqlbuilder.SelectBuilder, db *sql.DB) {
+	// ok: go.parameter-sql-text
+	sb.Select(fmt.Sprintf("JSON_VALUE('{}', '%s')", "$.a"))
+	// ok: go.parameter-sql-text
+	db.Query(fmt.Sprintf("SELECT JSON_VALUE('{}', '%s')", d.path))
+}
+
+func patternNames(dir string, name string) string {
+	// ok: go.parameter-sql-text
+	return filepath.Join(dir, fmt.Sprintf("_%s.scss", name))
+}
+
+func setDisposition(w http.ResponseWriter, name string) {
+	// ok: go.parameter-sql-text
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename='%s'", name))
+}
+
+func filterByName(sb *sqlbuilder.SelectBuilder, name string) {
+	// ruleid: go.parameter-sql-text
+	sb.Where(fmt.Sprintf("name = '%s'", name))
+	// ok: go.parameter-sql-text
+	sb.Where(sb.Equal("name", name))
+}
+
+type rowsForm struct {
+	Table string `json:"table"`
+	Order string `schema:"order"`
+}
+
+func rowsHandler(w http.ResponseWriter, r *http.Request) {
+	form := &rowsForm{}
+	if err := parseForm(r, form); err != nil {
+		return
+	}
+	query := fmt.Sprintf("SELECT * FROM t WHERE name = '%s' ORDER BY %s", form.Table, form.Order)
+	// ruleid: go.request-sql-injection
+	sqldb.GetDB(nil).Raw(query)
+}
+
+func ginRows(c *gin.Context) {
+	var form rowsForm
+	_ = c.ShouldBind(&form)
+	// ruleid: go.request-sql-injection
+	db.Raw("SELECT * FROM t ORDER BY " + form.Order)
+	// ok: go.request-sql-injection
+	db.Raw("SELECT * FROM t WHERE name = ?", form.Table)
+}
+
+func unboundRows(w http.ResponseWriter, r *http.Request) {
+	form := &rowsForm{Order: "id"}
+	// ok: go.request-sql-injection
+	db.Raw("SELECT * FROM t ORDER BY " + form.Order)
+}
+
+type gitRepo struct {
+	URL       string
+	Directory string
+}
+
+func (g *gitRepo) git(args ...string) error {
+	return exec.Command("git", args...).Run()
+}
+
+func (g *gitRepo) fetchAndReset(rev string) error {
+	// ruleid: go.parameter-shell-command
+	if err := g.git("-C", g.Directory, "fetch", "origin", rev); err != nil {
+		return err
+	}
+	// ok: go.parameter-shell-command
+	return g.git("-C", g.Directory, "reset", "--hard", "--", rev)
+}
+
+func (g *gitRepo) cloneBranch(branch string) error {
+	// ok: go.parameter-shell-command
+	return g.git("clone", "--depth=1", "--branch", branch, "--", g.URL, g.Directory)
+}
+
+func archiveRef(ref string) error {
+	// ruleid: go.parameter-shell-command
+	return exec.Command("git", "archive", "--format=tar", ref).Run()
+}
+
+func logFile(path string) error {
+	// ok: go.parameter-shell-command
+	return exec.Command("git", "log", "--follow", "--", path).Run()
+}
+
+func statusIn(dir string) error {
+	// ok: go.parameter-shell-command
+	return exec.Command("git", "-C", dir, "status").Run()
 }

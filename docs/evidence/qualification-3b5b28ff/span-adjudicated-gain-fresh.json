@@ -1,0 +1,129 @@
+{
+ "schema": "factory.adjudicated-precision.v1",
+ "candidate": "span review of lost hunk hits (ruleset 6a3457b1735c2f92b734e8af335961b126e49fb054da9a840c9311a2ce1ecb47)",
+ "cohort": "fresh e9d0fe78 (spent)",
+ "reviewers": [
+  "claude-opus-5.5 (session)",
+  "claude-opus-5.5 (blinded arm)",
+  "claude-sonnet-5.5 (blinded arm)"
+ ],
+ "judge": null,
+ "independence": "AI reviewers; unanimous FP on every span, so no judge was needed; independence from AI is unestablished",
+ "rows": [
+  {
+   "item": "GHSA-p849-8hwh-84j9:packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts:57:46",
+   "repository_case": "GHSA-p849-8hwh-84j9",
+   "rule": "javascript.parameter-sql-text",
+   "file": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+   "line": 57,
+   "span": [
+    46,
+    0,
+    78
+   ],
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "The span is ${messagesFieldName.channelName}, a column identifier that comes from the collection schema through getRealFieldName, not from request input.",
+    "messagesFieldName.channelName is a real column name resolved from the plugin's own collection metadata, not request input."
+   ]
+  },
+  {
+   "item": "GHSA-p849-8hwh-84j9:packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts:57:81",
+   "repository_case": "GHSA-p849-8hwh-84j9",
+   "rule": "javascript.parameter-sql-text",
+   "file": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+   "line": 57,
+   "span": [
+    81,
+    0,
+    106
+   ],
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "The span is ${channelsTableAliasName}, the internal collection name passed through quoteIdentifier, so no user data reaches it.",
+    "channelsTableAliasName is a quoteIdentifier-quoted internal collection name, not user-controlled."
+   ]
+  },
+  {
+   "item": "GHSA-p849-8hwh-84j9:packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts:57:107",
+   "repository_case": "GHSA-p849-8hwh-84j9",
+   "rule": "javascript.parameter-sql-text",
+   "file": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+   "line": 57,
+   "span": [
+    107,
+    0,
+    132
+   ],
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "The span is ${channelsFieldName.name}, a schema-derived column name, not attacker-controlled.",
+    "channelsFieldName.name is a column name resolved from the internal collection definition, not request input."
+   ]
+  },
+  {
+   "item": "GHSA-p849-8hwh-84j9:packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts:58:50",
+   "repository_case": "GHSA-p849-8hwh-84j9",
+   "rule": "javascript.parameter-sql-text",
+   "file": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+   "line": 58,
+   "span": [
+    50,
+    0,
+    77
+   ],
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "The span covers ${messagesFieldName.userId}, the schema column name, not the ${userId} value, so no user input reaches it.",
+    "messagesFieldName.userId is an internal column name from collection metadata, not request input."
+   ]
+  },
+  {
+   "item": "GHSA-p849-8hwh-84j9:packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts:59:51",
+   "repository_case": "GHSA-p849-8hwh-84j9",
+   "rule": "javascript.parameter-sql-text",
+   "file": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+   "line": 59,
+   "span": [
+    51,
+    0,
+    88
+   ],
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": null,
+   "span_reviewer_opus": "FP",
+   "span_reviewer_sonnet": "FP",
+   "final": "FP",
+   "reasons": [
+    "The span is ${messagesFieldName.receiveTimestamp}, a schema-derived column identifier in ORDER BY with no user input.",
+    "messagesFieldName.receiveTimestamp is an internal column name from collection metadata, not request input."
+   ]
+  }
+ ]
+}
