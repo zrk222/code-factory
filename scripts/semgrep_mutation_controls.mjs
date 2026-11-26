@@ -161,12 +161,12 @@ export const javascriptControlEndpoints = [
 export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.c.unsafe-gets': 2,
   'opt.factory.rules.csharp.disabled-certificate-verification': 1,
-  'opt.factory.rules.csharp.request-command-injection': 3,
+  'opt.factory.rules.csharp.request-command-injection': 4,
   'opt.factory.rules.csharp.request-sql-injection': 7,
   'opt.factory.rules.go.archive-path-traversal': 4,
-  'opt.factory.rules.go.disabled-tls-verification': 1,
+  'opt.factory.rules.go.disabled-tls-verification': 2,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
-  'opt.factory.rules.go.parameter-shell-command': 1,
+  'opt.factory.rules.go.parameter-shell-command': 3,
   'opt.factory.rules.go.parameter-sql-text': 4,
   'opt.factory.rules.go.request-command-injection': 3,
   'opt.factory.rules.go.request-html-injection': 2,
@@ -175,19 +175,19 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.tls-client-cert-requested-not-verified': 1,
   'opt.factory.rules.go.tls-peer-not-verified': 2,
   'opt.factory.rules.java.archive-path-traversal': 3,
-  'opt.factory.rules.java.disabled-hostname-verification': 4,
+  'opt.factory.rules.java.disabled-hostname-verification': 5,
   'opt.factory.rules.java.parameter-sql-text': 7,
   'opt.factory.rules.java.request-command-injection': 3,
   'opt.factory.rules.java.request-html-injection': 1,
   'opt.factory.rules.java.request-path-traversal': 1,
   'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
-  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 2,
+  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 3,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 4,
   'opt.factory.rules.javascript.parameter-shell-command': 7,
   'opt.factory.rules.javascript.parameter-sql-text': 3,
-  'opt.factory.rules.javascript.request-command-injection': 4,
+  'opt.factory.rules.javascript.request-command-injection': 5,
   'opt.factory.rules.javascript.request-html-injection': 12,
   'opt.factory.rules.javascript.request-path-traversal': 17,
   'opt.factory.rules.javascript.request-sql-injection': 3,
@@ -199,11 +199,11 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.request-file-inclusion': 2,
   'opt.factory.rules.php.request-html-injection': 1,
   'opt.factory.rules.php.request-path-traversal': 12,
-  'opt.factory.rules.php.request-sql-injection': 15,
+  'opt.factory.rules.php.request-sql-injection': 17,
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
   'opt.factory.rules.python.archive-path-traversal': 4,
   'opt.factory.rules.python.disabled-tls-verification': 4,
-  'opt.factory.rules.python.parameter-path-join-without-containment': 4,
+  'opt.factory.rules.python.parameter-path-join-without-containment': 5,
   'opt.factory.rules.python.parameter-shell-command': 7,
   'opt.factory.rules.python.parameter-sql-text': 2,
   'opt.factory.rules.python.request-command-injection': 2,
@@ -215,12 +215,12 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 6,
   'opt.factory.rules.ruby.archive-path-traversal': 2,
   'opt.factory.rules.ruby.disabled-tls-verification': 5,
-  'opt.factory.rules.ruby.parameter-shell-command': 3,
+  'opt.factory.rules.ruby.parameter-shell-command': 7,
   'opt.factory.rules.ruby.parameter-sql-text': 4,
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 4,
-  'opt.factory.rules.ruby.request-sql-injection': 4,
+  'opt.factory.rules.ruby.request-sql-injection': 5,
   'opt.factory.rules.rust.reqwest-disabled-tls-verification': 4,
   'opt.factory.rules.swift.trust-exceptions': 3,
 });
@@ -271,6 +271,8 @@ export function javascriptControlManifest() {
       path: 'typescript-html-escaped-local.ts', line: 51 },
     { rule: 'opt.factory.rules.javascript.parameter-shell-command',
       path: 'typescript-html-escaped-local.ts', line: 56 },
+    { rule: 'opt.factory.rules.javascript.request-command-injection', path: 'report-cli-markup.tsx', line: 4 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 11 },
   ];
 }
 
@@ -284,7 +286,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 272;
+const REVIEWED_FINDINGS = 287;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -349,6 +351,13 @@ export const extensionControlFiles = Object.freeze([
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['cs', 'csharp-sql-builder-controls.txt', 'csharp-sql-builder.cs'],
   ['rs', 'rust-boring-hostname-controls.txt', 'rust-boring-hostname.rs'],
+  ['rb', 'report-command-path-ruby.txt', 'report-command-path.rb'],
+  ['go', 'report-command-trust-go.txt', 'report-command-trust.go'],
+  ['php', 'report-query-php.php', 'report-query.php'],
+  ['py', 'report-path-python.txt', 'report-path.py'],
+  ['cs', 'report-command-csharp.txt', 'report-command.cs'],
+  ['java', 'report-trust-java.txt', 'report-trust.java'],
+  ['tsx', 'report-cli-markup-tsx.txt', 'report-cli-markup.tsx'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
   ['php', 'php-path-upload-controls.php'],
 ]);

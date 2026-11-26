@@ -1,0 +1,23 @@
+from pathlib import Path
+
+def write_report(destination, path, content):
+    logger.debug(path)
+    # ruleid: python.parameter-path-join-without-containment
+    output = Path(destination) / path.lstrip("/")
+    with open(output, "wb") as stream:
+        stream.write(content)
+
+def write_checked(destination, path, content):
+    logger.debug(path)
+    # ok: python.parameter-path-join-without-containment
+    output = Path(destination) / path.lstrip("/")
+    output.resolve().relative_to(Path(destination).resolve())
+    with open(output, "wb") as stream:
+        stream.write(content)
+
+def unrelated_write(destination, path, content):
+    logger.debug(path)
+    # ok: python.parameter-path-join-without-containment
+    output = Path(destination) / path.lstrip("/")
+    with open(destination, "wb") as stream:
+        stream.write(content)

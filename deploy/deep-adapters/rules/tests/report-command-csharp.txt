@@ -1,0 +1,15 @@
+class CommandConfigurationFixture {
+    public void Configure(string name) {
+        var info = new System.Diagnostics.ProcessStartInfo() { CreateNoWindow = true };
+        info.FileName = "cmd.exe";
+        // ruleid: csharp.request-command-injection
+        info.Arguments = $"/C fixture-marker {name}";
+    }
+
+    public void ConfigureNative(string name) {
+        var info = new System.Diagnostics.ProcessStartInfo() { CreateNoWindow = true };
+        info.FileName = "fixture-marker";
+        // ok: csharp.request-command-injection
+        info.Arguments = $"/C fixture-marker {name}";
+    }
+}

@@ -1,0 +1,8 @@
+class ProviderTrustFixture {
+    Object check(java.net.URL address, String user, String password) {
+        // ruleid: java.disabled-hostname-verification
+        Object permissive = new com.vmware.vim25.mo.ServiceInstance(address, user, password, true);
+        // ok: java.disabled-hostname-verification
+        return new com.vmware.vim25.mo.ServiceInstance(address, user, password, false);
+    }
+}

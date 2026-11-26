@@ -1,0 +1,20 @@
+var invoke = require("child_process").exec;
+var value = process.argv[2] || "";
+// ruleid: javascript.request-command-injection
+invoke("fixture-marker " + value);
+// ok: javascript.request-command-injection
+invoke("fixture-marker fixed");
+
+function render(props: Props) {
+  return (
+    // ruleid: javascript.dom-innerhtml-from-variable
+    <div innerHTML={props.enabled ? props.content : fallback} />
+  );
+}
+
+function renderChecked(props: Props) {
+  return (
+    // ok: javascript.dom-innerhtml-from-variable
+    <div innerHTML={props.enabled ? checkedMarkup() : fallback} />
+  );
+}
