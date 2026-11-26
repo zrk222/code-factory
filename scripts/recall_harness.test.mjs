@@ -11,7 +11,7 @@ import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindin
   publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint, reviewCapturePath,
   replayCaseScore } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
-import { compileScannerPathPolicy, completeFixedCoverage, engineTargetIgnores, readRuleMetadata } from './recall_coverage.mjs';
+import { compileScannerPathPolicy, completeFixedCoverage, engineTargetIgnores, readRuleMetadata, scannerPathPolicy } from './recall_coverage.mjs';
 import { replayRegisteredCaptures } from './verify_registered_recall.mjs';
 
 test('readRuleMetadata reads byte-pinned YAML and rejects duplicate rule IDs', () => {
@@ -873,7 +873,46 @@ test('live scoring and replay require rule proof for generic engine skips', () =
     const retained = {};
     assert.equal(checkpointArtifactsIntact(workdir, row, retained), true);
     const replayed = replayCaseScore(realpathSync(workdir), input, row, retained, ruleFamilies(rules),
-      scored.scope, compileScannerPathPolicy(rules));
+      scored.scope, scannerPathPolicy({ engine: 'semgrep', tool_version: '2.1.0' }, rules));
+    assert.equal(replayed.outcome, outcome);
+    assert.deepEqual(replayed.file_coverage, row.file_coverage);
+  }
+}));
+
+test('OpenGrep 1.15 scoring and replay use explicit skips from the retained coverage report', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, profile, baseline, opts } = fixture;
+  const scanner = join(root, 'scanner.mjs');
+  const stub = readFileSync(scanner, 'utf8');
+  const marker = 'const nativeErrors =';
+  assert.ok(stub.includes(marker));
+  writeFileSync(scanner, stub.replace(marker, [
+    "if (process.argv.includes('--x-ls-long')) throw Error('Legacy scanner has no usable inventory');",
+    "if (ruleText.includes('# typed-ignore')) skipped.push({ path: 'sample.py', reason: 'semgrepignore_patterns_match' });",
+    "if (ruleText.includes('# conflicting-skip')) skipped.unshift({ path: 'sample.py', reason: 'exceeded_size_limit' });",
+    marker,
+  ].join('\n')));
+  const legacy = { ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: '1.15.0' };
+  writeFileSync(profile, JSON.stringify(legacy));
+  const input = JSON.parse(readFileSync(manifest, 'utf8')).cases[0];
+  for (const [scenario, outcome] of [
+    ['', 'miss'],
+    ['# conflicting-skip', 'coverage_incomplete'],
+    ['# candidate-parse', 'coverage_incomplete'],
+  ]) {
+    const rules = 'rules:\n  - id: fixture.review\n    languages: [python]\n    metadata: {cwe: [CWE-79]}\n# clean-miss\n# typed-ignore\n'
+      + scenario + '\n';
+    writeFileSync(baseline, rules);
+    const scored = await scoreManifest(manifest, baseline, { ...opts, 'scanner-path-policy': 'true' });
+    const row = scored.cases[0];
+    assert.equal(scored.scanner_path_policy, 'opengrep-1.15.0-coverage-report-v1');
+    assert.equal(row.outcome, outcome);
+    assert.equal(row.file_coverage.old[0].policy, outcome === 'miss' ? 'engine_coverage_ignore' : undefined);
+    assert.equal(row.captures.old.target_inventory, undefined);
+    const retained = {};
+    assert.equal(checkpointArtifactsIntact(workdir, row, retained), true);
+    assert.ok(retained.old.native_report);
+    const replayed = replayCaseScore(realpathSync(workdir), input, row, retained, ruleFamilies(rules),
+      scored.scope, scannerPathPolicy(legacy, rules));
     assert.equal(replayed.outcome, outcome);
     assert.deepEqual(replayed.file_coverage, row.file_coverage);
   }

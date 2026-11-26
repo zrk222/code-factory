@@ -3,7 +3,7 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { compileScannerPathPolicy, completeFixedCoverage } from './recall_coverage.mjs';
+import { completeFixedCoverage, scannerPathPolicy } from './recall_coverage.mjs';
 import { caseDigest, checkpointArtifactsIntact, outcomeOf, replayCaseScore, ruleFamilies, sha256, sortKeys, validateRecallManifest } from './recall_harness.mjs';
 
 const referenceSha256 = '0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf';
@@ -156,8 +156,9 @@ export function replayRegisteredCaptures(candidate, captureRoot, manifest, rules
   const root = realpathSync(captureRoot);
   const inputs = new Map(manifest.cases.map(row => [row.ghsa, row]));
   const rules = ruleFamilies(rulesText);
-  const pathPolicy = candidate.scanner_path_policy === 'opengrep-2.1.0-target-inventory-v1'
-    ? compileScannerPathPolicy(rulesText) : null;
+  const pathPolicy = candidate.scanner_path_policy === undefined ? null
+    : scannerPathPolicy({ engine: 'semgrep', tool_version: candidate.engine?.version }, rulesText);
+  if (pathPolicy?.proof !== candidate.scanner_path_policy) throw new Error('Replay scanner path policy differs from the engine');
   const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
   const invalid = [], unreproduced = [];
   let verified_capture_cases = 0;
