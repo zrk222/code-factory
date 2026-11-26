@@ -922,6 +922,47 @@ test('review-alerts exports pinned old-side reports with distinct spans on one l
   assert.equal(existsSync(output), false);
 }));
 
+test('fixed review recomputes exact same-line residual spans from pinned packets, rules and diff', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline } = fixture;
+  const scanner = join(root, 'scanner.mjs');
+  const stub = readFileSync(scanner, 'utf8');
+  assert.ok(stub.includes('const results = old &&'));
+  writeFileSync(scanner, stub.replace('const results = old &&', "const results = (old || basename(process.cwd()) === 'new') &&"));
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n');
+  const saved = join(root, 'score.json'), output = join(root, 'fixed-alerts.json');
+  const script = 'scripts/recall_harness.mjs';
+  const scored = spawnSync(process.execPath, [script, 'score', '--manifest', manifest, '--rules', baseline,
+    '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--out', saved], { encoding: 'utf8' });
+  assert.equal(scored.status, 0, scored.stderr);
+  const pinned = readFileSync(saved), score = JSON.parse(pinned);
+  const [row] = score.cases;
+  const expected = [[1, 0, 4], [6, 0, 9]];
+  assert.deepEqual(row.fix_side_residual_spans, expected);
+  const run = (rules = baseline) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
+    '--score-sha256', sha256(readFileSync(saved)), '--workdir', workdir, '--out', output,
+    '--side', 'fixed', '--rules', rules], { encoding: 'utf8' });
+  const exported = run();
+  assert.equal(exported.status, 0, exported.stderr);
+  assert.deepEqual(JSON.parse(exported.stdout), { alerts: 2, scored_cases: 1, omitted_cases: 0 });
+  const records = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(records.map(alert => alert.span), expected);
+  assert.ok(records.every(alert => alert.side === 'fixed' && alert.on_fix_hunk
+    && alert.source_sha256 === row.source_packets.fixed[0].sha256));
+  rmSync(output);
+
+  row.fix_side_residual_spans[1] = [7, 0, 9];
+  writeFileSync(saved, JSON.stringify(score));
+  assert.match(run().stderr, /positions or spans differ/);
+  writeFileSync(saved, pinned);
+  const wrong = join(root, 'wrong.yml');
+  writeFileSync(wrong, '# different rules\n');
+  assert.match(run(wrong).stderr, /Review rules digest differs/);
+  const diff = join(workdir, row.captures.fixed.source_root, '..', 'diff.patch');
+  writeFileSync(diff, ' ', { flag: 'a' });
+  assert.match(run().stderr, /Review diff digest differs/);
+  assert.equal(existsSync(output), false);
+}));
+
 test('evaluation refuses a missing or mismatched engine and ruleset drift without writing a new receipt', () =>
   feederFixture(({ root, workdir, manifest, baseline, candidate, profile }) => {
     const output = join(root, 'unqualified.json');

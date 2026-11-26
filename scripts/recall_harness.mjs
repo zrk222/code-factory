@@ -18,6 +18,7 @@
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   review-alerts --score result.json --score-sha256 HEX --workdir DIR --out alerts.json
+//                 [--side fixed --rules ruleset.yml]
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
@@ -320,6 +321,7 @@ export function scoreCase({ families, hunks, editedLines, oldFindings, newFindin
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
   const hunkSpans = hunkHits.map(f => f.span ?? null);
+  const residualSpans = residual.map(f => f.span ?? null);
   const editedLineEvidence = editedLines?.deleted && {
     deleted_line_hit: hunkHits.some(f => editedLines.deleted.get(f.path)?.has(f.line)),
     added_line_residuals: residual.filter(f => editedLines.added.get(f.path)?.has(f.line)).map(f => [f.rule, f.path, f.line]),
@@ -329,6 +331,7 @@ export function scoreCase({ families, hunks, editedLines, oldFindings, newFindin
     ...(hunkSpans.some(Boolean) ? { hunk_spans: hunkSpans } : {}), matched_hunk_families: matchedFamilies,
     alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
     fix_side_residual: residual.map(f => [f.rule, f.path, f.line]),
+    ...(residualSpans.some(Boolean) ? { fix_side_residual_spans: residualSpans } : {}),
     ...(editedLineEvidence ? { edited_lines: editedLineEvidence } : {}) };
 }
 
@@ -1372,6 +1375,7 @@ function pairedCaseEvidence({ before, after }) {
         ...(previous.hunk_spans ? { baseline_hunk_spans: previous.hunk_spans } : {}) } : {}),
       registered_families: registeredFamilies(row), baseline_matched_hunk_families: baselineFamilies,
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
+      ...(row.fix_side_residual_spans ? { fix_side_residual_spans: row.fix_side_residual_spans } : {}),
       ...(previous?.edited_lines && scoredCase(previous) ? { before_edited_lines: previous.edited_lines } : {}),
       ...(scoredCase(row) && row.edited_lines ? { after_edited_lines: row.edited_lines } : {}),
       retried_serially: Boolean(row.retried_serially) };
@@ -2296,23 +2300,28 @@ function reviewCapturePath(root, name) {
   return target;
 }
 
-function oldReviewAlerts(root, row, rulesSha256) {
-  const capture = row.captures?.old;
-  const notes = row.scan_sides?.old;
+function reviewFindings(root, row, side) {
+  const capture = row.captures?.[side];
+  const notes = row.scan_sides?.[side];
   if (!notes || notes.failed_exit !== false || ![0, 1].includes(notes.exit_code) || scanIssue(notes) || !capture?.sarif) {
-    throw new Error('Review score has no successful old-side capture');
+    throw new Error('Review score has no successful ' + side + '-side capture');
   }
   const source = reviewCapturePath(root, capture.source_root);
-  const packets = row.source_packets.old;
+  const packets = row.source_packets[side];
   verifyPreparedBytes(source, packets);
   const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
   const report = readFileSync(reviewCapturePath(root, capture.sarif.path));
   if (sha256(report) !== capture.sarif.sha256 || capture.sarif.sha256 !== notes.report_sha256) {
     throw new Error('Review SARIF digest differs from score capture');
   }
-  const changed = new Set(row.changed_files);
   const findings = sarifFindings(JSON.parse(utf8(report)), new Set(hashes.keys()));
   if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
+  return { source, hashes, findings };
+}
+
+function oldReviewAlerts(root, row, rulesSha256) {
+  const { source, hashes, findings } = reviewFindings(root, row, 'old');
+  const changed = new Set(row.changed_files);
   const selected = findings.filter(finding => changed.has(finding.path));
   if (selected.length !== row.alerts_in_changed_files || (row.hunk_spans && row.hunk_spans.length !== row.hunk_findings.length)) {
     throw new Error('Review findings differ from score capture');
@@ -2337,6 +2346,30 @@ function oldReviewAlerts(root, row, rulesSha256) {
   return alerts;
 }
 
+function fixedReviewAlerts(root, row, rulesSha256, rules, scope) {
+  const packets = row.source_packets?.fixed;
+  if (!Array.isArray(packets) || !Array.isArray(row.fix_side_residual)) {
+    throw new Error('Review score has no fixed-side packet or residual evidence');
+  }
+  if (!packets.length && !row.fix_side_residual.length && !row.captures?.fixed) return [];
+  const { source, hashes, findings } = reviewFindings(root, row, 'fixed');
+  const diffPath = reviewCapturePath(root, relative(root, join(dirname(source), 'diff.patch')));
+  const diff = readFileSync(diffPath);
+  if (sha256(diff) !== row.diff_sha256) throw new Error('Review diff digest differs from score capture');
+  const hunks = parseHunks(utf8(diff), scopeExtensions(row.ecosystem, scope));
+  const computed = scoreCase({ families: familiesFor(row.cwes), hunks, oldFindings: [], newFindings: findings, rules });
+  const spans = computed.fix_side_residual_spans;
+  if (caseDigest(row.fix_side_residual) !== caseDigest(computed.fix_side_residual)
+    || (row.fix_side_residual_spans && caseDigest(row.fix_side_residual_spans) !== caseDigest(spans ?? []))) {
+    throw new Error('Review fixed-side hunk positions or spans differ from score capture');
+  }
+  return computed.fix_side_residual.map(([rule, path, line], index) => {
+    const span = spans?.[index];
+    return { case: row.ghsa, root: source, path, line, rule, ...(span ? { span } : {}),
+      source_sha256: hashes.get(path), rules_sha256: rulesSha256, on_fix_hunk: true, side: 'fixed' };
+  });
+}
+
 // The export never replaces its pinned score receipt or a retained capture it reads.
 export function assertReviewOutput(out, score, workRoot) {
   if (typeof out !== 'string' || !out) throw new Error('Review export requires --out');
@@ -2358,8 +2391,18 @@ function reviewAlerts(opts) {
   }
   const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
   assertReviewOutput(opts.out, opts.score, root);
-  const cases = saved.cases.filter(scoredCase);
-  const alerts = cases.flatMap(row => oldReviewAlerts(root, row, saved.ruleset_sha256));
+  const side = opts.side ?? 'old';
+  if (!['old', 'fixed'].includes(side)) throw new Error('Review --side must be old or fixed');
+  let rules;
+  if (side === 'fixed') {
+    if (typeof opts.rules !== 'string') throw new Error('Fixed-side review requires --rules');
+    const ruleBytes = readFileSync(opts.rules);
+    if (sha256(ruleBytes) !== saved.ruleset_sha256) throw new Error('Review rules digest differs from score capture');
+    rules = ruleFamilies(utf8(ruleBytes));
+  }
+  const cases = saved.cases.filter(row => scoredCase(row) && (side === 'old' || checkpointable(row)));
+  const alerts = cases.flatMap(row => side === 'old' ? oldReviewAlerts(root, row, saved.ruleset_sha256)
+    : fixedReviewAlerts(root, row, saved.ruleset_sha256, rules, saved.scope));
   writeFileSync(opts.out, `${JSON.stringify(alerts, null, 1)}\n`);
   console.log(JSON.stringify({ alerts: alerts.length, scored_cases: cases.length, omitted_cases: saved.cases.length - cases.length }));
 }
