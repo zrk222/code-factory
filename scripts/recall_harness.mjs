@@ -786,10 +786,11 @@ export function writeCheckpoint(root, inputs, result) {
 // unfetchable or parentless cases, timeouts and errors are always rescanned.
 const EMPTY_CASE_STATUSES = new Set(['no_old_side_source', 'no_in_language_source_change']);
 const scoredCase = row => row.status === 'scored' && ['hit', 'miss'].includes(row.outcome);
-export const checkpointable = row => (scoredCase(row)
-  || (EMPTY_CASE_STATUSES.has(row.status) && row.outcome === 'unknown'))
-  && ['old', 'fixed'].every(side => Array.isArray(row.file_coverage?.[side])
-    && !coverageGaps(row.file_coverage[side]).length);
+export function checkpointable(row) {
+  return (scoredCase(row) || (EMPTY_CASE_STATUSES.has(row.status) && row.outcome === 'unknown'))
+    && ['old', 'fixed'].every(side => Array.isArray(row.file_coverage?.[side])
+      && !coverageGaps(row.file_coverage[side]).length);
+}
 
 // The scorer's own code is part of every checkpoint key.
 let scorerFingerprint;
@@ -801,31 +802,38 @@ export function scorerSha256() {
 
 // A saved row is reusable only while the captures and source packets it cites
 // are still present in this work directory with the same bytes.
+function captureArtifactsIntact(root, capture, notes) {
+  if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
+    || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
+  return [capture.sarif, capture.native_report].filter(Boolean)
+    .every(artifact => sha256(readFileSync(reviewCapturePath(root, artifact.path))) === artifact.sha256);
+}
+
+function sideArtifactsIntact(root, row, side, attempts) {
+  const packets = row.source_packets?.[side] ?? [];
+  const checkedSources = new Set();
+  for (const [captures, diagnostics] of attempts) {
+    const capture = captures?.[side];
+    if (!capture) {
+      if (packets.length) return false;
+      continue;
+    }
+    if (!captureArtifactsIntact(root, capture, diagnostics?.[side])) return false;
+    const source = reviewCapturePath(root, capture.source_root);
+    if (!checkedSources.has(source)) {
+      verifyPreparedBytes(source, packets);
+      checkedSources.add(source);
+    }
+  }
+  return true;
+}
+
 export function checkpointArtifactsIntact(workdir, row) {
   try {
     const root = realpathSync(workdir);
     const attempts = [[row.captures, row.scan_sides]];
     if (row.retried_serially) attempts.push([row.initial_captures, row.initial_scan_sides]);
-    for (const side of ['old', 'fixed']) {
-      const packets = row.source_packets?.[side] ?? [];
-      const checkedSources = new Set();
-      for (const [captures, diagnostics] of attempts) {
-        const capture = captures?.[side];
-        if (!capture) { if (packets.length) return false; continue; }
-        const notes = diagnostics?.[side];
-        if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
-          || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
-        for (const artifact of [capture.sarif, capture.native_report].filter(Boolean)) {
-          if (sha256(readFileSync(reviewCapturePath(root, artifact.path))) !== artifact.sha256) return false;
-        }
-        const source = reviewCapturePath(root, capture.source_root);
-        if (!checkedSources.has(source)) {
-          verifyPreparedBytes(source, packets);
-          checkedSources.add(source);
-        }
-      }
-    }
-    return true;
+    return ['old', 'fixed'].every(side => sideArtifactsIntact(root, row, side, attempts));
   } catch { return false; }
 }
 

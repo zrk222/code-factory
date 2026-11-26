@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
   publishPreparedCase } from './recall_harness.mjs';
-import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
 --- a/app/files.py
@@ -1643,3 +1643,31 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   assert.equal(checkpointable(fresh.cases[0]), true);
   assert.match(scorerSha256(), /^[a-f0-9]{64}$/);
 }));
+
+test('coverageGapEntries keeps unreported and finding-only files and drops absent or excluded ones', () => {
+  const files = [
+    { path: 'scanned.py', state: 'reported_scanned', reason: 'paths_scanned' },
+    { path: 'finding.py', state: 'reported_scanned', reason: 'sarif_finding' },
+    { path: 'missing.py', state: 'unreported', reason: 'absent_from_engine_paths' },
+    { path: 'gone.py', state: 'absent', reason: 'deleted' },
+    { path: 'vendor.py', state: 'excluded', reason: 'declared_control_exclusion' },
+  ];
+  assert.deepEqual(coverageGapEntries(files).map(file => file.path), ['finding.py', 'missing.py']);
+  assert.deepEqual(coverageGapEntries(), []);
+});
+
+test('controlGapDelta splits shared, baseline-only and candidate-only gaps and refuses unbound evidence', async () => {
+  const { controlGapDelta } = await import('./recall_harness.mjs');
+  const side = gaps => ({ failed_exit: false, coverage_report_sha256: 'a'.repeat(64),
+    reports: { native_report: { sha256: 'a'.repeat(64) } }, control_coverage: { gaps } });
+  const shared = { path: 'shared.js', reason: 'parse' };
+  const delta = controlGapDelta({
+    before: side([shared, { path: 'base.rb', reason: 'absent_from_engine_paths' }]),
+    after: side([shared, { path: 'new.js', reason: 'parse' }]),
+  });
+  assert.equal(delta.state, 'COMPARED');
+  assert.deepEqual(delta.shared, [shared]);
+  assert.deepEqual(delta.baseline_only.map(gap => gap.path), ['base.rb']);
+  assert.deepEqual(delta.candidate_only.map(gap => gap.path), ['new.js']);
+  assert.deepEqual(controlGapDelta({ before: side([]), after: { control_coverage: { gaps: [] } } }), { state: 'UNCOMPARABLE' });
+});
