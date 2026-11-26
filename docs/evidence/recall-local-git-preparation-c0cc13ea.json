@@ -1,0 +1,559 @@
+{
+  "schema": "factory.recall-git-preparation-benchmark.v1",
+  "provenance": {
+    "git": "git version 2.51.2.windows.1",
+    "node": "v22.23.4",
+    "platform": "win32",
+    "arch": "x64",
+    "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+    "sources": [
+      {
+        "commit": "8cc7677fcfe3ac21ee075c480c7b06af11c215c0",
+        "blob_sha256": "5af95f6b9273cef2aff3df1d2bd2198ab73168b09961e368037dd9e0685fd009"
+      },
+      {
+        "commit": "c0cc13ea4ca8eb14a9e3d5e58d4bc7272d2bf9f3",
+        "blob_sha256": "2082ca3cb22dc4e93bb3c74e82e5288750afe124f042f729d3efbbc322c79730"
+      }
+    ],
+    "method": "Exact production prepareChanges function on already-local Git objects, new output directory each invocation. Alternating arm order. OS disk cache was never flushed. Includes Git diff, inventory, source materialization and file writes. Excludes fetching, scanner runtime, and post-timing hash verification."
+  },
+  "report": [
+    {
+      "case": "GHSA-85gf-wr67-f83w",
+      "ecosystem": "RubyGems",
+      "revisions": {
+        "old": "9afbf9e35692b975242f829f4d1b719c5a18e219",
+        "fixed": "93a9a77896bb66c949acb8e64bceafc74bc8c271"
+      },
+      "status": "paired",
+      "byte_evidence": {
+        "diff_sha256": "4a9d9243165a405ce0f3ed52320512fb10d8c0df4d0a6e970b3c28c18ae90816",
+        "inventory_sha256": "7b09fc2ebe4ab6d62d6f5045ae50cb423e31633e62493d0ad545816d36369e67",
+        "fingerprints_sha256": "84402a768d0320bf649a9361f0a6a4abd238b4621257dc63d076b3cb1748fa69",
+        "old_packets": 1,
+        "fixed_packets": 1
+      },
+      "timings": [
+        {
+          "label": "first_local_pass",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 224.78649999999993,
+          "candidate_ms": 164.2527
+        },
+        {
+          "label": "repeat_local_1",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 242.31189999999992,
+          "candidate_ms": 173.51139999999987
+        },
+        {
+          "label": "repeat_local_2",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 258.7759000000001,
+          "candidate_ms": 167.16110000000003
+        },
+        {
+          "label": "repeat_local_3",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 201.99649999999997,
+          "candidate_ms": 154.60359999999991
+        },
+        {
+          "label": "repeat_local_4",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 239.70959999999968,
+          "candidate_ms": 161.2492000000002
+        },
+        {
+          "label": "repeat_local_5",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 216.42590000000018,
+          "candidate_ms": 147.95240000000013
+        }
+      ]
+    },
+    {
+      "case": "GHSA-g72f-jw3w-mgh7",
+      "ecosystem": "npm",
+      "revisions": {
+        "old": "6bde78bf88aafa09a39dfaf45978c73d1c5fedc3",
+        "fixed": "c8190fbefa3a50e7b0c16c001d2e05b0e920cfb4"
+      },
+      "status": "paired",
+      "byte_evidence": {
+        "diff_sha256": "20d72a91d803b7c6e808c53d113befd9e2ed9859b5fa0b272c5620f96696a518",
+        "inventory_sha256": "a35c74cbf1c21eecd7bfe5706297b4fd7e7b67ba53a93e54e40ef9deca225f9a",
+        "fingerprints_sha256": "ac87cc26422d436c49e266bb45dd00c646910ad3b7c83eb1281368f78231bade",
+        "old_packets": 3,
+        "fixed_packets": 4
+      },
+      "timings": [
+        {
+          "label": "first_local_pass",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 234.67689999999993,
+          "candidate_ms": 184.54820000000018
+        },
+        {
+          "label": "repeat_local_1",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 237.38200000000006,
+          "candidate_ms": 190.41930000000002
+        },
+        {
+          "label": "repeat_local_2",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 227.04329999999982,
+          "candidate_ms": 174.72369999999955
+        },
+        {
+          "label": "repeat_local_3",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 229.42879999999968,
+          "candidate_ms": 174.36419999999998
+        },
+        {
+          "label": "repeat_local_4",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 212.96029999999973,
+          "candidate_ms": 163.45139999999992
+        },
+        {
+          "label": "repeat_local_5",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 228.89239999999972,
+          "candidate_ms": 178.03129999999965
+        }
+      ]
+    },
+    {
+      "case": "GHSA-h36j-8vv3-cj52",
+      "ecosystem": "PyPI",
+      "revisions": {
+        "old": "084c9291aa5becfcb5418fce2b83d61def995824",
+        "fixed": "1b70f9b673259360b6a2339c4bd97db9ea6e552f"
+      },
+      "status": "paired",
+      "byte_evidence": {
+        "diff_sha256": "f4e6d1798f7d7690aad63295a37b4d5d953883cac251757a9de110cd78d1270a",
+        "inventory_sha256": "c6c5f24746d8e9f2d10602afaa9b2642d8eb39d2693ff71a362a6227b9689997",
+        "fingerprints_sha256": "947aff27396a7a7db7f7002f8c45a52282b6a2b7aca56e9ddbaefc841c7b196a",
+        "old_packets": 2,
+        "fixed_packets": 2
+      },
+      "timings": [
+        {
+          "label": "first_local_pass",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 242.0594000000001,
+          "candidate_ms": 201.14000000000033
+        },
+        {
+          "label": "repeat_local_1",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 214.29700000000048,
+          "candidate_ms": 242.02049999999963
+        },
+        {
+          "label": "repeat_local_2",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 221.53879999999936,
+          "candidate_ms": 171.64800000000014
+        },
+        {
+          "label": "repeat_local_3",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 225.28929999999946,
+          "candidate_ms": 161.59720000000016
+        },
+        {
+          "label": "repeat_local_4",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 222.08200000000033,
+          "candidate_ms": 174.03240000000005
+        },
+        {
+          "label": "repeat_local_5",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 221.5041999999994,
+          "candidate_ms": 167.07860000000073
+        }
+      ]
+    },
+    {
+      "case": "GHSA-jj45-24rw-v6jw",
+      "ecosystem": "npm",
+      "revisions": {
+        "old": "1a9e0d41b936b1d646af04071e123b8640448a5d",
+        "fixed": "e2cea690c3fe4453e94da896a69f832511f65179"
+      },
+      "status": "paired",
+      "byte_evidence": {
+        "diff_sha256": "b50edbffe94b5629d1052ee3c56ba301064af8370a4af2283f30150fccfa459b",
+        "inventory_sha256": "70b6b482647467b071dfa657fb317f52e5af6d38ea830dceb40e1a0389761ae1",
+        "fingerprints_sha256": "eb4cfb78a419c2cb7f287171b3d96d882651bff04b5b3f9242f8ae9d2d781137",
+        "old_packets": 1,
+        "fixed_packets": 1
+      },
+      "timings": [
+        {
+          "label": "first_local_pass",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 212.89780000000064,
+          "candidate_ms": 150.84299999999894
+        },
+        {
+          "label": "repeat_local_1",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 189.42410000000018,
+          "candidate_ms": 156.1926000000003
+        },
+        {
+          "label": "repeat_local_2",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 188.3775999999998,
+          "candidate_ms": 167.88930000000073
+        },
+        {
+          "label": "repeat_local_3",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 216.55589999999938,
+          "candidate_ms": 159.57769999999982
+        },
+        {
+          "label": "repeat_local_4",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 218.8679000000011,
+          "candidate_ms": 168.86509999999907
+        },
+        {
+          "label": "repeat_local_5",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 245.0617000000002,
+          "candidate_ms": 152.2474000000002
+        }
+      ]
+    },
+    {
+      "case": "GHSA-jppv-gw3r-w3q8",
+      "ecosystem": "RubyGems",
+      "revisions": {
+        "old": "6497ba4d94d12c123df48cc8ab40f0a4eb7fb337",
+        "fixed": "5b8f8fc41a5d7d7d6a5d767e48464c60884d3aee"
+      },
+      "status": "paired",
+      "byte_evidence": {
+        "diff_sha256": "23fea51f30c23ab518a865d08b0ac6ade88b9db72867268536b6afb5d0cdf2e6",
+        "inventory_sha256": "88cd11dcde1ca46cad776854b4f46bba2ae9f565f5964eeb7b73ce93d4f1be70",
+        "fingerprints_sha256": "1a3f67a9ebc805151515452787fd33a3cc3f5fef8929efa198b0cb1b34181940",
+        "old_packets": 1,
+        "fixed_packets": 1
+      },
+      "timings": [
+        {
+          "label": "first_local_pass",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 273.20670000000064,
+          "candidate_ms": 177.9928
+        },
+        {
+          "label": "repeat_local_1",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 248.2543999999998,
+          "candidate_ms": 205.3732
+        },
+        {
+          "label": "repeat_local_2",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 229.54709999999977,
+          "candidate_ms": 178.27140000000145
+        },
+        {
+          "label": "repeat_local_3",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 234.60609999999906,
+          "candidate_ms": 165.85420000000158
+        },
+        {
+          "label": "repeat_local_4",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 242.3814000000002,
+          "candidate_ms": 188.2512999999999
+        },
+        {
+          "label": "repeat_local_5",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 218.20859999999993,
+          "candidate_ms": 158.9336000000003
+        }
+      ]
+    },
+    {
+      "case": "GHSA-mc7w-4cjf-c973",
+      "ecosystem": "npm",
+      "revisions": {
+        "old": "cfc96ba0af8c13d017d9c72f2c61ec968f1c15fb",
+        "fixed": "81a4b8620188e89f7e4fc985f3c89b58d4bcc86b"
+      },
+      "status": "paired",
+      "byte_evidence": {
+        "diff_sha256": "e2744ef100f4803564467655cf2db190e5306f87414f896973c958177984da13",
+        "inventory_sha256": "38e726fc6354037c676bbc0fcad5dfdacf6aa7c8dfb4b3c8773cc58ad32806e4",
+        "fingerprints_sha256": "8603aa76b7628d00b7c822a7b5864b3b481243519e42c6ec50d6edbb658ce39d",
+        "old_packets": 1,
+        "fixed_packets": 1
+      },
+      "timings": [
+        {
+          "label": "first_local_pass",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 213.5048999999999,
+          "candidate_ms": 162.51809999999932
+        },
+        {
+          "label": "repeat_local_1",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 244.92059999999947,
+          "candidate_ms": 162.96709999999985
+        },
+        {
+          "label": "repeat_local_2",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 208.96869999999944,
+          "candidate_ms": 156.5560000000005
+        },
+        {
+          "label": "repeat_local_3",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 230.1198000000004,
+          "candidate_ms": 189.70709999999963
+        },
+        {
+          "label": "repeat_local_4",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 242.32700000000114,
+          "candidate_ms": 221.3816999999999
+        },
+        {
+          "label": "repeat_local_5",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 253.03939999999784,
+          "candidate_ms": 176.1208000000006
+        }
+      ]
+    },
+    {
+      "case": "GHSA-v222-6mr4-qj29",
+      "ecosystem": "RubyGems",
+      "revisions": {
+        "old": "7227a60978cfd4bf5fecc8705a4fc83f536c0d3b",
+        "fixed": "c7ea001a597c7033575342c51483dab7b87ae155"
+      },
+      "status": "paired",
+      "byte_evidence": {
+        "diff_sha256": "55c5f820514766d93849a085247e6900e05083017b1e6effd07259c3f50345d5",
+        "inventory_sha256": "bd5f80a4902d0e2d2c94f23b564d1745d772e8b5838ab03c79ff1c75d5e7c00c",
+        "fingerprints_sha256": "e5d4716ec3779d7a5348a4b6e577f2e8e9a2f1611ba8bbc1b92a96d75b57c3b2",
+        "old_packets": 1,
+        "fixed_packets": 1
+      },
+      "timings": [
+        {
+          "label": "first_local_pass",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 271.0092999999979,
+          "candidate_ms": 171.98739999999816
+        },
+        {
+          "label": "repeat_local_1",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 249.0023000000001,
+          "candidate_ms": 167.03100000000268
+        },
+        {
+          "label": "repeat_local_2",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 233.06950000000143,
+          "candidate_ms": 173.86799999999857
+        },
+        {
+          "label": "repeat_local_3",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 242.03559999999925,
+          "candidate_ms": 201.3081999999995
+        },
+        {
+          "label": "repeat_local_4",
+          "execution_order": [
+            0,
+            1
+          ],
+          "baseline_ms": 240.37509999999747,
+          "candidate_ms": 164.18770000000222
+        },
+        {
+          "label": "repeat_local_5",
+          "execution_order": [
+            1,
+            0
+          ],
+          "baseline_ms": 222.31360000000132,
+          "candidate_ms": 166.72270000000208
+        }
+      ]
+    }
+  ],
+  "scope": "Local Windows preparation with source revisions already present. Scans, OS cold-cache behavior, and network fetch are outside this measurement.",
+  "actual_byte_verification": "Each pair matched raw diff and inventory fingerprints, exact packets, and each materialized file's length and SHA-256.",
+  "artifact_sha256": "2107cdfda59b787a9c29b2cdbebee5fae56288db92e6fe53fb3a91c991bc68b8",
+  "bench_driver_sha256": "f28d6144a5705888b571f945e6b45a2b68a24eae5440dd35f909bb9f61d52a72",
+  "first_local_pass": {
+    "pairs": 7,
+    "sum_baseline_ms": 1672.141,
+    "sum_candidate_ms": 1213.282,
+    "reduction_pct": 27.44,
+    "median_paired_reduction_pct": 26.93
+  },
+  "paired_repeat_local": {
+    "pairs": 35,
+    "sum_baseline_ms": 7997.094,
+    "sum_candidate_ms": 6083.15,
+    "reduction_pct": 23.93,
+    "median_paired_reduction_pct": 24.0
+  },
+  "verifier_refactor": {
+    "source_sha256": "4c2c266f66559fa0a08a053255e90a4b59cc7e9189fcf8782fe5e5669c1b7793",
+    "reference_gate_commit": "a315163d2ecb14b7af874afd57a19728801b5a1d",
+    "accepted_identical_receipt_sha256": "463534110bf2ddfa5baf7a2c60557895d3566d9095168cfdbdf63fea85c40708",
+    "rejected_identical_receipt_sha256": "7c0135a54f50b1b65fe0957afb1570938f6bbe4159e759d44efa66add4f5d297",
+    "harness_and_verifier_checks": 75,
+    "local_strict_quality": {
+      "grade": "A",
+      "composite": 98.5,
+      "max_complexity": 10,
+      "attribution": 0.9986295111923252,
+      "report_sha256": "1a09dbdb66a3f3721f89ff47cb1b5765e41c5fa217fac8d23c4ac089764d3036"
+    }
+  }
+}

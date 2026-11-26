@@ -765,6 +765,24 @@ async function feederFixture(run, row = feederRow) {
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
+test('score rejects invalid options before reading a manifest or invoking the engine', () => {
+  const args = ['scripts/recall_harness.mjs', 'score', '--manifest', 'absent-fixture.json',
+    '--rules', 'absent-rules.yml', '--out', 'unused-score.json'];
+  for (const [extra, diagnostic] of [
+    [['--workers', '2'], /Unknown score option --workers; use --jobs/],
+    [['--jobs', ''], /Expected a value for --jobs/],
+    [['--jobs', '2', '--jobs', '1'], /Expected a value for --jobs/],
+    [['--jobs', '0'], /--jobs must be one positive integer/],
+    [['--profile'], /Expected a value for --profile/],
+    [['stray'], /Unexpected positional arguments/],
+  ]) {
+    const run = spawnSync(process.execPath, [...args, ...extra], { encoding: 'utf8' });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, diagnostic);
+    assert.doesNotMatch(run.stderr, /ENOENT/);
+  }
+});
+
 test('score and evaluation carry exact bytes and fixed-side diagnostics', () => feederFixture(async fixture => {
   const { root, workdir, manifest, profile, baseline, candidate, old, diff, opts } = fixture;
   const before = await scoreManifest(manifest, baseline, opts);
@@ -787,10 +805,14 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   const scoreOutput = join(root, 'score.json');
   const scoreArgs = ['scripts/recall_harness.mjs', 'score', '--manifest', manifest,
     '--rules', baseline, '--workdir', workdir, '--opengrep', process.execPath, '--jobs', '1'];
-  const score = spawnSync(process.execPath, [...scoreArgs, '--profile', profile, '--out', scoreOutput], { encoding: 'utf8' });
+  const score = spawnSync(process.execPath, [...scoreArgs, '--profile', profile, '--out', scoreOutput,
+    '--extra-arg', '--timeout=15', '--extra-arg', '--jobs=1'], { encoding: 'utf8' });
   assert.equal(score.status, 0, score.stderr);
   const savedScore = JSON.parse(readFileSync(scoreOutput, 'utf8'));
   assert.deepEqual(savedScore.engine, expectedEngine);
+  assert.equal(savedScore.case_workers, 1);
+  assert.deepEqual(savedScore.engine_args, ['--timeout=15', '--jobs=1']);
+  assert.ok(savedScore.argv.includes('--timeout=15') && savedScore.argv.includes('--jobs=1'));
   assert.deepEqual(savedScore.cases[0].source_packets, before.cases[0].source_packets);
   const invalidProfile = join(root, 'invalid-engine-profile.json');
   const rejectedOutput = join(root, 'rejected-score.json');
@@ -1130,6 +1152,18 @@ test('evaluation refuses a manifest changed during the paired scan', () => feede
   { encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Evaluation manifest bytes changed during scoring/);
+  assert.equal(existsSync(output), false);
+}));
+
+test('standalone score refuses to publish after manifest drift', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline } = fixture;
+  const output = join(root, 'drifted-score.json');
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# manifest-drift\n');
+  const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'score',
+    '--manifest', manifest, '--rules', baseline, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--out', output], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Score manifest bytes changed during scoring/);
   assert.equal(existsSync(output), false);
 }));
 
@@ -1885,6 +1919,10 @@ test('a resumed score reuses only exactly matching completed cases', () => feede
   assert.deepEqual(resumed.summary, fresh.summary);
   assert.deepEqual(resumed.cases.map(row => [row.ghsa, row.outcome, row.hunk_hit]),
     fresh.cases.map(row => [row.ghsa, row.outcome, row.hunk_hit]));
+  const revisedWorkers = await scoreManifest(manifest, baseline, { ...resumable, jobs: 2 });
+  assert.equal(revisedWorkers.case_workers, 2);
+  assert.deepEqual(revisedWorkers.resumed_cases, []);
+  assert.deepEqual(revisedWorkers.summary, fresh.summary);
   // Any change to the ruleset bytes misses the checkpoint.
   const revised = join(root, 'revised.yml');
   writeFileSync(revised, readFileSync(baseline, 'utf8') + '# clean-miss\n');
