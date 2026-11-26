@@ -128,3 +128,41 @@ func unboundRows(w http.ResponseWriter, r *http.Request) {
 	// ok: go.request-sql-injection
 	db.Raw("SELECT * FROM t ORDER BY " + form.Order)
 }
+
+type gitRepo struct {
+	URL       string
+	Directory string
+}
+
+func (g *gitRepo) git(args ...string) error {
+	return exec.Command("git", args...).Run()
+}
+
+func (g *gitRepo) fetchAndReset(rev string) error {
+	// ruleid: go.parameter-shell-command
+	if err := g.git("-C", g.Directory, "fetch", "origin", rev); err != nil {
+		return err
+	}
+	// ok: go.parameter-shell-command
+	return g.git("-C", g.Directory, "reset", "--hard", "--", rev)
+}
+
+func (g *gitRepo) cloneBranch(branch string) error {
+	// ok: go.parameter-shell-command
+	return g.git("clone", "--depth=1", "--branch", branch, "--", g.URL, g.Directory)
+}
+
+func archiveRef(ref string) error {
+	// ruleid: go.parameter-shell-command
+	return exec.Command("git", "archive", "--format=tar", ref).Run()
+}
+
+func logFile(path string) error {
+	// ok: go.parameter-shell-command
+	return exec.Command("git", "log", "--follow", "--", path).Run()
+}
+
+func statusIn(dir string) error {
+	// ok: go.parameter-shell-command
+	return exec.Command("git", "-C", dir, "status").Run()
+}

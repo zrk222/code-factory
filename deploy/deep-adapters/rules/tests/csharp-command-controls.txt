@@ -1,0 +1,38 @@
+class ShellLauncherControls {
+    public System.Diagnostics.Process Run(string[] urls) {
+        var startInfo = new ProcessStartInfo();
+        startInfo.FileName = "cmd.exe";
+        string runCommand = $"\"yt-dlp\" {string.Join(" ", urls)}";
+        // ruleid: csharp.request-command-injection
+        startInfo.Arguments = $"/C chcp 65001 >nul 2>&1 && {runCommand}";
+        return Process.Start(startInfo);
+    }
+
+    public System.Diagnostics.Process RunDirect(string target) {
+        // ruleid: csharp.request-command-injection
+        return Process.Start("cmd.exe", $"/c ping {target}");
+    }
+
+    public ProcessStartInfo Build(string target) {
+        // ruleid: csharp.request-command-injection
+        return new ProcessStartInfo("cmd", "/C ping " + target);
+    }
+
+    public System.Diagnostics.Process RunFixed() {
+        // ok: csharp.request-command-injection
+        return Process.Start("cmd.exe", "/c echo fixed");
+    }
+
+    public System.Diagnostics.Process RunEscapedBraces() {
+        // ok: csharp.request-command-injection
+        return Process.Start("cmd.exe", $"/c echo {{literal}}");
+    }
+
+    public System.Diagnostics.Process RunTool(string target) {
+        var info = new ProcessStartInfo();
+        info.FileName = "ping.exe";
+        // ok: csharp.request-command-injection
+        info.Arguments = $"/c {target}";
+        return Process.Start(info);
+    }
+}

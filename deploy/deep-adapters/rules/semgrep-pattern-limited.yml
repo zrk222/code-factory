@@ -1491,13 +1491,15 @@ rules:
     languages: [csharp]
     mode: taint
     pattern-sources:
-      - patterns:
+      - label: REQ
+        patterns:
           - pattern-inside: $RET $F(..., Microsoft.AspNetCore.Http.HttpRequest $REQ, ...) { ... }
           - pattern-either:
               - pattern: $REQ.Query[...]
               - pattern: $REQ.Form[...]
         exact: true
-      - patterns:
+      - label: REQ
+        patterns:
           - pattern-inside: |
               class $C : $BASE { ... }
           - metavariable-regex:
@@ -1510,14 +1512,65 @@ rules:
               - pattern: Request.Query[...]
               - pattern: Request[...]
         exact: true
+      # cmd.exe /C (or /K) command text with a non-literal interpolation or
+      # concatenation: cmd parses the whole text, so the value can add commands.
+      - label: INTERP
+        patterns:
+          # Literal gate for the prefilter: only files that name cmd.exe are parsed.
+          - pattern-inside:
+              patterns:
+                - pattern-regex: '(?s)\A(?=.*"(?i:cmd(?:\.exe)?)").*'
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd.exe";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: Process.Start("cmd.exe", $ARGS)
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd", $ARGS)
+              - pattern: Process.Start("cmd", $ARGS)
+              - pattern: System.Diagnostics.Process.Start("cmd.exe", $ARGS)
+              - pattern: System.Diagnostics.Process.Start("cmd", $ARGS)
+          - metavariable-regex: {metavariable: $ARGS, regex: '^(?:\$@?"\s*/[cCkK]\b.*(?<!\{)\{(?!\{)|"\s*/[cCkK]\b[^"]*"\s*\+)'}
+          - focus-metavariable: $ARGS
     pattern-sinks:
-      - patterns:
+      - requires: REQ or INTERP
+        patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd.exe";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: Process.Start("cmd.exe", $ARGS)
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd", $ARGS)
+              - pattern: Process.Start("cmd", $ARGS)
+          - focus-metavariable: $ARGS
+      - requires: REQ or INTERP
+        patterns:
           - pattern: System.Diagnostics.Process.Start($SHELL, $ARGS)
           - metavariable-regex:
               metavariable: $SHELL
               regex: ^"(/bin/sh|/bin/bash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)"$
           - focus-metavariable: $ARGS
-      - patterns:
+      - requires: REQ
+        patterns:
           - pattern: System.Diagnostics.Process.Start($VALUE)
           - focus-metavariable: $VALUE
     paths:
@@ -3755,7 +3808,7 @@ rules:
       cwe: ["CWE-78"]
       scope: Function parameters to shell-parsed exec/system/popen text in the same function.
   - id: go.parameter-shell-command
-    message: A function parameter is built into shell command text; pass it as a separate exec.Command argument instead of through sh -c.
+    message: A function parameter is built into shell command text, or passed to git as a positional argument that could be read as an option; pass it as a separate exec.Command argument instead of through sh -c, and put "--" before git positional arguments.
     severity: INFO
     languages: [go]
     mode: taint
@@ -3780,14 +3833,42 @@ rules:
           - metavariable-regex: {metavariable: $SHELL, regex: '^"(/bin/|/usr/bin/)?(sh|bash|zsh|cmd|cmd\.exe|powershell|pwsh)"$'}
           - metavariable-regex: {metavariable: $FLAG, regex: '^"(-c|/c|/C|-Command)"$'}
           - focus-metavariable: $CMD
+      # git argument injection: a positional argument after a git subcommand with no
+      # "--" end-of-options marker before it is parsed as an option when it starts
+      # with "-" (--upload-pack=..., -oProxyCommand=...). Values of options that take
+      # one (--branch x, -C dir) are not positional.
+      - patterns:
+          # Literal gate for the prefilter: only files that run git are parsed.
+          - pattern-inside:
+              patterns:
+                - pattern-regex: '(?s)\A(?=.*(?:"git"|\b(?i:git|gitcmd|rungit|execgit|gitexec|gitrun|gitoutput)\()).*'
+          - pattern-either:
+              - pattern: exec.Command("git", ..., $SUB, ..., $X, ...)
+              - pattern: exec.CommandContext($CTX, "git", ..., $SUB, ..., $X, ...)
+              - patterns:
+                  - pattern: $G.$GIT(..., $SUB, ..., $X, ...)
+                  - metavariable-regex: {metavariable: $GIT, regex: '^(?i:git|gitcmd|rungit|execgit|gitexec|gitrun|gitoutput)$'}
+          - metavariable-regex: {metavariable: $SUB, regex: '^"(?:clone|fetch|pull|push|ls-remote|checkout|switch|reset|archive|log|show|diff|rev-parse|rev-list|cat-file|blame|branch|tag|merge|rebase|cherry-pick|submodule|worktree|grep)"$'}
+          - metavariable-regex: {metavariable: $X, regex: '^(?!["`])'}
+          - pattern-not: exec.Command(..., "--", ..., $X, ...)
+          - pattern-not: exec.CommandContext(..., "--", ..., $X, ...)
+          - pattern-not: $G.$GIT(..., "--", ..., $X, ...)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: exec.Command(..., $OPT, $X, ...)
+                    - pattern: exec.CommandContext(..., $OPT, $X, ...)
+                    - pattern: $G.$GIT(..., $OPT, $X, ...)
+                - metavariable-regex: {metavariable: $OPT, regex: '^"(?:-C|-c|-b|-B|-o|-m|-F|--branch|--depth|--git-dir|--work-tree|--origin|--reference|--template|--separate-git-dir|--message|--file|--config)"$'}
+          - focus-metavariable: $X
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
       confidence: LOW
-      cwe: ["CWE-78"]
-      scope: Function parameters to the text of an sh -c style exec.Command in the same function.
+      cwe: ["CWE-78", "CWE-88"]
+      scope: Function parameters to the text of an sh -c style exec.Command, or to git positional arguments without "--", in the same function.
   - id: ruby.parameter-shell-command
     message: A method parameter reaches a shell command or an API that can start a process. Use separate arguments or an explicit file API.
     severity: INFO
