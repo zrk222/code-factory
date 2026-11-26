@@ -3518,7 +3518,7 @@ rules:
           - pattern-inside: |
               def $F(..., $P, ...):
                 ...
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|cmd|cmds|command|commands|cmdline|cmd_line|shell_cmd|script|argv|args)$)\w+$'}
     pattern-sanitizers:
       - pattern: shlex.quote(...)
@@ -3712,7 +3712,7 @@ rules:
     pattern-sources:
       - patterns:
           - pattern-inside: function $F(..., $P, ...) { ... }
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
     pattern-sanitizers:
       - pattern: escapeshellarg(...)
@@ -3756,12 +3756,8 @@ rules:
     mode: taint
     pattern-sources:
       - patterns:
-          - pattern-either:
-              - pattern-inside: func $F(..., $P $T, ...) { ... }
-              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
-          - pattern: $P
+          - pattern-inside: func $F(..., $P $T, ...) { ... }
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv|ctx)$)\w+$'}
         label: PARAMETER
       - patterns:
@@ -3824,7 +3820,7 @@ rules:
                   def self.$F(..., $P, ...)
                     ...
                   end
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
         label: METHOD_PARAMETER
       - patterns:
@@ -3913,7 +3909,7 @@ rules:
           - pattern-inside: |
               def $F(..., $P, ...):
                 ...
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|raw_sql|apps|schema_editor)$)\w+$'}
     pattern-sanitizers:
       - pattern: int(...)
@@ -4090,11 +4086,7 @@ rules:
     mode: taint
     pattern-sources:
       - patterns:
-          - pattern-either:
-              - pattern-inside: func $F(..., $P $T, ...) { ... }
-              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
+          - pattern-inside: func $F(..., $P $T, ...) { ... }
           - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
     pattern-sanitizers:
@@ -4132,11 +4124,7 @@ rules:
           - focus-metavariable: $Q
       # The same calls on a parameter declared as a database handle, under any name.
       - patterns:
-          - pattern-either:
-              - pattern-inside: func $F(..., $DB *$TYPE, ...) { ... }
-              - pattern-inside: func $F(..., $DB *$TYPE, ...) $R { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) $R { ... }
+          - pattern-inside: func $F(..., $DB *$TYPE, ...) { ... }
           - metavariable-regex: {metavariable: $TYPE, regex: '^(sql\.(DB|Tx|Conn)|sqlx\.(DB|Tx)|gorm\.DB|pgxpool\.Pool|pgx\.Conn)$'}
           - pattern-either:
               - pattern: $DB.Query($Q, ...)
@@ -4303,7 +4291,7 @@ rules:
           - pattern-either:
               - pattern-inside: $RET $M(..., $T $P, ...) { ... }
               - pattern-inside: $M(..., $T $P, ...) { ... }
-          - pattern: $P
+          - focus-metavariable: $P
     pattern-sanitizers:
       - pattern: Integer.parseInt(...)
       - pattern: Long.parseLong(...)
@@ -4571,11 +4559,7 @@ rules:
     severity: INFO
     languages: [go]
     patterns:
-      - pattern-either:
-          - pattern-inside: func $F(..., $P string, ...) { ... }
-          - pattern-inside: func $F(..., $P string, ...) $R { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) $R { ... }
+      - pattern-inside: func $F(..., $P string, ...) { ... }
       - pattern-either:
           - pattern: filepath.Join($BASE, ..., $P, ...)
           - pattern: path.Join($BASE, ..., $P, ...)
@@ -5121,9 +5105,6 @@ rules:
               }
           - pattern-either:
               - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
-              - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
               - pattern-inside: func ($CS tls.ConnectionState) error { ... }
       # Unconditional insecure gRPC dial options.
       - patterns:
