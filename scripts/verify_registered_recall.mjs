@@ -118,9 +118,7 @@ function compareCases(reference, candidate, summary, failures) {
   return { lost, gained: gained.sort(), new_unresolved: unresolved };
 }
 
-// CLI callers authenticate the immutable reference bytes before using this comparison.
-export function verifyRegisteredRecall(reference, candidate, candidateRulesSha256) {
-  if (!validReference(reference)) return { decision: 'REJECT', failures: [{ code: 'REFERENCE_METADATA_MISMATCH' }] };
+function candidateValidationFailures(candidate, candidateRulesSha256, cases) {
   const failures = [];
   if (candidate?.schema !== 'factory.recall-result.v1' || candidate.scope !== 'ecosystem'
     || !matchingMetadata(candidate, candidate.engine?.executable_sha256)) {
@@ -132,8 +130,22 @@ export function verifyRegisteredRecall(reference, candidate, candidateRulesSha25
   if (!Array.isArray(candidate?.resumed_cases) || candidate.resumed_cases.length !== 0) {
     failures.push({ code: 'CANDIDATE_NOT_FRESH' });
   }
-  const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
   if (cases.length !== registeredCases) failures.push({ code: 'CANDIDATE_CASE_COUNT_MISMATCH' });
+  return failures;
+}
+
+function reportedSummaryMatches(reported, summary) {
+  return reported?.cases === registeredCases && reported?.hunk_hits === summary.candidate_hunk_hits
+    && reported?.scored === summary.candidate_outcomes.hit + summary.candidate_outcomes.miss
+    && reported?.fix_side_residual_alerts === summary.candidate_fixed_side_residual_alerts
+    && caseDigest([reported?.outcomes ?? null]) === caseDigest([summary.candidate_outcomes]);
+}
+
+// CLI callers authenticate the immutable reference bytes before using this comparison.
+export function verifyRegisteredRecall(reference, candidate, candidateRulesSha256) {
+  if (!validReference(reference)) return { decision: 'REJECT', failures: [{ code: 'REFERENCE_METADATA_MISMATCH' }] };
+  const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
+  const failures = candidateValidationFailures(candidate, candidateRulesSha256, cases);
   const summary = {
     registered_cases: registeredCases, verified_bindings: 0, reference_hunk_hits: referenceHits,
     retained_hunk_hits: 0, candidate_outcomes: outcomes(),
@@ -142,11 +154,7 @@ export function verifyRegisteredRecall(reference, candidate, candidateRulesSha25
   };
   const changes = compareCases(reference.cases, cases, summary, failures);
   summary.candidate_hunk_hits = summary.candidate_outcomes.hit;
-  const reported = candidate?.summary;
-  if (reported?.cases !== registeredCases || reported?.hunk_hits !== summary.candidate_hunk_hits
-    || reported?.scored !== summary.candidate_outcomes.hit + summary.candidate_outcomes.miss
-    || reported?.fix_side_residual_alerts !== summary.candidate_fixed_side_residual_alerts
-    || caseDigest([reported?.outcomes ?? null]) !== caseDigest([summary.candidate_outcomes])) {
+  if (!reportedSummaryMatches(candidate?.summary, summary)) {
     failures.push({ code: 'CANDIDATE_SUMMARY_MISMATCH' });
   }
   if (summary.candidate_fixed_side_residual_alerts > summary.reference_fixed_side_residual_alerts) {
