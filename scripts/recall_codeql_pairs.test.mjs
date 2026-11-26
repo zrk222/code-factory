@@ -31,16 +31,16 @@ function stagedPair(t) {
     manifest_sha256: manifest.sha256, manifest_cases_sha256: caseDigest([row]),
     candidate: { registered: 1, hunk_hits: 0 }, cases: [{ advisory: row.ghsa, after: 'miss',
       input_sha256: sha256(JSON.stringify(sortKeys(binding))) }] });
-  const id = 'test/fixture';
-  const query = write('query.ql', '/**\n * @id test/fixture\n * @tags external/cwe/cwe-089\n */\n');
+  const id = 'test/fixture.scope.detail';
+  const query = write('query.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
   const zip = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c',
     'import json, sys, zipfile\nfor side, text in json.load(sys.stdin).items():\n with zipfile.ZipFile(side + ".zip", "w") as archive: archive.writestr("src/sample.py", text)'],
   { cwd: root, input: JSON.stringify(source), encoding: 'utf8', windowsHide: true });
   assert.equal(zip.status, 0, zip.stderr ?? zip.error?.message);
-  const capture = (side, invocations = [{ executionSuccessful: true }]) => {
-    const results = side === 'old' ? [{ ruleId: id, locations: [
+  const capture = (side, invocations = [{ executionSuccessful: true }], located = true) => {
+    const results = side === 'old' ? [{ ruleId: id, locations: located ? [
       { physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } },
-    ] }] : [];
+    ] : [] }] : [];
     const sarif = json(side + '.sarif', { version: '2.1.0', runs: [{ tool: { driver: { name: 'CodeQL',
       semanticVersion: '2.27.1', rules: [{ id, properties: { tags: ['external/cwe/cwe-089'] } }] } }, results, invocations }] });
     const observation = json(side + '.json', { case: row.ghsa, side, query: id, revision: revisions[side],
@@ -62,6 +62,7 @@ test('paired CodeQL scoring requires both revisions and verifies actual source a
   assert.equal(receipt.strict_hits_on_reference_misses, 1);
   assert.equal(receipt.deleted_line_hits, 1);
   assert.equal(receipt.fixed_hunk_residuals, 0);
+  assert.deepEqual(receipt.cases[0].hunk_matches, [['test/fixture.scope.detail', 'sample.py', 1]]);
   const pair = value.cases[0];
   const withPair = changed => ({ ...value, cases: [{ ...pair, ...changed }] });
   assert.throws(() => run(withPair({ old: pair.fixed })), /Native case or revision differs/);
@@ -72,4 +73,5 @@ test('paired CodeQL scoring requires both revisions and verifies actual source a
   assert.throws(() => run(withPair({ old: capture('old', []) })), /Unqualified CodeQL report/);
   assert.throws(() => run(withPair({ old: capture('old', [{ executionSuccessful: true,
     toolExecutionNotifications: [{ level: 'error' }] }]) })), /Unqualified CodeQL report/);
+  assert.throws(() => run(withPair({ old: capture('old', undefined, false) })), /Native alert location is missing/);
 });

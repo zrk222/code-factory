@@ -88,7 +88,11 @@ function nativeCapture(root, capture, side, input, engineVersion, query) {
     && run.results.length === observed.reported_alerts, 'CodeQL query or alert count differs for ' + side);
   requireProof(JSON.stringify(query.families) === JSON.stringify(familiesFromTags(descriptors[0].properties?.tags ?? [])),
     'CodeQL family metadata differs for ' + side);
-  return { findings: sarifFindings(report, new Set(packets.map(p => p.path))),
+  const findings = sarifFindings(report, new Set(packets.map(p => p.path))).map(finding => ({ ...finding, rule: query.id }));
+  requireProof(findings.length === run.results.length
+    && findings.every(finding => finding.path && Number.isSafeInteger(finding.line) && finding.line > 0),
+    'Native alert location is missing for ' + side);
+  return { findings,
     archive: { archive: boundPath(root, capture.archive), sha256: capture.archive.sha256,
       prefix: capture.archive_prefix, packets, side: input.ghsa + '/' + side } };
 }
@@ -149,7 +153,10 @@ export function scoreCodeqlPairs(bundlePath) {
     const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings,
       rules: { [query.id]: query.families } });
     return { advisory: row.advisory, reference: before.after, query_id: row.query_id, hunk_hit: score.hunk_hit,
+      trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
+      hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
       deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
+      native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
       packets: { old: old.archive.packets.length, fixed: fixed.archive.packets.length } };
   });
   const verified = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c', archiveVerifier],
