@@ -280,6 +280,27 @@ test('gate rejects lost hits, more residuals and control growth', () => {
   assert.deepEqual([noisy.decision, noisy.control_increase], ['REJECT', 6]);
 });
 
+test('paired reports expose fixed-side span replacements even at equal counts', () => {
+  const packet = { path: 'sample.py', bytes: 14, sha256: 'a'.repeat(64) };
+  const finding = ['fixture.review', packet.path, 3];
+  const beforeSpan = [1, 0, 4], afterSpan = [6, 0, 9];
+  const record = { ghsa: 'A', status: 'scored', outcome: 'hit', hunk_hit: true,
+    source_packets: { old: [], fixed: [packet] },
+    file_coverage: { old: [], fixed: [{ ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' }] },
+    fix_side_residual: [finding, finding], fix_side_residual_spans: [beforeSpan, beforeSpan] };
+  const report = row => ({ cases: [row], summary: { fix_side_residual_alerts: 2, hunk_hits: 1 } });
+  const compare = row => gate({ dev: [{ before: report(record), after: report(row) }], controls: [] });
+  const verdict = compare({ ...record, fix_side_residual_spans: [beforeSpan, afterSpan] });
+  assert.equal(verdict.decision, 'ACCEPT');
+  assert.deepEqual(verdict.residual, [2, 2]);
+  const detail = { advisory: 'A', path: packet.path, rule: 'fixture.review', line: 3, source_sha256: packet.sha256, count: 1 };
+  assert.deepEqual(verdict.fixed_side_span_delta, { compared_cases: 1, unresolved_advisories: [],
+    added: [{ ...detail, span: afterSpan }], removed: [{ ...detail, span: beforeSpan }] });
+  assert.deepEqual(compare({ ...record, fix_side_residual_spans: undefined }).fixed_side_span_delta, {
+    compared_cases: 0, added: [], removed: [], unresolved_advisories: ['A'],
+  });
+});
+
 test('family transitions distinguish a lost family within a retained hit from incomplete coverage', () => {
   const cwes = ['CWE-22', 'CWE-89'];
   const source = { path: 'sample.py', submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' };

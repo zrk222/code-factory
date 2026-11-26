@@ -35,7 +35,7 @@ import { availableParallelism, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, completeFixedCoverage, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
 import { compileScannerPathPolicy, engineTargetIgnores, PARSER_LANGUAGE, readRuleMetadata } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
@@ -1275,6 +1275,40 @@ function measureFamilies(old, row, families, transitions) {
   }
 }
 
+function fixedSpanFindings(row) {
+  const findings = row.fix_side_residual, spans = row.fix_side_residual_spans;
+  const packets = row.source_packets?.fixed;
+  if (!Array.isArray(findings) || !completeFixedCoverage(row.file_coverage?.fixed, packets)) return null;
+  if (!findings.length) return [];
+  if (!hunkAdjudicationIdentity({ hunk_findings: findings, hunk_spans: spans }, true)) return null;
+  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
+  const bound = findings.map(([rule, path, line], index) => ({
+    rule, path, line, span: spans[index], source_sha256: hashes.get(path),
+  }));
+  return bound.every(finding => /^[a-f0-9]{64}$/.test(finding.source_sha256 ?? '')) ? bound : null;
+}
+
+function measureFixedSpanChange(old, row, ledger) {
+  const baseline = fixedSpanFindings(old), candidate = fixedSpanFindings(row);
+  if (!baseline || !candidate) {
+    ledger.unresolved_advisories.push(row.ghsa);
+    return;
+  }
+  ledger.compared_cases++;
+  const counts = new Map();
+  for (const [findings, direction] of [[baseline, -1], [candidate, 1]]) {
+    for (const finding of findings) {
+      const key = JSON.stringify(finding);
+      counts.set(key, (counts.get(key) ?? 0) + direction);
+    }
+  }
+  for (const [key, count] of counts) {
+    if (count) ledger[count > 0 ? 'added' : 'removed'].push({
+      advisory: row.ghsa, ...JSON.parse(key), count: Math.abs(count),
+    });
+  }
+}
+
 function measureCaseChange(old, row, pair, changes) {
   const { gained, newErrors, newCoverageGaps, failures, seenAdvisories } = changes;
   if (seenAdvisories.has(row.ghsa)) {
@@ -1292,6 +1326,7 @@ function measureCaseChange(old, row, pair, changes) {
     return;
   }
   measureFamilies(old, row, families, changes.familyTransitions);
+  measureFixedSpanChange(old, row, changes.fixedSpans);
   const previous = measuredOutcome(old), current = measuredOutcome(row);
   if (previous === 'hit' && current !== 'hit') recordLostHit(changes, pair, old, row);
   if (previous === 'miss' && current === 'hit') gained.push(row.ghsa);
@@ -1326,8 +1361,9 @@ function measureDevPair({ before, after }, changes) {
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1, lossPolicy = null }) {
   const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [], lostFpOnly = [], rawLost = [];
   const familyTransitions = {};
+  const fixedSpans = { compared_cases: 0, added: [], removed: [], unresolved_advisories: [] };
   const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost,
-    familyTransitions, seenAdvisories: new Set() };
+    familyTransitions, fixedSpans, seenAdvisories: new Set() };
   for (const pair of dev) measureDevPair(pair, changes);
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
@@ -1350,7 +1386,7 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
     ...(lossPolicy ? { lost_fp_only: lostFpOnly, raw_lost_baseline_hits: rawLost,
       adjudicated_loss_basis: lossPolicy.receipt } : {}),
     new_coverage_gaps: newCoverageGaps,
-    family_transitions: familyTransitions,
+    family_transitions: familyTransitions, fixed_side_span_delta: fixedSpans,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
     control_increase: controlIncrease, max_control_increase: maxControlIncrease };
 }

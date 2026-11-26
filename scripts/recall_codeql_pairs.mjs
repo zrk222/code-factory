@@ -10,7 +10,8 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { caseDigest, familiesFor, outcomeOf, parseHunks, reviewCapturePath, sarifFindings, scopeExtensions,
   scoreCase, sha256, validateRecallManifest } from './recall_harness.mjs';
-import { completeFixedCoverage, inputFingerprint } from './verify_registered_recall.mjs';
+import { completeFixedCoverage } from './recall_coverage.mjs';
+import { inputFingerprint } from './verify_registered_recall.mjs';
 
 const FORMAT = 'factory.recall-codeql-pairs.v1';
 const PLAN_BUNDLE = 'factory.recall-codeql-pairs.v2';

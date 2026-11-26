@@ -204,6 +204,17 @@ export function coverageGaps(files) {
   return coverageGapEntries(files).map(file => file.path);
 }
 
+export function completeFixedCoverage(files, packets) {
+  if (!Array.isArray(files) || !Array.isArray(packets)
+    || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
+  const byPath = new Map(files.map(file => [file.path, file]));
+  return byPath.size === files.length && packets.every(packet => {
+    const file = byPath.get(packet?.path);
+    return file?.submitted === true && file.state === 'reported_scanned'
+      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
+  });
+}
+
 export function summarizeCoverage(rows) {
   const counts = {};
   for (const row of rows) {

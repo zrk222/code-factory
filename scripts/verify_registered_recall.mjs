@@ -3,7 +3,7 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { coverageGaps } from './recall_coverage.mjs';
+import { completeFixedCoverage } from './recall_coverage.mjs';
 import { caseDigest, checkpointArtifactsIntact, outcomeOf, sha256, sortKeys } from './recall_harness.mjs';
 
 const referenceSha256 = '0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf';
@@ -51,17 +51,6 @@ function candidateOutcome(row) {
 export function inputFingerprint({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 }) {
   // The published receipt hashes the advisory and its source bindings as one object.
   return sha256(JSON.stringify(sortKeys({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 })));
-}
-
-export function completeFixedCoverage(files, packets) {
-  if (!Array.isArray(files) || !Array.isArray(packets)
-    || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
-  const byPath = new Map(files.map(file => [file.path, file]));
-  return byPath.size === files.length && packets.every(packet => {
-    const file = byPath.get(packet?.path);
-    return file?.submitted === true && file.state === 'reported_scanned'
-      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
-  });
 }
 
 function readCandidateCases(cases, failures) {
