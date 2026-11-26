@@ -981,34 +981,44 @@ rules:
       cwe: ["CWE-295"]
       scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
   - id: rust.reqwest-disabled-tls-verification
-    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    message: "TLS certificate verification is disabled or a hostname verification flag has inverted polarity."
     severity: INFO
     languages: [rust]
-    patterns:
-      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
-      - pattern-not-inside:
-          patterns:
-            - pattern-inside: |
-                if $OPTIN { ... }
-            - metavariable-regex:
-                metavariable: $OPTIN
-                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
-      - pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
-      # Report only clients whose traffic carries credentials, session or user identity.
-      - pattern-either:
-          - pattern-inside: |
-              fn $FUNCTION(...) { $...BODY }
-          - pattern-inside: |
-              fn $FUNCTION(...) -> $RESULT { $...BODY }
-          - pattern-inside: |
-              async fn $FUNCTION(...) { $...BODY }
-          - pattern-inside: |
-              async fn $FUNCTION(...) -> $RESULT { $...BODY }
-      - metavariable-pattern:
-          metavariable: $...BODY
-          language: generic
-          patterns:
-            - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\w*user_?id\b|\bidentity\b|\bsession\w*|\baccount_?id\b)
+    pattern-either:
+      - patterns:
+          # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $OPTIN { ... }
+                - metavariable-regex:
+                    metavariable: $OPTIN
+                    regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
+          - pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
+          # Report only clients whose traffic carries credentials, session or user identity.
+          - pattern-either:
+              - pattern-inside: |
+                  fn $FUNCTION(...) { $...BODY }
+              - pattern-inside: |
+                  fn $FUNCTION(...) -> $RESULT { $...BODY }
+              - pattern-inside: |
+                  async fn $FUNCTION(...) { $...BODY }
+              - pattern-inside: |
+                  async fn $FUNCTION(...) -> $RESULT { $...BODY }
+          - metavariable-pattern:
+              metavariable: $...BODY
+              language: generic
+              patterns:
+                - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\w*user_?id\b|\bidentity\b|\bsession\w*|\baccount_?id\b)
+      # BoringSSL verification setters take a positive verify flag.
+      - patterns:
+          - pattern-either:
+              - pattern: $CONFIG.set_verify_hostname($VERIFY)
+              - pattern: $CONFIG.verify_hostname($VERIFY)
+          - metavariable-regex:
+              metavariable: $VERIFY
+              regex: '^(?:\*\s*)?(?:[A-Za-z_]\w*\.)*(?:accept|allow)_invalid_hostnames$'
+          - focus-metavariable: $VERIFY
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1085,6 +1095,32 @@ rules:
       - pattern: "$F(..., ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE, ...)"
       - pattern: "{..., verify_mode: OpenSSL::SSL::VERIFY_NONE, ...}"
       - pattern: "$F(..., ssl: {..., verify: false, ...}, ...)"
+      - patterns:
+          - pattern-either:
+              - pattern: $OPTS[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+              - pattern: $OPTS["verify_ssl"] = OpenSSL::SSL::VERIFY_NONE
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: |
+                        if $OPTIN
+                          ...
+                          $ASSIGN
+                          ...
+                        end
+                    - pattern: |
+                        if $OPTIN
+                          ...
+                          $ASSIGN
+                          ...
+                        else
+                          ...
+                        end
+                - metavariable-regex:
+                    metavariable: $OPTIN
+                    regex: >-
+                      (?x)\A\s*(?:(?:\w+\.)*(?:insecure|skip_tls_verify|allow_invalid)\??|\w+\[\s*(?::|["'])(?:insecure|skip_tls_verify|allow_invalid)["']?\s*\])\s*\z
+                - focus-metavariable: $ASSIGN
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1399,7 +1435,7 @@ rules:
       cwe: ["CWE-78"]
       scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
   - id: csharp.request-sql-injection
-    message: Request data reaches a sql operand; review this local source-to-sink candidate.
+    message: A request value or library argument reaches raw SQL text; use binding or dialect quoting.
     severity: INFO
     languages: [csharp]
     mode: taint
@@ -1409,6 +1445,7 @@ rules:
           - pattern-either:
               - pattern: $REQ.Query[...]
               - pattern: $REQ.Form[...]
+        label: REQUEST_INPUT
         exact: true
       - patterns:
           - pattern-inside: |
@@ -1422,6 +1459,45 @@ rules:
               - pattern: Request.Params[...]
               - pattern: Request.Query[...]
               - pattern: Request[...]
+        label: REQUEST_INPUT
+        exact: true
+      - patterns:
+          - pattern-inside: |
+              public void $METHOD(..., $TYPE $INPUT, ...) {
+                ...
+              }
+          - pattern-inside: |
+              public void $METHOD(..., ICommandBuilder $BUILDER, ...) {
+                ...
+              }
+          - focus-metavariable: $INPUT
+        label: SQL_BUILDER_VALUE
+        exact: true
+      - patterns:
+          - pattern-inside: |
+              class $CLASS {
+                ...
+                public $CLASS(..., $TYPE $INPUT, ...) {
+                  ...
+                  $FIELD = $INPUT;
+                  ...
+                }
+                ...
+              }
+          - pattern-inside: |
+              public void $METHOD(..., ICommandBuilder $BUILDER, ...) {
+                ...
+              }
+          - pattern: $FIELD
+        label: SQL_BUILDER_VALUE
+        exact: true
+      - patterns:
+          - pattern-inside: |
+              string ObjectToSQLString(object $VALUE, Dialect.Dialect $DIALECT) {
+                ...
+              }
+          - pattern: "\"'\" + (string)$VALUE + \"'\""
+        label: SQL_LITERAL_VALUE
         exact: true
     pattern-sinks:
       - patterns:
@@ -1435,6 +1511,29 @@ rules:
               - pattern: $DB.Database.ExecuteSqlRaw($VALUE, ...)
               - pattern: $SET.FromSqlRaw($VALUE, ...)
           - focus-metavariable: $VALUE
+        requires: REQUEST_INPUT
+      - patterns:
+          - pattern: |
+              $BUILDER.Append($PREFIX);
+              $BUILDER.Append($VALUE);
+              $BUILDER.Append("'");
+          - pattern-inside: |
+              public void $METHOD(..., ICommandBuilder $BUILDER, ...) {
+                ...
+              }
+          - metavariable-regex:
+              metavariable: $PREFIX
+              regex: '(?is)^.*\b(select|insert|update|delete)\b.*'
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: >-
+                (?s)\A(?!\s*\w+\s*\.\s*Replace\(\s*"'"\s*,\s*"''"\s*\)\s*\z).+
+          - focus-metavariable: $VALUE
+        requires: SQL_BUILDER_VALUE or REQUEST_INPUT
+      - patterns:
+          - pattern: return $VALUE;
+          - focus-metavariable: $VALUE
+        requires: SQL_LITERAL_VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1442,7 +1541,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-89"]
-      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+      scope: Typed HTTP taint and local SQL builder or dialect-literal evidence; no interprocedural guarantee.
   - id: ruby.request-command-injection
     message: Request data reaches a command operand; review this local source-to-sink candidate.
     severity: INFO
@@ -1694,6 +1793,15 @@ rules:
               - pattern-not: $T.extract(..., filter=$F, ...)
               - pattern-not: $T.extractall(..., members=$M, ...)
       - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $T.extractall(...)
+                  - pattern: $T.extract(...)
+              - metavariable-pattern:
+                  metavariable: $T
+                  pattern-either:
+                    - pattern: tarfile.open(...)
+                    - pattern: tarfile.TarFile(...)
           - pattern-inside: |
               $T = tarfile.open(...)
               ...
@@ -1739,7 +1847,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-22"]
-      scope: tarfile.open/TarFile handles, assigned or in a with-block, extracted without filter= or explicit members.
+      scope: tarfile.open/TarFile handles, direct, assigned or in a with-block, extracted without filter= or explicit members.
   - id: go.archive-path-traversal
     message: An archive entry name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
     severity: WARNING
@@ -3554,16 +3662,21 @@ rules:
       cwe: ["CWE-78"]
       scope: Function parameters to the text of an sh -c style exec.Command in the same function.
   - id: ruby.parameter-shell-command
-    message: A method parameter is interpolated into a shell command string; pass separate arguments to system or Open3 instead.
+    message: A method parameter reaches a shell command or an API that can start a process. Use separate arguments or an explicit file API.
     severity: INFO
     languages: [ruby]
     mode: taint
     pattern-sources:
       - patterns:
-          - pattern-inside: |
-              def $F(..., $P, ...)
-                ...
-              end
+          - pattern-either:
+              - pattern-inside: |
+                  def $F(..., $P, ...)
+                    ...
+                  end
+              - pattern-inside: |
+                  def self.$F(..., $P, ...)
+                    ...
+                  end
           - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
     pattern-sanitizers:
@@ -3587,6 +3700,13 @@ rules:
               patterns:
                 - pattern-not: '[...]'
           - focus-metavariable: $CMD
+      - patterns:
+          - pattern: Kernel.open($PATH, ...)
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: >-
+                (?s)\A(?!\s*(?:::)?File\s*\.\s*join\s*\(\s*(?:'[^|'\\][^'\\]*'|"[^|"\\#][^"\\#]*")\s*,).+
+          - focus-metavariable: $PATH
       - pattern: '`...#{$X}...`'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]

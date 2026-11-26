@@ -1,0 +1,63 @@
+class SqlBuilderControls {
+    public void AppendInput(ICommandBuilder builder, string name) {
+        var alias = name;
+        builder.Append("SELECT * FROM t WHERE name='");
+        // ruleid: csharp.request-sql-injection
+        builder.Append(alias);
+        builder.Append("'");
+    }
+
+    public void AppendFixed(ICommandBuilder builder, string unrelated) {
+        var fixedValue = "Test";
+        builder.Append("SELECT * FROM t WHERE name='");
+        // ok: csharp.request-sql-injection
+        builder.Append(fixedValue);
+        builder.Append("'");
+    }
+
+    public void AppendFormatted(ICommandBuilder builder, string name) {
+        builder.Append("SELECT * FROM t WHERE name='");
+        // ruleid: csharp.request-sql-injection
+        builder.Append($"item {name}");
+        builder.Append("'");
+    }
+
+    public void AppendEscaped(ICommandBuilder builder, string name) {
+        builder.Append("SELECT * FROM t WHERE name='");
+        // ok: csharp.request-sql-injection
+        builder.Append(name.Replace("'", "''"));
+        builder.Append("'");
+    }
+
+    public void AppendRequest(ICommandBuilder builder, Microsoft.AspNetCore.Http.HttpRequest request) {
+        var local = request.Query["name"];
+        builder.Append("SELECT * FROM t WHERE name='");
+        // ruleid: csharp.request-sql-injection
+        builder.Append(local);
+        builder.Append("'");
+    }
+}
+
+class StoredBuilderControls {
+    private readonly string _selected;
+    private readonly string _fixedValue;
+
+    public StoredBuilderControls(string selected) {
+        _selected = selected;
+        _fixedValue = "Test";
+    }
+
+    public void AppendStored(ICommandBuilder builder) {
+        builder.Append("SELECT * FROM t WHERE name='");
+        // ruleid: csharp.request-sql-injection
+        builder.Append(_selected);
+        builder.Append("'");
+    }
+
+    public void AppendFixed(ICommandBuilder builder) {
+        builder.Append("SELECT * FROM t WHERE name='");
+        // ok: csharp.request-sql-injection
+        builder.Append(_fixedValue);
+        builder.Append("'");
+    }
+}
