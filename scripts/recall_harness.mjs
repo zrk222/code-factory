@@ -925,10 +925,14 @@ export function checkpointArtifactsIntact(workdir, row, manifestRow, scope = 'ec
   try {
     const root = realpathSync(workdir);
     if (row.revisions?.fixed !== manifestRow.fix || !/^[0-9a-f]{40}$/.test(row.revisions?.old ?? '')) return false;
-    const prepared = preparedCaseDirectory(root, caseDigest([manifestRow]), scope);
+    const key = caseDigest([manifestRow]);
+    const prepared = preparedCaseDirectory(root, key, scope);
+    const readPrepared = name => readFileSync(reviewCapturePath(root, relative(root, join(prepared, name))));
+    const record = JSON.parse(utf8(readPrepared('case.json')));
+    if (record.status !== 'ready' || record.case_sha256 !== key
+      || caseInputFingerprint(record) !== caseInputFingerprint(row)) return false;
     const inputs = [['diff.patch', row.diff_sha256], ['changes.z', row.changed_files_sha256]];
-    if (!inputs.every(([name, digest]) =>
-      sha256(readFileSync(reviewCapturePath(root, relative(root, join(prepared, name))))) === digest)) return false;
+    if (!inputs.every(([name, digest]) => sha256(readPrepared(name)) === digest)) return false;
     for (const side of ['old', 'fixed']) {
       const packets = row.source_packets?.[side] ?? [];
       const checkedSources = new Set();
@@ -987,15 +991,25 @@ async function scorePreparedManifest(manifest, opts, context) {
   const jobs = Number(opts.jobs ?? 6);
   const rows = [];
   if (checkpoints) {
-    // Publish only after the group still matches the inputs used in its keys.
-    const groupSize = Math.max(16, jobs);
-    for (let start = 0; start < manifest.cases.length; start += groupSize) {
-      const staged = [];
-      const group = manifest.cases.slice(start, start + groupSize);
-      rows.push(...await pool(group, jobs, row => checkpointed(row, staged)));
-      await verifyPins('case checkpoint');
-      for (const { inputs, result } of staged) writeCheckpoint(checkpoints, inputs, result);
-    }
+    const staged = [];
+    let publishing = Promise.resolve();
+    const publish = () => {
+      const batch = staged.splice(0);
+      publishing = publishing.then(async () => {
+        await verifyPins('case checkpoint');
+        for (const { inputs, result } of batch) writeCheckpoint(checkpoints, inputs, result);
+      });
+      return publishing;
+    };
+    const batchSize = Math.max(16, jobs);
+    // An unfinished case does not hold workers at a checkpoint boundary.
+    rows.push(...await pool(manifest.cases, jobs, async row => {
+      const result = await checkpointed(row, staged);
+      if (staged.length >= batchSize) await publish();
+      return result;
+    }));
+    if (staged.length) await publish();
+    else await verifyPins('case scoring');
   } else {
     rows.push(...await pool(manifest.cases, jobs, row => one(row)));
   }

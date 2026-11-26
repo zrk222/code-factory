@@ -702,6 +702,16 @@ async function feederFixture(run, row = feederRow) {
       "  writeFileSync(driftMarker, '');",
       "  appendFileSync(rules, '# drifted during scan\\n');",
       "}",
+      "const advisory = basename(dirname(report));",
+      "if (old && ruleText.includes('# continuous-workers')) {",
+      "  const marker = dirname(rules) + '/later-batch-started';",
+      "  if (advisory === 'GHSA-test-bulk-0016') writeFileSync(marker, '');",
+      "  if (advisory === 'GHSA-test-bulk-0000') {",
+      "    const deadline = Date.now() + 10000;",
+      "    while (!existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));",
+      "    if (!existsSync(marker)) throw Error('An earlier case blocked the next checkpoint batch');",
+      "  }",
+      "}",
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
@@ -1909,7 +1919,7 @@ test('scored cases reach the checkpoint directory only under the verified execut
   assert.deepEqual(readdirSync(checkpoints), records);
 }));
 
-test('an interrupted scoring group preserves only earlier verified checkpoints', () => feederFixture(async fixture => {
+test('checkpoint batches keep workers active and preserve only verified results on interruption', () => feederFixture(async fixture => {
   const { root, workdir, manifest, baseline, opts } = fixture;
   const checkpoints = join(root, 'group-checkpoints');
   const casesRoot = join(workdir, 'cases-v4');
@@ -1935,6 +1945,15 @@ test('an interrupted scoring group preserves only earlier verified checkpoints',
   assert.deepEqual(resumed.resumed_cases, cases.slice(0, 16).map(row => row.ghsa));
   assert.equal(resumed.cases.filter(row => row.outcome === 'hit').length, cases.length);
   assert.equal(readdirSync(checkpoints).length, cases.length);
+
+  writeFileSync(baseline, rules.split('# group-drift')[0] + '# continuous-workers\n');
+  const fresh = await scoreManifest(manifest, baseline, { ...settings, jobs: 2 });
+  assert.equal(existsSync(join(root, 'later-batch-started')), true);
+  assert.deepEqual(fresh.cases.map(row => row.ghsa), cases.map(row => row.ghsa));
+  assert.equal(fresh.summary.hunk_hits, cases.length);
+  const warm = await scoreManifest(manifest, baseline, { ...settings, jobs: 2 });
+  assert.deepEqual(warm.resumed_cases, cases.map(row => row.ghsa));
+  assert.deepEqual(warm.summary, fresh.summary);
 }));
 
 test('incomplete cases and rows with missing artifacts are rescanned, never resumed', () => feederFixture(async fixture => {
@@ -1962,6 +1981,16 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   assert.equal(readdirSync(checkpointDir).length, 1);
   assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0], feederRow), true);
   const prepared = join(workdir, 'cases-v4', caseDigest([feederRow]));
+  const recordPath = join(prepared, 'case.json');
+  const recordBytes = readFileSync(recordPath);
+  const changedRecord = JSON.parse(recordBytes);
+  changedRecord.revisions.old = '4'.repeat(40);
+  writeFileSync(recordPath, JSON.stringify(changedRecord));
+  assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0], feederRow), false);
+  const rebound = await scoreManifest(manifest, baseline, resumable);
+  assert.deepEqual(rebound.resumed_cases, []);
+  assert.equal(rebound.cases[0].revisions.old, changedRecord.revisions.old);
+  writeFileSync(recordPath, recordBytes);
   for (const name of ['diff.patch', 'changes.z']) {
     const path = join(prepared, name);
     const original = readFileSync(path);
