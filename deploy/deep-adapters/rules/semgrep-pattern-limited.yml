@@ -3467,7 +3467,7 @@ rules:
       # reports (same receivers, same child_process bindings) is reported once, there.
       # Templates built elsewhere, or passed to any other receiver, stay reported here.
       - patterns:
-          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
           - pattern-not-inside:
               patterns:
                 - pattern-either:
@@ -4667,7 +4667,7 @@ rules:
                   patterns:
                     - pattern-not: $ESC(...)
                     - pattern-not: $O.$ESC(...)
-              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
+              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s(?!(?:start|colspan|rowspan|tabindex|maxlength|cols|rows|span)\s*=)[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
           # A plain local is reported unless it was assigned from an escaper.
           - patterns:
               - pattern: '`...${$X}...`'
@@ -4676,7 +4676,7 @@ rules:
                   patterns:
                     - pattern-not: $ESC(...)
                     - pattern-not: $O.$ESC(...)
-              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
+              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s(?!(?:start|colspan|rowspan|tabindex|maxlength|cols|rows|span)\s*=)[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
               - metavariable-comparison:
                   comparison: str($X) == str($VALUE)
               - pattern-not-inside: |
@@ -4742,7 +4742,7 @@ rules:
           # which are queries, not markup.
           - patterns:
               - pattern: $L + $X + $R
-              - pattern-regex: '(?:^|[^\w\[\-])[\w:-]*=(?:"''|\\"[''"]|\\''[''"])\s*\+\s*(?P<VALUE>[A-Za-z_$][\w$.]*(?:\[[^\]\n]{1,40}\])?)\s*\+\s*(?:''"|[''"]\\"|[''"]\\'')'
+              - pattern-regex: '(?:^|[^\w\[\-])(?!(?:start|colspan|rowspan|tabindex|maxlength|cols|rows|span)=)[\w:-]*=(?:"''|\\"[''"]|\\''[''"])\s*\+\s*(?P<VALUE>[A-Za-z_$][\w$.]*(?:\[[^\]\n]{1,40}\])?)\s*\+\s*(?:''"|[''"]\\"|[''"]\\'')'
               - metavariable-comparison:
                   comparison: str($X) == str($VALUE)
               # A local reassigned from an escaper or URL cleaner is no longer raw input.
