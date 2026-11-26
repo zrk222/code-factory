@@ -1,0 +1,877 @@
+{
+  "schema": "factory.recall-codeql-plan.v1",
+  "engine_version": "2.27.1",
+  "windows_bundle_sha256": "721209b52b74d0cf742c701eeb452a70f570f236c75dda6087bd4ad2a6f97202",
+  "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "reference_sha256": "0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf",
+  "scope": "All cases in registered ecosystems. Query IDs are selected from the pinned extended security suites by registered CWE-family metadata before scanning.",
+  "policies": [
+    {
+      "ecosystem": "npm",
+      "profile_path": "deploy/deep-adapters/profiles/codeql-javascript-full.json",
+      "profile_sha256": "bb29c3ae701d8ad5b1cdb4f6cedc3c1f7ba687c18e821ac3d610b23b0d9da64f",
+      "suite_sha256": "426749a033eb71b9a7732f03f1ccf406da049f9fd1f06c81daef852321bb81e7",
+      "queries": [
+        {
+          "id": "js/angular/disabling-sce",
+          "source": {
+            "path": "registered-query-sources/2cbcebba99bfc6fed2d1ad7fd0ff3cf60a79d1d1792ce09fa8fffdcddb39f9ef.ql",
+            "sha256": "2cbcebba99bfc6fed2d1ad7fd0ff3cf60a79d1d1792ce09fa8fffdcddb39f9ef"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/bad-code-sanitization",
+          "source": {
+            "path": "registered-query-sources/c7bf2de0563ece8269cdb6f0171ff5b90377f6ab182d3d26be834943263dfcff.ql",
+            "sha256": "c7bf2de0563ece8269cdb6f0171ff5b90377f6ab182d3d26be834943263dfcff"
+          },
+          "families": [
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "js/bad-tag-filter",
+          "source": {
+            "path": "registered-query-sources/57deaefd4c7c168ebd94ba94fa7d8fbfaeb8868558c31c56dc90a4dfc97d9b8f.ql",
+            "sha256": "57deaefd4c7c168ebd94ba94fa7d8fbfaeb8868558c31c56dc90a4dfc97d9b8f"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/client-side-unvalidated-url-redirection",
+          "source": {
+            "path": "registered-query-sources/d460a5f58765a1dd7c757181b808764f707f06c091fd45aa4acdf3a7cd9a823f.ql",
+            "sha256": "d460a5f58765a1dd7c757181b808764f707f06c091fd45aa4acdf3a7cd9a823f"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/code-injection",
+          "source": {
+            "path": "registered-query-sources/8ddfcc38e1d4c4d215b438844b9f362a1271f233051d76b2f3e3dafcf16c39cb.ql",
+            "sha256": "8ddfcc38e1d4c4d215b438844b9f362a1271f233051d76b2f3e3dafcf16c39cb"
+          },
+          "families": [
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "js/command-line-injection",
+          "source": {
+            "path": "registered-query-sources/bb85242cf730c85b04826ce914862872c0f83d58540750ae69b1f6a0951bd45c.ql",
+            "sha256": "bb85242cf730c85b04826ce914862872c0f83d58540750ae69b1f6a0951bd45c"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "js/disabling-certificate-validation",
+          "source": {
+            "path": "registered-query-sources/391ab8d3634919412ba2123e72aff48aedd0933648faefe1ea407b91d7108911.ql",
+            "sha256": "391ab8d3634919412ba2123e72aff48aedd0933648faefe1ea407b91d7108911"
+          },
+          "families": [
+            "tls"
+          ]
+        },
+        {
+          "id": "js/disabling-electron-websecurity",
+          "source": {
+            "path": "registered-query-sources/50a8d879b156cfdb20cd93cde395299d3e409ae716380afa47b7925276a5e4d6.ql",
+            "sha256": "50a8d879b156cfdb20cd93cde395299d3e409ae716380afa47b7925276a5e4d6"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/double-escaping",
+          "source": {
+            "path": "registered-query-sources/4df70fdbdd496099f5547f9bc04f445e82c02efd8d116426518588a83130f225.ql",
+            "sha256": "4df70fdbdd496099f5547f9bc04f445e82c02efd8d116426518588a83130f225"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/html-constructed-from-input",
+          "source": {
+            "path": "registered-query-sources/26c953a6d0c21e421189d0d1be9305cb8b97e96fdca2c864f35f2f450b542643.ql",
+            "sha256": "26c953a6d0c21e421189d0d1be9305cb8b97e96fdca2c864f35f2f450b542643"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/identity-replacement",
+          "source": {
+            "path": "registered-query-sources/a7f690fa7494814cfb4bf281677c8628187835d9789a0035bf23c0e8094aa0db.ql",
+            "sha256": "a7f690fa7494814cfb4bf281677c8628187835d9789a0035bf23c0e8094aa0db"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/incomplete-html-attribute-sanitization",
+          "source": {
+            "path": "registered-query-sources/e6ec1605cce15c3e92f55c5e2e73425990b084b319877b10ba48aa5c526feeff.ql",
+            "sha256": "e6ec1605cce15c3e92f55c5e2e73425990b084b319877b10ba48aa5c526feeff"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/incomplete-multi-character-sanitization",
+          "source": {
+            "path": "registered-query-sources/d807a273c57950f3bbbe44ebce345f8f57ae6bb8cf3a0fada62dcc6832bcce54.ql",
+            "sha256": "d807a273c57950f3bbbe44ebce345f8f57ae6bb8cf3a0fada62dcc6832bcce54"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/incomplete-sanitization",
+          "source": {
+            "path": "registered-query-sources/38e248b447238648366ddd2c543e4842fbd7b7ae2efcdc0a95a0875534a5a693.ql",
+            "sha256": "38e248b447238648366ddd2c543e4842fbd7b7ae2efcdc0a95a0875534a5a693"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/indirect-command-line-injection",
+          "source": {
+            "path": "registered-query-sources/71725c26fb185ffcd0e9a1b0795b55a3a0163aa933866f442c994ca7aa0e350c.ql",
+            "sha256": "71725c26fb185ffcd0e9a1b0795b55a3a0163aa933866f442c994ca7aa0e350c"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "js/path-injection",
+          "source": {
+            "path": "registered-query-sources/c6892a8f9b9dd4d0404f26407c4b58a6a5a8c2a5e7191106ccee4c46a3e03964.ql",
+            "sha256": "c6892a8f9b9dd4d0404f26407c4b58a6a5a8c2a5e7191106ccee4c46a3e03964"
+          },
+          "families": [
+            "path"
+          ]
+        },
+        {
+          "id": "js/prototype-polluting-assignment",
+          "source": {
+            "path": "registered-query-sources/2c581efa2d66f68c1640531d85518e274d3ce4bc1b83ae28a9824612779ab5d4.ql",
+            "sha256": "2c581efa2d66f68c1640531d85518e274d3ce4bc1b83ae28a9824612779ab5d4"
+          },
+          "families": [
+            "cmd",
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "js/prototype-pollution",
+          "source": {
+            "path": "registered-query-sources/ed4f8b93a20541c88af20c827b26bb94b7fa15e78e536f3ee1264c98cb023c15.ql",
+            "sha256": "ed4f8b93a20541c88af20c827b26bb94b7fa15e78e536f3ee1264c98cb023c15"
+          },
+          "families": [
+            "cmd",
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "js/prototype-pollution-utility",
+          "source": {
+            "path": "registered-query-sources/3a7030b4852363ccada43ec8b41bae44de84ad91454f89305d8f636f0d48a42d.ql",
+            "sha256": "3a7030b4852363ccada43ec8b41bae44de84ad91454f89305d8f636f0d48a42d"
+          },
+          "families": [
+            "cmd",
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "js/reflected-xss",
+          "source": {
+            "path": "registered-query-sources/9c4044e96f2af9a8bd8db123628d91d7895be8fe15b56a533c9943be3d440498.ql",
+            "sha256": "9c4044e96f2af9a8bd8db123628d91d7895be8fe15b56a533c9943be3d440498"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/second-order-command-line-injection",
+          "source": {
+            "path": "registered-query-sources/8eb2295761f3c0db49100df107c82b31a52cb6c20e479606704fe5d0a55d3dbe.ql",
+            "sha256": "8eb2295761f3c0db49100df107c82b31a52cb6c20e479606704fe5d0a55d3dbe"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "js/shell-command-constructed-from-input",
+          "source": {
+            "path": "registered-query-sources/77c3cfa9bcf11440035c6c469fc940f2c8bf418b62e60951a9423c0ff16499c4.ql",
+            "sha256": "77c3cfa9bcf11440035c6c469fc940f2c8bf418b62e60951a9423c0ff16499c4"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "js/shell-command-injection-from-environment",
+          "source": {
+            "path": "registered-query-sources/55531bfd2bf007f34b14699be511a9836bbec09376ebe0bc22ebcd2511c8513a.ql",
+            "sha256": "55531bfd2bf007f34b14699be511a9836bbec09376ebe0bc22ebcd2511c8513a"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "js/sql-injection",
+          "source": {
+            "path": "registered-query-sources/38c79ee799144a8c9fe4ca5c933d74dfdba98f1e5b898b36ea173af4fefbbd91.ql",
+            "sha256": "38c79ee799144a8c9fe4ca5c933d74dfdba98f1e5b898b36ea173af4fefbbd91"
+          },
+          "families": [
+            "sql"
+          ]
+        },
+        {
+          "id": "js/stored-xss",
+          "source": {
+            "path": "registered-query-sources/f58eaff8847ae3c175975a18d1dcafda8b279f845d931a33146b6f66cfae1572.ql",
+            "sha256": "f58eaff8847ae3c175975a18d1dcafda8b279f845d931a33146b6f66cfae1572"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/template-object-injection",
+          "source": {
+            "path": "registered-query-sources/ed0dce12ca4141a08178b67047b67a52b978dc46bdbb5f93234a5ea78220da6a.ql",
+            "sha256": "ed0dce12ca4141a08178b67047b67a52b978dc46bdbb5f93234a5ea78220da6a"
+          },
+          "families": [
+            "code",
+            "path"
+          ]
+        },
+        {
+          "id": "js/unnecessary-use-of-cat",
+          "source": {
+            "path": "registered-query-sources/a5c50f0e4912d338187d35ba67f03a1e2cc0d571b889dc3c51d2ee3799818a90.ql",
+            "sha256": "a5c50f0e4912d338187d35ba67f03a1e2cc0d571b889dc3c51d2ee3799818a90"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "js/unsafe-code-construction",
+          "source": {
+            "path": "registered-query-sources/8641342f2ce69c3318aaaf358abee7c3487114387553fb9ea48b47e16138fa7c.ql",
+            "sha256": "8641342f2ce69c3318aaaf358abee7c3487114387553fb9ea48b47e16138fa7c"
+          },
+          "families": [
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "js/unsafe-deserialization",
+          "source": {
+            "path": "registered-query-sources/420c1dbce886c45522722a4228a193fa4d65f26108d782e560e544d03c5f6c4d.ql",
+            "sha256": "420c1dbce886c45522722a4228a193fa4d65f26108d782e560e544d03c5f6c4d"
+          },
+          "families": [
+            "deser"
+          ]
+        },
+        {
+          "id": "js/unsafe-dynamic-method-access",
+          "source": {
+            "path": "registered-query-sources/87d90a6a2ee7b87155a2649e44c36635818d3fc897b299167c76195697cf9b3e.ql",
+            "sha256": "87d90a6a2ee7b87155a2649e44c36635818d3fc897b299167c76195697cf9b3e"
+          },
+          "families": [
+            "code"
+          ]
+        },
+        {
+          "id": "js/unsafe-html-expansion",
+          "source": {
+            "path": "registered-query-sources/c1024e79a852d7777ebd02d03985c6be0bdacc271057d802d0447f6c7f70c758.ql",
+            "sha256": "c1024e79a852d7777ebd02d03985c6be0bdacc271057d802d0447f6c7f70c758"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/unsafe-jquery-plugin",
+          "source": {
+            "path": "registered-query-sources/98356c79fb419f8bf01a6f59657813158d64c8184de2fbe60ddf1b2b232dc6ef.ql",
+            "sha256": "98356c79fb419f8bf01a6f59657813158d64c8184de2fbe60ddf1b2b232dc6ef"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/xss",
+          "source": {
+            "path": "registered-query-sources/bfbd13ad80c2740ad8ce1f7a8e73107477422ea3045f0dfe0dd19ef446ed31e9.ql",
+            "sha256": "bfbd13ad80c2740ad8ce1f7a8e73107477422ea3045f0dfe0dd19ef446ed31e9"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/xss-through-dom",
+          "source": {
+            "path": "registered-query-sources/60f222e257b88d798fd84ca45319adc2378336e74ddbc137f2aeb78b0a4ea50f.ql",
+            "sha256": "60f222e257b88d798fd84ca45319adc2378336e74ddbc137f2aeb78b0a4ea50f"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/xss-through-exception",
+          "source": {
+            "path": "registered-query-sources/c6db7547b03624fd3a5e00cdb306428496d126cc443699b9cae96f5bd4d641dd.ql",
+            "sha256": "c6db7547b03624fd3a5e00cdb306428496d126cc443699b9cae96f5bd4d641dd"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "js/zipslip",
+          "source": {
+            "path": "registered-query-sources/eb379ba7b0abad54444ca23576de62eac683db6252f922828f6c0197ae9a1ba3.ql",
+            "sha256": "eb379ba7b0abad54444ca23576de62eac683db6252f922828f6c0197ae9a1ba3"
+          },
+          "families": [
+            "path"
+          ]
+        }
+      ]
+    },
+    {
+      "ecosystem": "PyPI",
+      "profile_path": "deploy/deep-adapters/profiles/codeql-python-full.json",
+      "profile_sha256": "bdca9c9e2d96b5840cd32f7c2ddda74c0846f3bb027556e330778048f25c6df2",
+      "suite_sha256": "08adff19665a65e55f2c696e08262915884ff6a8a929b17257ec9b2d78aab846",
+      "queries": [
+        {
+          "id": "py/bad-tag-filter",
+          "source": {
+            "path": "registered-query-sources/92cd7184a4bbbf945b3b20084511410709e903f5dd042e71024df805f1ee0411.ql",
+            "sha256": "92cd7184a4bbbf945b3b20084511410709e903f5dd042e71024df805f1ee0411"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "py/code-injection",
+          "source": {
+            "path": "registered-query-sources/454599756d9c545c41ed8bf209694b1789ed3dd6529fb33bb48188c8c9c599f7.ql",
+            "sha256": "454599756d9c545c41ed8bf209694b1789ed3dd6529fb33bb48188c8c9c599f7"
+          },
+          "families": [
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "py/command-line-injection",
+          "source": {
+            "path": "registered-query-sources/aaa9684ea22778f9bd8e032dc825adb7cf48f01203174c6e0b014b9d9ba1922c.ql",
+            "sha256": "aaa9684ea22778f9bd8e032dc825adb7cf48f01203174c6e0b014b9d9ba1922c"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "py/http-response-splitting",
+          "source": {
+            "path": "registered-query-sources/df985199672cd89bc3f35f1e63296e7e007592ac0021f7e0ae139086fc617a35.ql",
+            "sha256": "df985199672cd89bc3f35f1e63296e7e007592ac0021f7e0ae139086fc617a35"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "py/jinja2/autoescape-false",
+          "source": {
+            "path": "registered-query-sources/7491b58d2c777e20344205f5ba3c0d1dce5dfbfa2d78e926a50a54c48a3c5d6a.ql",
+            "sha256": "7491b58d2c777e20344205f5ba3c0d1dce5dfbfa2d78e926a50a54c48a3c5d6a"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "py/paramiko-missing-host-key-validation",
+          "source": {
+            "path": "registered-query-sources/163a1e9f531d77b813e274f3e9f13a2a2acbd2ae2242fea0f3718ab6292757a5.ql",
+            "sha256": "163a1e9f531d77b813e274f3e9f13a2a2acbd2ae2242fea0f3718ab6292757a5"
+          },
+          "families": [
+            "tls"
+          ]
+        },
+        {
+          "id": "py/path-injection",
+          "source": {
+            "path": "registered-query-sources/c17ed4b748e8439666371723d7400aa6ae255219e20aedee73cd51f765505a74.ql",
+            "sha256": "c17ed4b748e8439666371723d7400aa6ae255219e20aedee73cd51f765505a74"
+          },
+          "families": [
+            "path"
+          ]
+        },
+        {
+          "id": "py/reflective-xss",
+          "source": {
+            "path": "registered-query-sources/e4adc636c7f6293cdff16a58361acb6fba8a75089c777b01e95f4a34d7af76b4.ql",
+            "sha256": "e4adc636c7f6293cdff16a58361acb6fba8a75089c777b01e95f4a34d7af76b4"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "py/request-without-cert-validation",
+          "source": {
+            "path": "registered-query-sources/c5e08d2e6ed840065374248bab02215d2b6e0f3528b179ce390a7b594c6fe0c9.ql",
+            "sha256": "c5e08d2e6ed840065374248bab02215d2b6e0f3528b179ce390a7b594c6fe0c9"
+          },
+          "families": [
+            "tls"
+          ]
+        },
+        {
+          "id": "py/shell-command-constructed-from-input",
+          "source": {
+            "path": "registered-query-sources/d3e2a5c45764fe819fcf051d111f9cc1e6f02e2080b7e3ea98d06afcd0ead7fb.ql",
+            "sha256": "d3e2a5c45764fe819fcf051d111f9cc1e6f02e2080b7e3ea98d06afcd0ead7fb"
+          },
+          "families": [
+            "cmd",
+            "path"
+          ]
+        },
+        {
+          "id": "py/sql-injection",
+          "source": {
+            "path": "registered-query-sources/e8324e568041a22d5d3a4ea21ef52ef791d67a699352273edda350caeca84964.ql",
+            "sha256": "e8324e568041a22d5d3a4ea21ef52ef791d67a699352273edda350caeca84964"
+          },
+          "families": [
+            "sql"
+          ]
+        },
+        {
+          "id": "py/tarslip",
+          "source": {
+            "path": "registered-query-sources/7746314431d0c5f3b97cd6dfedfba6a2bf79bcc884ba6d7e7836c9f0aa1540ec.ql",
+            "sha256": "7746314431d0c5f3b97cd6dfedfba6a2bf79bcc884ba6d7e7836c9f0aa1540ec"
+          },
+          "families": [
+            "path"
+          ]
+        },
+        {
+          "id": "py/unsafe-deserialization",
+          "source": {
+            "path": "registered-query-sources/a9cfa1e6383c3ef48e0591a9d045747ead0ab3015fc689f7f1f3a19a79dda78f.ql",
+            "sha256": "a9cfa1e6383c3ef48e0591a9d045747ead0ab3015fc689f7f1f3a19a79dda78f"
+          },
+          "families": [
+            "deser"
+          ]
+        },
+        {
+          "id": "py/use-of-input",
+          "source": {
+            "path": "registered-query-sources/f43c56680d01921b0d5daa96e9f4cf924a746cff3bf5482f69f0f72c17c3a0a8.ql",
+            "sha256": "f43c56680d01921b0d5daa96e9f4cf924a746cff3bf5482f69f0f72c17c3a0a8"
+          },
+          "families": [
+            "code"
+          ]
+        }
+      ]
+    },
+    {
+      "ecosystem": "RubyGems",
+      "profile_path": "deploy/deep-adapters/profiles/codeql-ruby-full.json",
+      "profile_sha256": "8077442b40bb7b0a2a3e3a12960101e4a6955dc27d5fc7710637ab78e537343e",
+      "suite_sha256": "15aea313da0c39f0e2089b7db8d0b1834abccebb3e3a252f130d6861c24a9804",
+      "queries": [
+        {
+          "id": "rb/bad-tag-filter",
+          "source": {
+            "path": "registered-query-sources/4e173813f7893dcaa50f2c502cbfb7f2cbba2f793900721559f7bec4f17d0bcf.ql",
+            "sha256": "4e173813f7893dcaa50f2c502cbfb7f2cbba2f793900721559f7bec4f17d0bcf"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/code-injection",
+          "source": {
+            "path": "registered-query-sources/b54ebe2b6a24eba9c4515fce9259d78c565532e6a1691fa18aa6df2a375400a4.ql",
+            "sha256": "b54ebe2b6a24eba9c4515fce9259d78c565532e6a1691fa18aa6df2a375400a4"
+          },
+          "families": [
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/command-line-injection",
+          "source": {
+            "path": "registered-query-sources/e565d0acc3737a23c87bb671b061b205e53e6453198155bf750070fcf59ebb87.ql",
+            "sha256": "e565d0acc3737a23c87bb671b061b205e53e6453198155bf750070fcf59ebb87"
+          },
+          "families": [
+            "cmd"
+          ]
+        },
+        {
+          "id": "rb/html-constructed-from-input",
+          "source": {
+            "path": "registered-query-sources/0beb875af7052df745ea6fe3abe2b2b0c53e6cd4a2cd9158ce4e8a43a34a4d80.ql",
+            "sha256": "0beb875af7052df745ea6fe3abe2b2b0c53e6cd4a2cd9158ce4e8a43a34a4d80"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/incomplete-multi-character-sanitization",
+          "source": {
+            "path": "registered-query-sources/a916bffe5cd784357f9f0e896f3ffa23b5230363322b0f5d5a1fb5a32ed8bd4b.ql",
+            "sha256": "a916bffe5cd784357f9f0e896f3ffa23b5230363322b0f5d5a1fb5a32ed8bd4b"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/incomplete-sanitization",
+          "source": {
+            "path": "registered-query-sources/b6ee1cec80de67748234db3d3474ede4d47834123c958c45ff91903e14b248f5.ql",
+            "sha256": "b6ee1cec80de67748234db3d3474ede4d47834123c958c45ff91903e14b248f5"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/kernel-open",
+          "source": {
+            "path": "registered-query-sources/075ad29ee9627fce5baba3f60388da287a3e75edee6b458a8e48ecb7eab72b16.ql",
+            "sha256": "075ad29ee9627fce5baba3f60388da287a3e75edee6b458a8e48ecb7eab72b16"
+          },
+          "families": [
+            "cmd",
+            "path"
+          ]
+        },
+        {
+          "id": "rb/non-constant-kernel-open",
+          "source": {
+            "path": "registered-query-sources/5ddd6e619d0ca6af5ca19b18f84ab98eeae5f96becf6f033aedc98b48393ef3b.ql",
+            "sha256": "5ddd6e619d0ca6af5ca19b18f84ab98eeae5f96becf6f033aedc98b48393ef3b"
+          },
+          "families": [
+            "cmd",
+            "path"
+          ]
+        },
+        {
+          "id": "rb/path-injection",
+          "source": {
+            "path": "registered-query-sources/d5e5020e8316cca05d7d0b852e8b034661284decd49705e40b6a8746036c3436.ql",
+            "sha256": "d5e5020e8316cca05d7d0b852e8b034661284decd49705e40b6a8746036c3436"
+          },
+          "families": [
+            "path"
+          ]
+        },
+        {
+          "id": "rb/reflected-xss",
+          "source": {
+            "path": "registered-query-sources/60f962d3475d17d24334f944153b9078628b7f87f15267559a167c65676dfcec.ql",
+            "sha256": "60f962d3475d17d24334f944153b9078628b7f87f15267559a167c65676dfcec"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/request-without-cert-validation",
+          "source": {
+            "path": "registered-query-sources/98ef527562aded62be9b902acb9919fbe040a3019c045fd62b18d58c764fe79d.ql",
+            "sha256": "98ef527562aded62be9b902acb9919fbe040a3019c045fd62b18d58c764fe79d"
+          },
+          "families": [
+            "tls"
+          ]
+        },
+        {
+          "id": "rb/shell-command-constructed-from-input",
+          "source": {
+            "path": "registered-query-sources/cde95af6f279dfbd231bfa944f73dd373c403c1229b2c47abedd77aec7101d5d.ql",
+            "sha256": "cde95af6f279dfbd231bfa944f73dd373c403c1229b2c47abedd77aec7101d5d"
+          },
+          "families": [
+            "cmd",
+            "path"
+          ]
+        },
+        {
+          "id": "rb/sql-injection",
+          "source": {
+            "path": "registered-query-sources/290e617b99b541697ef56d06ac737da88519a7cc31d1ebee3a7c6ded07804eb5.ql",
+            "sha256": "290e617b99b541697ef56d06ac737da88519a7cc31d1ebee3a7c6ded07804eb5"
+          },
+          "families": [
+            "sql"
+          ]
+        },
+        {
+          "id": "rb/stored-xss",
+          "source": {
+            "path": "registered-query-sources/b3d2f30da2277786f98748dc78a629877bd39e3d09203329f42a44d7bb9c9225.ql",
+            "sha256": "b3d2f30da2277786f98748dc78a629877bd39e3d09203329f42a44d7bb9c9225"
+          },
+          "families": [
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/unsafe-code-construction",
+          "source": {
+            "path": "registered-query-sources/d1dcc8f31e5f8100c5e5d69c5503f3f49a26e5ae53eba0ef0d4040628d59f8e8.ql",
+            "sha256": "d1dcc8f31e5f8100c5e5d69c5503f3f49a26e5ae53eba0ef0d4040628d59f8e8"
+          },
+          "families": [
+            "code",
+            "xss"
+          ]
+        },
+        {
+          "id": "rb/unsafe-deserialization",
+          "source": {
+            "path": "registered-query-sources/4681911738b529b31cdb5e9f1c0d1edbd437f34a4edba509c08771594577ba6f.ql",
+            "sha256": "4681911738b529b31cdb5e9f1c0d1edbd437f34a4edba509c08771594577ba6f"
+          },
+          "families": [
+            "deser"
+          ]
+        }
+      ]
+    }
+  ],
+  "schedule_rule": "Alternate ecosystems in the policy order, sorting each by advisory ID",
+  "advisory_schedule": [
+    "GHSA-3hcm-ggvf-rch5",
+    "GHSA-23fx-92m6-4f2g",
+    "GHSA-527r-mfmj-prqf",
+    "GHSA-5xpp-75jx-m839",
+    "GHSA-4h97-wpxp-3757",
+    "GHSA-69p3-xp37-f692",
+    "GHSA-63q7-h895-m982",
+    "GHSA-6vmq-24h2-pj7j",
+    "GHSA-6j63-35hj-vmcg",
+    "GHSA-6m7c-xfhp-p9fh",
+    "GHSA-73wf-9vmv-5pv9",
+    "GHSA-6qjf-g333-pv38",
+    "GHSA-72qq-p3r5-f7wq",
+    "GHSA-7wqf-h36w-47mc",
+    "GHSA-6xxq-j39w-g3f6",
+    "GHSA-f3f2-mcxc-pwjx",
+    "GHSA-8qvf-mr4w-9x2c",
+    "GHSA-7359-3c6r-hfc2",
+    "GHSA-ff98-w8hj-qrxf",
+    "GHSA-cpv4-ggrr-7j9v",
+    "GHSA-76wq-xw4h-f8wj",
+    "GHSA-g72f-jw3w-mgh7",
+    "GHSA-fhff-qmm8-h2fp",
+    "GHSA-7vxr-6cxg-j3x8",
+    "GHSA-gpfj-4j6g-c4w9",
+    "GHSA-fr3h-cpq2-9496",
+    "GHSA-85gf-wr67-f83w",
+    "GHSA-gr4j-r575-g665",
+    "GHSA-h36j-8vv3-cj52",
+    "GHSA-8832-4mm5-x2r6",
+    "GHSA-gvg7-pp82-cff3",
+    "GHSA-hj4w-hm2g-p6w5",
+    "GHSA-c5r5-7pfh-6qg6",
+    "GHSA-h6r4-xvw6-jc5h",
+    "GHSA-j456-xh4h-cpf2",
+    "GHSA-cxwf-qc32-375f",
+    "GHSA-jj27-h5hq-8x99",
+    "GHSA-j6cv-98jx-mrwr",
+    "GHSA-ff6c-w6qf-7xqc",
+    "GHSA-jj45-24rw-v6jw",
+    "GHSA-jqmf-mx4f-hfr6",
+    "GHSA-fwj4-6wgp-mpxm",
+    "GHSA-m734-r4g6-34f9",
+    "GHSA-mj4x-vf5c-5xg8",
+    "GHSA-hq7p-j377-6v63",
+    "GHSA-mc7w-4cjf-c973",
+    "GHSA-mq84-hjqx-cwf2",
+    "GHSA-jmm9-2p29-vh2w",
+    "GHSA-mf2p-h6hf-fcwm",
+    "GHSA-mrq8-fv7v-hhjg",
+    "GHSA-jppv-gw3r-w3q8",
+    "GHSA-p77r-c6m3-gj2r",
+    "GHSA-pxrr-hq57-q35p",
+    "GHSA-m3hq-3qj8-c5fm",
+    "GHSA-pmw4-jgxx-pcq9",
+    "GHSA-q7m5-3jmv-vm48",
+    "GHSA-mhwp-qhpc-h3jm",
+    "GHSA-rjjv-87mx-6x3h",
+    "GHSA-qcpp-8x79-hhp3",
+    "GHSA-q27f-v3r6-9v77",
+    "GHSA-rmjr-87wv-gf87",
+    "GHSA-r8g5-cgf2-4m4m",
+    "GHSA-r7j3-vvh2-xrpj",
+    "GHSA-v253-rj99-jwpq",
+    "GHSA-rp2v-v467-q9vq",
+    "GHSA-v222-6mr4-qj29",
+    "GHSA-vj3g-5px3-gr46",
+    "GHSA-rqw2-ghq9-44m7",
+    "GHSA-v529-vhwc-wfc5",
+    "GHSA-vp4f-wxgw-7x8x",
+    "GHSA-wqmh-qccw-pqwf",
+    "GHSA-x485-rhg3-cqr4",
+    "GHSA-wm65-ph3w-587c",
+    "GHSA-x843-g5mx-g377",
+    "GHSA-xf96-32q2-9rw2"
+  ],
+  "unsupported_advisories": [
+    "GHSA-2223-f22x-24cq",
+    "GHSA-25gv-mvm7-5h3h",
+    "GHSA-2fmj-p74r-3wjm",
+    "GHSA-2jh5-g5ch-43q5",
+    "GHSA-2pm6-9fhx-vvg3",
+    "GHSA-2rc4-7jc6-qffh",
+    "GHSA-2x7r-93ww-cxrq",
+    "GHSA-38jw-g2qx-4286",
+    "GHSA-3p24-9x7v-7789",
+    "GHSA-3p6w-gv5g-xjw9",
+    "GHSA-3xgr-h5hq-7299",
+    "GHSA-4574-qv3w-fcmg",
+    "GHSA-463c-jhp2-4mm7",
+    "GHSA-465w-gg5p-85c9",
+    "GHSA-4m7p-55jm-3vwv",
+    "GHSA-4pj9-g833-qx53",
+    "GHSA-4x28-j85r-668q",
+    "GHSA-4xf2-7qfv-mgfx",
+    "GHSA-5j9f-5wmp-7f8h",
+    "GHSA-5jpj-293f-rhvj",
+    "GHSA-5m9f-rphj-c435",
+    "GHSA-5mq7-rwhj-4fh9",
+    "GHSA-68wg-qv6r-j4vp",
+    "GHSA-6g56-v9qg-jp92",
+    "GHSA-6gm7-j668-w6h9",
+    "GHSA-6m8w-jc87-6cr7",
+    "GHSA-6w89-c65w-jx2c",
+    "GHSA-72c7-4g63-hpw5",
+    "GHSA-74hp-mggr-hv58",
+    "GHSA-784x-7w88-w564",
+    "GHSA-79qw-g77v-2vfh",
+    "GHSA-7cj7-rcw6-p68v",
+    "GHSA-7hxc-f267-h5q7",
+    "GHSA-8gqp-hr9g-pg62",
+    "GHSA-8grg-q944-cch5",
+    "GHSA-97jv-2hp6-3frj",
+    "GHSA-9mh6-g99m-ppcw",
+    "GHSA-cgfv-jrfp-2r7v",
+    "GHSA-f6wf-28g6-769x",
+    "GHSA-f7w7-6pjc-wwm6",
+    "GHSA-fg4q-ccq8-3r5q",
+    "GHSA-g23g-mw97-65c8",
+    "GHSA-gjqq-6r35-w3r8",
+    "GHSA-gprp-h92g-gc2h",
+    "GHSA-h4h6-vccr-44h2",
+    "GHSA-h7cm-jvpp-69xf",
+    "GHSA-hc5w-gxxr-w8x8",
+    "GHSA-hr8g-6v94-x4m9",
+    "GHSA-hw6x-2qwv-rxr7",
+    "GHSA-hwcc-4cv8-cf3h",
+    "GHSA-j3f9-p6hm-5w6q",
+    "GHSA-j7g8-3qqg-8cvm",
+    "GHSA-j7wh-x834-p3r7",
+    "GHSA-jccv-3h4x-35mv",
+    "GHSA-jjgq-jq8g-24w4",
+    "GHSA-jwhr-h7pc-3974",
+    "GHSA-m445-w3xr-vp2f",
+    "GHSA-m462-mqw4-2c8m",
+    "GHSA-mggc-4xg6-vcxf",
+    "GHSA-mmcv-fvq8-r9x3",
+    "GHSA-mrww-27vc-gghv",
+    "GHSA-mw36-7c6c-q4q2",
+    "GHSA-mxg3-432p-mr72",
+    "GHSA-p6w9-r443-r752",
+    "GHSA-p9qm-p942-q3w5",
+    "GHSA-pj84-qjm3-77mg",
+    "GHSA-q296-9j5x-fxf4",
+    "GHSA-q433-mp6c-8v4f",
+    "GHSA-q9mp-79cp-9g8j",
+    "GHSA-qqh2-wvmv-h72m",
+    "GHSA-qrg7-hfx7-95c5",
+    "GHSA-rc6v-5rmx-w5mv",
+    "GHSA-rfx3-98h7-v3xp",
+    "GHSA-v74c-qc46-9gg9",
+    "GHSA-vf2r-cxg9-p7rf",
+    "GHSA-vj9x-w7ch-f46p",
+    "GHSA-vmw2-qwm8-x84c",
+    "GHSA-vq7p-f4fv-rr5x",
+    "GHSA-w2pm-r78h-4m7v",
+    "GHSA-w5ff-2mjc-4phc",
+    "GHSA-wc3v-3457-c8cm",
+    "GHSA-wrvw-254r-wpmv",
+    "GHSA-x3wm-hffr-chwm",
+    "GHSA-x67c-8pwr-m8g3",
+    "GHSA-x9vc-6hfv-hg8c",
+    "GHSA-xr9m-gphc-9p63"
+  ]
+}
