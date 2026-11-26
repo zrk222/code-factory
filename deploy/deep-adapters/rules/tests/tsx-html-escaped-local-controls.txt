@@ -19,3 +19,18 @@ export function checkbox(name: string) {
   // ok: javascript.html-template-unescaped-interpolation
   return $('input[name="' + name + '"]');
 }
+
+export function boundQuery(db: any, name: string) {
+  // ok: javascript.parameter-sql-text
+  return db.query(sql`SELECT * FROM users WHERE name = ${name}`);
+}
+
+export function prose(name: string) {
+  // ok: javascript.parameter-sql-text
+  return `with ${name} we select a theme from the list`;
+}
+
+export function rawQuery(db: any, name: string) {
+  // ruleid: javascript.parameter-sql-text
+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);
+}

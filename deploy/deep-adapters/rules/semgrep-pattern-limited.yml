@@ -3890,7 +3890,15 @@ rules:
       # (`SELECT ... WHERE id = ${userId}`), each reported where it sits. \G chains
       # matches within one template; code-generation templates do not start with SQL.
       # A tagged template (sql`...`, prisma.$queryRaw`...`) binds its values as parameters.
-      - pattern-regex: '(?i)(?:(?<![\w$\].)>])`\s*\(?\s*(?:select|insert\s+into|update|delete\s+from|with)\b|\G)[^`$]*(?:\$(?!\{)[^`$]*)*\K\$\{[^}`]*\}'
+      # Each interpolation in an untagged template literal whose text is a SQL statement
+      # (tagged templates such as sql`...` bind their values). The statement shape is
+      # required up front so English text (`with scope`, `select ${x}`) is not a sink:
+      # on large minified bundles that kept OpenGrep 2.0.0 analysing every function.
+      - patterns:
+          - pattern: '`...${$X}...`'
+          - pattern-not-inside: '$TAG`...`'
+          - pattern-regex: '(?i)(?<![\w$\].)>])`\s*\(?\s*(?:select\s[^`]*?\bfrom\b|insert\s+into\b|update\s+[^\s`]+\s+set\b|delete\s+from\b|with\s+(?:recursive\s+)?\w+\s*(?:\([^)`]*\))?\s+as\s*\()[^`]*`'
+          - focus-metavariable: $X
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
