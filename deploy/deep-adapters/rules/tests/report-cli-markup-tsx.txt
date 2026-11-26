@@ -18,3 +18,18 @@ function renderChecked(props: Props) {
     <div innerHTML={props.enabled ? checkedMarkup() : fallback} />
   );
 }
+
+function openInputDestination(input: { url: string }) {
+  // ruleid: javascript.dom-innerhtml-from-variable
+  window.open(input.url, '_blank');
+}
+
+function openIsolatedDestination(input: { url: string }) {
+  // ok: javascript.dom-innerhtml-from-variable
+  window.open(input.url, '_blank', 'noopener,noreferrer');
+}
+
+function openStaticDestination() {
+  // ok: javascript.dom-innerhtml-from-variable
+  window.open('https://example.invalid/', '_blank');
+}

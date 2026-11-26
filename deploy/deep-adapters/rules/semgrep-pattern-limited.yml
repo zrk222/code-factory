@@ -3994,6 +3994,8 @@ rules:
               metavariable: $FN
               regex: ^(?i:\w*escape\w*|\w*quote\w*|addslashes)$
       - pattern: intval(...)
+      - pattern: array_map('intval', ...)
+        exact: true
       - pattern: (int) $V
       - pattern: (float) $V
       - pattern: $DB->quote(...)
@@ -5033,7 +5035,7 @@ rules:
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/docs/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js", "**/compiled/**", "**/*.development.js", "**/*.production.js"]
   - id: javascript.dom-innerhtml-from-variable
-    message: A non-literal value is assigned to innerHTML or outerHTML; use textContent, or sanitize the markup first.
+    message: Review dynamic HTML or a parameter URL opened in a new window without an opener policy.
     severity: INFO
     languages: [javascript, typescript]
     patterns:
@@ -5041,6 +5043,15 @@ rules:
           - pattern: $E.innerHTML = $V
           - pattern: $E.outerHTML = $V
           - pattern: $E.insertAdjacentHTML($POS, $V)
+          - patterns:
+              - pattern: window.open($V, "_blank")
+              - metavariable-pattern:
+                  metavariable: $V
+                  pattern: $INPUT.url
+              - pattern-either:
+                  - pattern-inside: ($INPUT) => { ... }
+                  - pattern-inside: function $F(..., $INPUT, ...) { ... }
+              - focus-metavariable: $V
           - patterns:
               - pattern-either:
                   - pattern: <$TAG ... innerHTML={$V} ... />
@@ -5081,7 +5092,7 @@ rules:
       category: security
       confidence: LOW
       cwe: ["CWE-79"]
-      scope: innerHTML/outerHTML/insertAdjacentHTML with an identifier or member expression; call results are excluded.
+      scope: Dynamic HTML content or a parameter URL passed to the two-argument window.open call with a blank target.
   - id: go.tls-client-cert-requested-not-verified
     message: Client certificates are requested but not verified against a CA; any self-signed certificate is accepted. Use tls.VerifyClientCertIfGiven or tls.RequireAndVerifyClientCert with ClientCAs.
     severity: WARNING

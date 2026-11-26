@@ -182,7 +182,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.java.request-path-traversal': 1,
   'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
-  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 3,
+  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 4,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 4,
   'opt.factory.rules.javascript.parameter-shell-command': 7,
@@ -194,7 +194,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
   'opt.factory.rules.php.parameter-shell-command': 1,
-  'opt.factory.rules.php.parameter-sql-text': 4,
+  'opt.factory.rules.php.parameter-sql-text': 5,
   'opt.factory.rules.php.request-command-injection': 13,
   'opt.factory.rules.php.request-file-inclusion': 2,
   'opt.factory.rules.php.request-html-injection': 1,
@@ -273,6 +273,7 @@ export function javascriptControlManifest() {
       path: 'typescript-html-escaped-local.ts', line: 56 },
     { rule: 'opt.factory.rules.javascript.request-command-injection', path: 'report-cli-markup.tsx', line: 4 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 11 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 24 },
   ];
 }
 
@@ -286,7 +287,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 288;
+const REVIEWED_FINDINGS = 290;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

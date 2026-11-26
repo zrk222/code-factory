@@ -138,7 +138,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 288);
+  assert.equal(balancedReplacement.length, 290);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
@@ -153,7 +153,7 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
     [path, line]), [['typescript-shell-wrapper.ts', 7], ['typescript-shell-binding.ts', 5]]);
   assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 37);
   assert.equal(manifest.find(item => item.path === 'typescript-html-escaped-local.ts').line, 10);
-  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 14);
+  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 15);
   assert.deepEqual(manifest.filter(item => item.path === 'semgrep-pattern-limited.tsx').slice(-2).map(item =>
     [item.source_line, item.line]), [[159, 162], [163, 165]]);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.js')).slice(-3).map(item =>
