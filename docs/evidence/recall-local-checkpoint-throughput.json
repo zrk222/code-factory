@@ -1,0 +1,68 @@
+{
+  "schema": "factory.recall-local-checkpoint-throughput.v1",
+  "scope": "32 prepared exposed case pairs on Windows. Fresh scoring checkpoints, warm source packets and other local validation running.",
+  "baseline_commit": "2c5ba14aaa9bc236bc5178655b0b0de017210e6e",
+  "grouped_harness_sha256": "a4e4ddd458d74eeb68bfa9ecaeb68d5ecc040888941da2c52b039ee7e42769b2",
+  "rolling_harness_sha256": "b98ca4b82cea7ae7c4581ab0c9034300d77a279cf609354033eb19cfb7149a84",
+  "inputs": {
+    "manifest_sha256": "7807640dadc059035f3984137db36566740e442795e81de3d6e5546254da7820",
+    "manifest_cases_sha256": "dd07b70f9dfd6183d312caadbfa9927d350e5a5d69db61a5f8df74de65dc497e",
+    "ruleset_sha256": "ee319f151e87fb44621e6190ca826b3d47058baf947bce02db323ebbc4539d42",
+    "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+    "engine_args": [
+      "--timeout=15",
+      "--jobs=1"
+    ],
+    "scope": "ecosystem",
+    "case_workers": 4,
+    "engine": {
+      "executable": "opengrep.exe",
+      "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+      "version": "2.1.0"
+    },
+    "scanner_path_policy": "opengrep-2.1.0-target-inventory-v1"
+  },
+  "cases": 32,
+  "case_results_equal": true,
+  "registered_order_equal": true,
+  "source_and_coverage_equal": true,
+  "timeouts_each_run": 0,
+  "engine_errors_each_run": 0,
+  "barrier_control": {
+    "cases": 18,
+    "workers": 2,
+    "grouped": "blocked_at_old_boundary",
+    "rolling": "next_case_started_before_slow_case_released"
+  },
+  "runs": [
+    {
+      "order": 1,
+      "scheduler": "grouped",
+      "wall_seconds": 39.729,
+      "score_sha256": "d257af1dd8a4b9b3e6a4066cccde072b61c7fb2ac24e407be32df52efa97948b"
+    },
+    {
+      "order": 2,
+      "scheduler": "rolling",
+      "wall_seconds": 30.402,
+      "score_sha256": "1ea210da3fa69d80ff398923960c9485141f9a7aec59d20f6c9a8df629192582"
+    },
+    {
+      "order": 3,
+      "scheduler": "rolling",
+      "wall_seconds": 36.785,
+      "score_sha256": "3a0ed6290b1120dbb8f928f4c7c6fe1d33eeb94a0bc964cc607bea6384b4692c"
+    },
+    {
+      "order": 4,
+      "scheduler": "grouped",
+      "wall_seconds": 42.745,
+      "score_sha256": "1129ab793a9b87aa1dbc1c8b372f44a86221c577eae5142fd6914695daa37b6f"
+    }
+  ],
+  "median_wall_seconds": {
+    "grouped": 41.237,
+    "rolling": 33.593
+  },
+  "limitations": "Local diagnostics with warm preparation. No inference about production runtime or held-out recall."
+}

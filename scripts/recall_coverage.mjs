@@ -61,8 +61,8 @@ export function engineCoverage(report) {
   return { scanned, skipped, problems, timeouts };
 }
 
-// Parse only the YAML data used for scope proof. Uninterpretable rules supply no static proof.
-const readRuleScopes = String.raw`
+// Read only rule identity, attribution, and scope from the YAML document.
+const ruleMetadataProgram = String.raw`
 import json, sys
 try:
     import yaml
@@ -85,29 +85,48 @@ def strings(node):
     return [value(item, yaml.ScalarNode, "str") for item in value(node, yaml.SequenceNode, "seq")]
 
 doc = mapping(yaml.compose(sys.stdin.buffer, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)))
-scopes = []
+records, seen = [], set()
 for item in value(doc["rules"], yaml.SequenceNode, "seq"):
     rule = mapping(item)
-    value(rule["id"], yaml.ScalarNode, "str")
+    name = value(rule["id"], yaml.ScalarNode, "str")
+    if not name or name in seen:
+        raise ValueError("Invalid or duplicate rule id")
+    seen.add(name)
     paths = mapping(rule["paths"]) if "paths" in rule else {}
-    scopes.append([strings(rule["languages"]), strings(paths["exclude"]) if "exclude" in paths else []])
-print(json.dumps(scopes))
+    meta = mapping(rule["metadata"]) if "metadata" in rule else {}
+    cwe = meta.get("cwe")
+    if cwe is None:
+        cwes = []
+    elif isinstance(cwe, yaml.ScalarNode):
+        cwes = [value(cwe, yaml.ScalarNode, "str")]
+    else:
+        cwes = strings(cwe)
+    records.append(dict(id=name, cwes=cwes,
+        languages=strings(rule["languages"]) if "languages" in rule else [],
+        excludes=strings(paths["exclude"]) if "exclude" in paths else []))
+print(json.dumps(records))
 `;
 
-export function compileScannerPathPolicy(rules) {
+export function readRuleMetadata(rules) {
   const python = process.env.CF_RECALL_PYTHON;
-  const read = (command, options = []) => spawnSync(command, [...options, '-I', '-c', readRuleScopes], {
+  const read = (command, options = []) => spawnSync(command, [...options, '-I', '-c', ruleMetadataProgram], {
     input: rules, encoding: 'utf8', windowsHide: true, timeout: 7000, maxBuffer: 2 * 1024 * 1024,
   });
   let parsed = read(python ?? 'python');
   if (!python && process.platform === 'win32' && (parsed.status === 3 || parsed.error?.code === 'ENOENT')) {
     parsed = read('py', ['-3']);
   }
-  if (parsed.status !== 0) return () => false;
-  let scopes;
-  try { scopes = JSON.parse(parsed.stdout); } catch { return () => false; }
-  if (scopes.some(([languages]) => !languages.length)) return () => false;
-  const byLanguage = Map.groupBy(scopes.flatMap(([languages, patterns]) => {
+  if (parsed.status !== 0) return null;
+  try {
+    const rules = JSON.parse(parsed.stdout);
+    return Array.isArray(rules) ? rules : null;
+  } catch { return null; }
+}
+
+export function compileScannerPathPolicy(rules) {
+  const scopes = typeof rules === 'string' || Buffer.isBuffer(rules) ? readRuleMetadata(rules) : rules;
+  if (!scopes || scopes.some(({ languages }) => !languages.length)) return () => false;
+  const byLanguage = Map.groupBy(scopes.flatMap(({ languages, excludes: patterns }) => {
     const excludes = patterns.filter(glob => /^\*\*\/[\w.*\/-]+$/.test(glob));
     return languages.map(language => ({ language, excludes }));
   }), rule => rule.language);
@@ -183,6 +202,17 @@ export function coverageGapEntries(files = []) {
 
 export function coverageGaps(files) {
   return coverageGapEntries(files).map(file => file.path);
+}
+
+export function completeFixedCoverage(files, packets) {
+  if (!Array.isArray(files) || !Array.isArray(packets)
+    || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
+  const byPath = new Map(files.map(file => [file.path, file]));
+  return byPath.size === files.length && packets.every(packet => {
+    const file = byPath.get(packet?.path);
+    return file?.submitted === true && file.state === 'reported_scanned'
+      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
+  });
 }
 
 export function summarizeCoverage(rows) {
