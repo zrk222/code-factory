@@ -221,7 +221,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 4,
   'opt.factory.rules.ruby.request-sql-injection': 4,
-  'opt.factory.rules.rust.reqwest-disabled-tls-verification': 1,
+  'opt.factory.rules.rust.reqwest-disabled-tls-verification': 4,
   'opt.factory.rules.swift.trust-exceptions': 3,
 });
 // Fixed reviewed sink lines of the rule-family controls appended to the .ts
@@ -284,7 +284,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 269;
+const REVIEWED_FINDINGS = 272;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -348,6 +348,7 @@ export const extensionControlFiles = Object.freeze([
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['cs', 'csharp-sql-builder-controls.txt', 'csharp-sql-builder.cs'],
+  ['rs', 'rust-boring-hostname-controls.txt', 'rust-boring-hostname.rs'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
   ['php', 'php-path-upload-controls.php'],
 ]);
