@@ -1,0 +1,51 @@
+{
+  "schema": "factory.heldout-preregistration.v1",
+  "registered_at": "2026-11-26",
+  "status": "registered; not opened",
+  "cohort": {
+    "manifest": "docs/evidence/heldout-recall-manifest-20261125-q2.json",
+    "manifest_sha256": "28063dd52a9552ef46429fa732d127a69d659dc9851d9c30021641105e4bf73f",
+    "cases_sha256": "d2d39fd5ee4de3195b8c28c98eb569590167194d326abcdf0b465be830d36e8d",
+    "denominator": 282,
+    "note": "Frozen from advisory metadata only. No case source, diff or result has been read by anyone tuning rules."
+  },
+  "arms": {
+    "baseline_rules_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+    "candidate_rules_sha256": null,
+    "candidate_rule": "Exactly the ruleset digest whose paired exposed qualification returned ACCEPT; its receipt SHA-256 is written here in one commit before Q2 is opened, and nothing else in this file changes in that commit."
+  },
+  "engine": {
+    "opengrep": "2.1.0",
+    "executable_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+    "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+    "harness": "scripts/recall_harness.mjs at the main commit named in the opening commit",
+    "per_rule_timeout_seconds": 15
+  },
+  "one_shot": [
+    "Q2 is scored once per arm. Any later scoring is a development run and is reported as such.",
+    "A rerun is allowed only for an infrastructure failure (engine crash, fetch failure, disk) with byte-identical inputs; the failed attempt is kept and reported.",
+    "No rule, scorer, profile or exclusion changes between opening and reporting."
+  ],
+  "metrics": {
+    "primary": "Strict hunk recall: a CWE-family alert on an old-side -U5 hunk line of an in-language, non-test file changed by the fix, at the fix parent. Reported as hits/282 with a Wilson 95% interval, per arm.",
+    "paired": "Per-case baseline->candidate transitions; discordant pairs tested with an exact two-sided sign test.",
+    "outcomes": "hit, miss, engine timeout, unknown (no in-language change, unfetchable, incomplete scan) and error, each counted; unknowns stay in the denominator as not hit.",
+    "secondary": "Advisory-level recall as pre-registered in docs/RECALL_PRECISION.md (25 Nov): flagged anywhere, still flagged after fix, fix-resolved, and same-family alerts per KLOC on the 18 benign controls.",
+    "breakdowns": "By ecosystem and by CWE family, descriptive only."
+  },
+  "decision_rule": {
+    "improvement_claim": "Claimed only if candidate gains exceed losses with sign-test p < 0.05, and the candidate's benign-control alert count does not exceed the baseline's.",
+    "otherwise": "Report the numbers without an improvement claim. Losses are reported by advisory ID either way."
+  },
+  "precision": {
+    "sample": "Candidate alerts in Q2 changed files; fixed seed 20261127; cap 40 per rule; blinded packet with the same instructions and context supplement as the exposed review.",
+    "review": "Two independent reviewer arms at matched effort and a Fable 5.2 judge on disagreements; per-family precision with Wilson 95% intervals.",
+    "key_custody": "The packet key and each arm's labels are withheld from the other arm and the judge until all labels are in."
+  },
+  "preconditions": [
+    "Paired exposed qualification ACCEPT on the candidate digest: zero lost hits (or each loss span-adjudicated), zero benign-control increase, all controls complete.",
+    "Exposed precision review adjudicated (two arms + judge) for the candidate's unadjudicated alerts.",
+    "Candidate merged to main with CI green.",
+    "This file committed to main before Q2 is opened."
+  ]
+}
