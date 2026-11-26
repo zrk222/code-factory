@@ -1,0 +1,166 @@
+{
+  "schema": "factory.recall-control-recovery-readback.v1",
+  "scope": "10 of 18 exact historical controls",
+  "source_sha256": "befcbaf90a99dca68cbeac8084272fcdf948fed9e7df512506de813962d7e794",
+  "plan_sha256": "0ccf1e2a7d1213102a5af966918cb6a2e76840c11de32f2102324a7c3bdf4f97",
+  "baseline_rules_sha256": "3b5b28ff6076d90ca91ca44d320b5f5b11e414140be071578abb3e303102299b",
+  "candidate_rules_sha256": "5a3a3b3bb5506be04e74258c748fc7d54fa182bb79f75655a0dc84825b2776b1",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "path_policy_harness_commit": "cc73075ce8eb3188ca63f650632edfcb3d2e1360",
+  "counts": {
+    "before": 27,
+    "after": 28,
+    "delta": 1,
+    "completed": 10,
+    "planned": 18
+  },
+  "control_qualification": "INCOMPLETE",
+  "results": [
+    {
+      "name": "apache_commons-compress",
+      "source_commit": "17796875a060734aeb2bfd4c2d3ea0a5aa546c22",
+      "source_tree": {
+        "sha256": "c1914653b30e4d820508b4608a3750fcb21571e431a78215eafacd998e365ec0",
+        "entries": 1172
+      },
+      "before": 0,
+      "after": 0,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "caddyserver_caddy",
+      "source_commit": "edcdfa0ed88f7dcc1c53720d25218fde9d63eb1e",
+      "source_tree": {
+        "sha256": "28cdd464c184c650045f4e5288ba48d361cfa608c0cc4565407422368e90b15e",
+        "entries": 780
+      },
+      "before": 1,
+      "after": 1,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "cthackers_adm-zip",
+      "source_commit": "72587088fb1acfdd5abd46ac7b492f7582944270",
+      "source_tree": {
+        "sha256": "4d5bcf94f4aefff069a7b1525be474bf10bad26523ee5acb8964cdd59f1c4937",
+        "entries": 82
+      },
+      "before": 0,
+      "after": 0,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "expressjs_express",
+      "source_commit": "43fca52d28a422c8be48fd489cbd4f2d6152bab6",
+      "source_tree": {
+        "sha256": "52ebaac07e67d2caa455849aa1851e1ba8ab8ff438b784378c7e8a73e79ccb90",
+        "entries": 216
+      },
+      "before": 4,
+      "after": 4,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "jekyll_jekyll",
+      "source_commit": "97c3bdc822df9d5bea4c269b29a28de5a5e29d70",
+      "source_tree": {
+        "sha256": "fb8903e34041560ea0afaaf42da1329bde93af493c3bb7bfc7214e00dc44bec0",
+        "entries": 806
+      },
+      "before": 0,
+      "after": 0,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "jquery_jquery",
+      "source_commit": "effd615f0009e927dfd1f41d04fb6073478076d4",
+      "source_tree": {
+        "sha256": "b5adf837963f086c837b59a9480c89f986ef726baae6d5c8e2a0ee96a0c9efca",
+        "entries": 351
+      },
+      "before": 15,
+      "after": 15,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "markedjs_marked",
+      "source_commit": "5c0869f8ab352219eef03202b31a2fba6d957efc",
+      "source_tree": {
+        "sha256": "3311f469e7f80073a15b6b7368fc3d6319d204008e518488a1e976849d3dc0b5",
+        "entries": 706
+      },
+      "before": 2,
+      "after": 3,
+      "added": [
+        {
+          "rule": "javascript.html-template-unescaped-interpolation",
+          "path": "src/Renderer.ts",
+          "line": 90,
+          "span": [
+            52,
+            0,
+            74
+          ]
+        }
+      ],
+      "removed": []
+    },
+    {
+      "name": "phpbb_phpbb",
+      "source_commit": "394ee33c35107b64f765e81cf91a5074302176ab",
+      "source_tree": {
+        "sha256": "3d1b297fdb96266015fa28bd18630aa49c694fd243812761dbd89522a5b6224e",
+        "entries": 3014
+      },
+      "before": 5,
+      "after": 5,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "spring-projects_spring-petclinic",
+      "source_commit": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "source_tree": {
+        "sha256": "b1667ed7ea72a6adfe159b6a0ca550d8b5c4be0c83bfe9eed926dcb8c756430f",
+        "entries": 132
+      },
+      "before": 0,
+      "after": 0,
+      "added": [],
+      "removed": []
+    },
+    {
+      "name": "ZJONSSON_node-unzipper",
+      "source_commit": "431c45c5bcf0e95a8a3f56ca7da8f46daffb8ac2",
+      "source_tree": {
+        "sha256": "70741b358922f1df5fe1352e002db30d1893cb535fa978dd014bc719437caf5a",
+        "entries": 111
+      },
+      "before": 0,
+      "after": 0,
+      "added": [],
+      "removed": []
+    }
+  ],
+  "remaining_controls": [
+    "composer_composer",
+    "ctl-mastodon",
+    "getgrav_grav",
+    "gohugoio_hugo",
+    "laravel_framework",
+    "mozilla_pdf.js",
+    "rubygems_rubygems",
+    "sveltejs_kit"
+  ]
+}
