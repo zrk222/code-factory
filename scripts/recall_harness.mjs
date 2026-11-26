@@ -624,12 +624,14 @@ function bindPreparedCase(directory, record, key, row, scope) {
 }
 
 async function prepareChanges(repo, dir, parent, fix, extensions) {
-  const inventory = await gitBytes(repo, 'diff', '--name-status', '--no-renames', '-z', parent, fix, '--');
+  const [inventory, diff] = await Promise.all([
+    gitBytes(repo, 'diff', '--name-status', '--no-renames', '-z', parent, fix, '--'),
+    gitBytes(repo, '-c', 'core.quotePath=false', 'diff', '-U5', parent, fix, '--',
+      ...extensions.map(ext => '*.' + ext)),
+  ]);
   if (inventory.status !== 0) throw new Error('Prepared changed-file inventory could not be read');
   const changes = changedFiles(inventory.stdout);
   const additions = new Set(changes.filter(row => row.status === 'A').map(row => row.path));
-  const diff = await gitBytes(repo, '-c', 'core.quotePath=false', 'diff', '-U5', parent, fix, '--',
-    ...extensions.map(ext => '*.' + ext));
   if (diff.status !== 0) throw new Error('Prepared case diff could not be read');
   const hunks = parseHunks(diff.stdout.toString('utf8'), extensions);
   const oldPaths = Object.keys(hunks).filter(path => !additions.has(path));
