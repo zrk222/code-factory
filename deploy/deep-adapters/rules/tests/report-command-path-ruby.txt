@@ -23,7 +23,8 @@ class CsvPathFixture
   end
 
   def read_fixed(filename)
-    # ok: ruby.parameter-shell-command
+    # A fixed prefix prevents pipe dispatch, but filename can still escape the directory.
+    # ruleid: ruby.request-path-traversal
     IO.foreach(File.join("assets", filename))
   end
 

@@ -166,6 +166,16 @@ rules:
           - pattern-not-inside: |
               if $OPTIN:
                 ...
+          # An explicit verification setting chooses the verified branch.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: $SAFE if $VERIFY else $DISABLED
+                - metavariable-pattern:
+                    metavariable: $SAFE
+                    pattern: ssl.create_default_context(...)
+                - metavariable-regex:
+                    metavariable: $VERIFY
+                    regex: '(?i)^(?:[A-Za-z_]\w*\.)*verify_(?:ssl|tls)(?:_cert(?:ificate)?)?$'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -3617,7 +3627,7 @@ rules:
       # reports (same receivers, same child_process bindings) is reported once, there.
       # Templates built elsewhere, or passed to any other receiver, stay reported here.
       - patterns:
-          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
           - pattern-not-inside:
               patterns:
                 - pattern-either:
@@ -3932,7 +3942,7 @@ rules:
                     - pattern: '"...".format(...)'
                     - pattern: '"..." + $X'
                     - pattern: '$X + "..."'
-                    - pattern: $NAME
+                    - pattern-regex: ^[A-Za-z_][\w.]*$
           - focus-metavariable: $Q
       - patterns:
           - pattern-either:
@@ -4154,6 +4164,11 @@ rules:
               - pattern: $B.OrderBy($Q, ...)
               - pattern: $B.Group($Q)
               - pattern: $B.GroupBy($Q, ...)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-not: clause.OrderByColumn{...}
+                - pattern-not: clause.GroupBy{...}
           - focus-metavariable: $Q
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]

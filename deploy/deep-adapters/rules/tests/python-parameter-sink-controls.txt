@@ -65,3 +65,9 @@ def restore_filtered(archive, dest):
     with tarfile.open(archive) as tf:
         # ok: python.tarfile-extractall-without-filter
         tf.extractall(dest, filter="data")
+
+def use_query_builder(conn, table, user):
+    # ok: python.parameter-sql-text
+    conn.execute(select(table).where(table.c.user == user))
+    # ok: python.parameter-sql-text
+    conn.execute(insert(table).values(user=user))

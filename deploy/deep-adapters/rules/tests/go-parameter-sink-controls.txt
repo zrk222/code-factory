@@ -3,6 +3,7 @@ package controls
 import (
 	"database/sql"
 	"fmt"
+	"gorm.io/gorm/clause"
 	"os/exec"
 )
 
@@ -36,6 +37,8 @@ func (p *EventsPersister) Events(filter *EventsFilter) {
 	finder := p.DB.Model(&Event{})
 	// ruleid: go.parameter-sql-text
 	finder = finder.Order(filter.SortOn)
+	// ok: go.parameter-sql-text
+	finder = finder.Order(clause.OrderByColumn{Column: clause.Column{Name: filter.SortOn}})
 	// ok: go.parameter-sql-text
 	finder = finder.Order("created_at desc")
 	// ok: go.parameter-sql-text
