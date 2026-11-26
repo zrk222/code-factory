@@ -38,11 +38,19 @@ export function engineCoverage(report) {
   const scanned = new Set(report.paths.scanned.map(path => scannerPath(path)).filter(Boolean));
   const skipped = new Map((report.paths.skipped ?? []).map(entry => [scannerPath(entry.path), entry.reason]));
   const problems = new Map();
+  const priority = { parse: 1, engine_error: 2, engine_timeout: 3 };
+  let timeouts = 0;
   for (const error of report.errors ?? []) {
     const path = scannerPath(error.path ?? error.spans?.[0]?.file);
-    if (path) problems.set(path, /pars|syntax/i.test(String(error.type)) ? 'parse' : 'engine_error');
+    const type = String(error.type);
+    const reason = /timeout|timed out/i.test(type) ? 'engine_timeout'
+      : /pars|syntax/i.test(type) ? 'parse' : 'engine_error';
+    if (reason === 'engine_timeout') timeouts++;
+    if (path && priority[reason] > (priority[problems.get(path)] ?? 0)) {
+      problems.set(path, reason);
+    }
   }
-  return { scanned, skipped, problems };
+  return { scanned, skipped, problems, timeouts };
 }
 
 function packetCoverage(source, scan, findings, path) {
@@ -80,9 +88,13 @@ export function fileCoverage(changes, { packets, scans, extensions, isTestPath }
   })]));
 }
 
-export function coverageGaps(files = []) {
+export function coverageGapEntries(files = []) {
   return files.filter(file => !['absent', 'excluded'].includes(file.state)
-    && (file.state !== 'reported_scanned' || file.reason === 'sarif_finding')).map(file => file.path);
+    && (file.state !== 'reported_scanned' || file.reason === 'sarif_finding'));
+}
+
+export function coverageGaps(files) {
+  return coverageGapEntries(files).map(file => file.path);
 }
 
 export function summarizeCoverage(rows) {

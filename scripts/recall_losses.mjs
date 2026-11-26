@@ -116,9 +116,10 @@ function boundCohort(score, adjudication, cohort) {
   return blocks[0];
 }
 
-function matchReviewedHunks(row, source, votes) {
+function matchReviewedHunks(row, source, votes, requireBoundSpans) {
   const spanBound = votes[0].location.length === 4;
   if (!votes.every(vote => vote.verdict === 'FP' && (vote.location.length === 4) === spanBound)) return null;
+  if (requireBoundSpans && (!spanBound || votes.some(vote => !vote.sourceSha256))) return null;
   const sourcePins = new Map((source.source_packets.old ?? []).map(packet => [packet.path, packet.sha256]));
   if (votes.some(vote => vote.sourceSha256 && vote.sourceSha256 !== sourcePins.get(vote.location[1]))) return null;
   const identity = hunkAdjudicationIdentity(row, spanBound);
@@ -126,7 +127,7 @@ function matchReviewedHunks(row, source, votes) {
     ? { source, identity, spanBound } : null;
 }
 
-function fpOnlyCases(block, labels) {
+function fpOnlyCases(block, labels, requireBoundSpans) {
   const evidence = new Map(block.after_evidence.cases.map(row => [row.ghsa, row]));
   if (evidence.size !== block.after_evidence.cases.length || new Set(block.cases.map(row => row.ghsa)).size !== block.cases.length) {
     throw new Error('Duplicate case in saved adjudication cohort');
@@ -135,13 +136,13 @@ function fpOnlyCases(block, labels) {
   for (const row of block.cases) {
     const votes = labels.get(row.ghsa), source = evidence.get(row.ghsa);
     if (row.after !== 'hit' || !votes?.length || !source?.revisions || !source.source_packets) continue;
-    const match = matchReviewedHunks(row, source, votes);
+    const match = matchReviewedHunks(row, source, votes, requireBoundSpans);
     if (match) result.set(row.ghsa, match);
   }
   return result;
 }
 
-export function loadAdjudicatedLosses(planPath, engineSha) {
+export function loadAdjudicatedLosses(planPath, engineSha, { requireBoundSpans = false } = {}) {
   const plan = readJson(planPath).data;
   if (plan.schema !== 'factory.recall-adjudicated-losses.v1') throw new Error('Unexpected adjudicated loss plan');
   const directory = dirname(resolve(planPath));
@@ -154,9 +155,10 @@ export function loadAdjudicatedLosses(planPath, engineSha) {
   const evidence = block.after_evidence;
   if (!isPin(evidence.manifest_sha256) || !isPin(evidence.profile_sha256)) throw new Error('Missing bound adjudication context');
   return {
-    cases: fpOnlyCases(block, reviewedHunks(adjudication.rows)),
+    cases: fpOnlyCases(block, reviewedHunks(adjudication.rows), requireBoundSpans),
     receipt: { score_sha256: scoreSha, adjudication_sha256: adjudicationSha, engine_sha256: engineSha,
       review_independence: 'UNESTABLISHED',
+      ...(requireBoundSpans ? { exact_spans_and_source: true } : {}),
       engine_args: [].concat(score.extra_args ?? [], score.candidate_extra_args ?? []),
       ruleset_sha256: score.candidate_sha256, manifest_sha256: evidence.manifest_sha256,
       manifest_cases_sha256: plan.manifest_cases_sha256, profile_sha256: evidence.profile_sha256 },
