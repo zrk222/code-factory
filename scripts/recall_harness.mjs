@@ -577,17 +577,33 @@ async function prepareChanges(repo, dir, parent, fix, extensions) {
     changed_files_sha256: sha256(inventory.stdout), diff_sha256: sha256(diff.stdout), source_packets: { old, fixed } };
 }
 
+let revisionCloneSupport;
+const gitSupportsRevisionClone = () => revisionCloneSupport ??= runProcess('git', ['clone', '-h'], { timeout: 30000 })
+  .then(({ stdout, stderr }) => /--(?:\[no-\])?revision(?:\s|=)/.test(`${stdout}\n${stderr}`));
+
 async function buildPreparedCase(dir, row, scope) {
   const repo = join(dir, 'repo');
-  mkdirSync(repo, { recursive: true });
-  await git(repo, 'init', '-q');
-  await git(repo, 'remote', 'add', 'origin', `https://github.com/${row.repository}.git`);
-  if ((await git(repo, 'fetch', '-q', '--filter=blob:none', '--depth=2', 'origin', row.fix)).status !== 0) return { status: 'unfetchable' };
-  const fix = (await git(repo, 'rev-parse', 'FETCH_HEAD')).stdout.trim();
-  if (fix !== row.fix) throw new Error('Fetched case revision differs from the manifest');
-  const parent = (await git(repo, 'rev-parse', `${fix}^`)).stdout.trim();
+  const url = `https://github.com/${row.repository}.git`;
+  const clone = await gitSupportsRevisionClone();
+  const transport = ['--filter=blob:none', '--depth=2'];
+  const fetched = clone
+    ? await git(dir, 'clone', '-q', '--bare', '--no-tags', ...transport, '--revision', row.fix, url, repo)
+    : await fetchRevision(repo, url, row.fix, transport);
+  if (fetched.status !== 0) return { status: 'unfetchable' };
+  const revision = await git(repo, 'rev-list', '--parents', '--max-count=1', clone ? 'HEAD' : 'FETCH_HEAD');
+  const [fix, parent] = revision.stdout.trim().split(/\s+/);
+  if (revision.status !== 0 || fix !== row.fix) throw new Error('Fetched case revision differs from the manifest');
   if (!parent) return { status: 'no_parent' };
   return prepareChanges(repo, dir, parent, fix, scopeExtensions(row.ecosystem, scope));
+}
+
+async function fetchRevision(repo, url, fix, transport) {
+  mkdirSync(repo, { recursive: true });
+  const initialized = await git(repo, 'init', '-q');
+  if (initialized.status !== 0) return initialized;
+  const remote = await git(repo, 'remote', 'add', 'origin', url);
+  if (remote.status !== 0) return remote;
+  return git(repo, 'fetch', '-q', ...transport, 'origin', fix);
 }
 
 export async function publishPreparedCase(staging, directory, { rename = renameSync, platform = process.platform } = {}) {
