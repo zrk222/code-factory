@@ -1,0 +1,24 @@
+{
+  "schema": "factory.recall-pinned-control-readback.v1",
+  "scope": "Single exact jQuery control for speed-rule equivalence",
+  "source_commit": "effd615f0009e927dfd1f41d04fb6073478076d4",
+  "archive_sha256": "e5beb2ccf6a68a4907504dcddde52a2a26ca7c988ada662c1b6da5f85cf34c73",
+  "source_tree": {
+    "sha256": "b5adf837963f086c837b59a9480c89f986ef726baae6d5c8e2a0ee96a0c9efca",
+    "entries": 351
+  },
+  "baseline_sha256": "5fa9c86a1ef6c90bff6d8acfaaac54314644bc8ae37ff49b3053b4340afccd63",
+  "candidate_sha256": "651996a05d2aa4a498b69effc2112e04d7c465be15ab7fc2551dd8cb4f36b5cf",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "before": 15,
+  "after": 15,
+  "added": 0,
+  "removed": 0,
+  "local_report_sha256": "5d95efd38f8cb29747027f3a9afdf82d7dc3b05ba8472460114ae6570a2d9e15",
+  "full_18_control_qualification": "NOT_RUN"
+}
