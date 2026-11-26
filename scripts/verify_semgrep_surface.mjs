@@ -19,12 +19,35 @@ const receipt = { schema: 'factory.semgrep-surface-controls.v1', state: 'BLOCKED
 // Synthetic native parser/positive/safe controls: one finding per source, no accuracy claim.
 const polyglotControls = {
   go: ['go.disabled-tls-verification', 'package controls\nimport "crypto/tls"\nfunc controls(token string) {\nauthorization := "Bearer " + token\n_ = authorization\n// ruleid: go.disabled-tls-verification\n_ = tls.Config{InsecureSkipVerify: true}\n// ok: go.disabled-tls-verification\n_ = tls.Config{InsecureSkipVerify: false}\n}'],
-  rs: ['rust.reqwest-disabled-tls-verification', 'fn controls(password: &str) {\nlet _ = password;\n// ruleid: rust.reqwest-disabled-tls-verification\nlet _ = reqwest::Client::builder().danger_accept_invalid_certs(true);\n// ok: rust.reqwest-disabled-tls-verification\nlet _ = reqwest::Client::builder().danger_accept_invalid_certs(false);\n}'],
+  rs: ['rust.reqwest-disabled-tls-verification', readFileSync('deploy/deep-adapters/rules/tests/rust-controls.txt', 'utf8')],
   java: ['java.disabled-hostname-verification', 'import org.apache.http.conn.ssl.NoopHostnameVerifier;\nclass Controls { void controls(javax.net.ssl.HttpsURLConnection connection) {\n// ruleid: java.disabled-hostname-verification\njavax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier((host, session) -> true);\n// ok: java.disabled-hostname-verification\njavax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier((host, session) -> false);\n// ruleid: java.disabled-hostname-verification\nconnection.setHostnameVerifier((host, session) -> true);\n// ruleid: java.disabled-hostname-verification\nObject verifier = NoopHostnameVerifier.INSTANCE;\n}}\nclass TrustAll implements javax.net.ssl.X509TrustManager {\n// ruleid: java.disabled-hostname-verification\npublic void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {}\n// ok: java.disabled-hostname-verification\npublic void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) { validate(chain); }\n}'],
   c: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
   cpp: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
   cs: ['csharp.disabled-certificate-verification', 'class Controls { void Run() {\n// ruleid: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => true;\n// ok: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => false;\n}}'],
-  rb: ['ruby.disabled-tls-verification', '# ruleid: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE\n# ok: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_PEER\n# ruleid: ruby.disabled-tls-verification\nhttp.verify_mode = OpenSSL::SSL::VERIFY_NONE'],
+  rb: ['ruby.disabled-tls-verification', `# ruleid: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE\n# ok: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_PEER\n# ruleid: ruby.disabled-tls-verification\nhttp.verify_mode = OpenSSL::SSL::VERIFY_NONE
+def default_tls(cluster)
+  options = {}
+  if has_custom_ca(cluster)
+    options[:cert_store] = custom_ca(cluster)
+  else
+    # ruleid: ruby.disabled-tls-verification
+    options[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+  end
+  options
+end
+
+def deliberate_opt_in(cluster)
+  options = {}
+  if cluster['insecure-skip-tls-verify'] == true
+    # ok: ruby.disabled-tls-verification
+    options[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+  else
+    # ok: ruby.disabled-tls-verification
+    options[:verify_ssl] = OpenSSL::SSL::VERIFY_PEER
+  end
+  options
+end
+`],
   swift: ['swift.trust-exceptions', readFileSync('deploy/deep-adapters/rules/tests/swift-trust-controls.txt', 'utf8')],
 };
 
@@ -220,6 +243,7 @@ function fixtureExpectations(path, content) {
     for (const rule of annotation[1].split(',').map(value => value.trim())) {
       expected.push({ rule: `opt.factory.rules.${rule}`, path,
         line: index + 2, ...(sources.has(rule) ? { source_line: sources.get(rule) } : {}) });
+      sources.delete(rule);
     }
   }
   return expected;
@@ -292,6 +316,8 @@ try {
     'deploy/deep-adapters/rules/tests/tsx-shell-helper-controls.txt',
     'deploy/deep-adapters/rules/tests/tsx-html-output-controls.txt', 'deploy/deep-adapters/rules/tests/tsx-html-escaped-local-controls.txt',
     'deploy/deep-adapters/rules/tests/java-flow-controls.txt',
+    'deploy/deep-adapters/rules/tests/csharp-sql-library-controls.txt',
+    'deploy/deep-adapters/rules/tests/rust-controls.txt',
     'deploy/deep-adapters/rules/tests/swift-trust-controls.txt',
     'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs',
     'deploy/deep-adapters/Dockerfile', 'factoryline/deep_audit_attestation.py',

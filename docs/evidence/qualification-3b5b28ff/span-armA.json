@@ -1,0 +1,12 @@
+{"labels": [
+{"item": "s00", "verdict": "FP", "reason": "exec here is a local test helper that just runs a callback and logs the name; no shell or process execution happens."},
+{"item": "s01", "verdict": "FP", "reason": "Same local exec helper in test code; the template string is only used as a log label, not as a command."},
+{"item": "s02", "verdict": "FP", "reason": "exec is a module-local promise runner that logs; the interpolated name never reaches a shell."},
+{"item": "s03", "verdict": "FP", "reason": "Same local logging helper in a consumer test suite; no command execution sink."},
+{"item": "s04", "verdict": "FP", "reason": "Both the dataUrl and the label are HTML-escaped, so they cannot break out of the attribute, and the attachment dataUrl is an internally built data: URL (with a download attribute), not an attacker-chosen script URL."},
+{"item": "s05", "verdict": "FP", "reason": "The span is ${messagesFieldName.channelName}, a column identifier that comes from the collection schema through getRealFieldName, not from request input."},
+{"item": "s06", "verdict": "FP", "reason": "The span is ${channelsTableAliasName}, the internal collection name passed through quoteIdentifier, so no user data reaches it."},
+{"item": "s07", "verdict": "FP", "reason": "The span is ${channelsFieldName.name}, a schema-derived column name, not attacker-controlled."},
+{"item": "s08", "verdict": "FP", "reason": "The span covers ${messagesFieldName.userId}, the schema column name, not the ${userId} value, so no user input reaches it."},
+{"item": "s09", "verdict": "FP", "reason": "The span is ${messagesFieldName.receiveTimestamp}, a schema-derived column identifier in ORDER BY with no user input."}
+]}

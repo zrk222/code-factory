@@ -1,0 +1,12 @@
+{
+ "schema": "factory.recall-adjudicated-losses.v1",
+ "score": {
+  "path": "qualification.json",
+  "sha256": "92508dde409175bd2b92a3f39cd051ef29f96b0d02c61d91db954713cde79d78"
+ },
+ "adjudication": {
+  "path": "span-adjudicated-gain-fresh.json",
+  "sha256": "633c1308bf4c538a6d059cc4ce11c81f590acd9307fa344853f9206864fa147d"
+ },
+ "manifest_cases_sha256": "e9d0fe78171165310fa634699652f3bfd013bad559593c9b4790ea67ba1f476f"
+}

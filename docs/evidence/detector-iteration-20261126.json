@@ -1,0 +1,128 @@
+{
+ "schema": "factory.detector-iteration-receipt.v1",
+ "scope": "Python path-join guard (a) and Go/Ruby shell span review (b) on exposed and synthetic inputs only. Q2 cohort (manifest 28063dd5...) not read, opened, scanned or used.",
+ "rules": {
+  "baseline_sha256": "8cd65488012bd40f8659dffeac515274cfb9df09a224b638b9ff42d569975186",
+  "candidate_sha256": "b2a2800f3b71300f7752ee404bc1c16d6752cf54c6e31219f2174d853dbdf1d6",
+  "changed_rule": "python.parameter-path-join-without-containment"
+ },
+ "controls": {
+  "fixture": "scripts/verify_semgrep_surface.mjs --fixtures-only",
+  "opengrep_1_15_0": {
+   "rules": 64,
+   "failures": 0
+  },
+  "opengrep_2_1_0": {
+   "rules": 64,
+   "failures": 1,
+   "failure": "ruby.request-command-injection semgrep-pattern-limited.rb:90 missed, pre-existing on baseline 8cd65488 (recorded in recall-exposed-161-gains-20261126.json)"
+  },
+  "finding_matrix": {
+   "rules": 64,
+   "findings": 293,
+   "python.parameter-path-join-without-containment": 17,
+   "matrix_equals_annotations_equals_native_scan": true
+  },
+  "guard_controls": {
+   "discarded": "reported",
+   "handled_try": "reported",
+   "unrelated_path": "reported",
+   "unrelated_root": "reported",
+   "inverted_is_relative_to": "reported",
+   "inverted_commonpath": "reported",
+   "non_rejecting_branch": "reported",
+   "unnormalized_path": "reported",
+   "checked_after_use": "reported",
+   "reassigned_after_guard": "reported",
+   "named_helper": "reported",
+   "enforced_is_relative_to": "ok",
+   "enforced_relative_to_statement": "ok",
+   "enforced_relative_to_try_raise": "ok",
+   "enforced_commonpath": "ok",
+   "enforced_startswith_sep_continue": "ok",
+   "enforced_parent_equality": "ok",
+   "enforced_not_in_parents": "ok",
+   "known_gap_stored_result_second_name": "reported (annotated)"
+  }
+ },
+ "exposed_check": {
+  "receipt": "docs/evidence/recall-evaluation-b2a2800f-exposed161-opengrep210.json",
+  "receipt_sha256": "e83f0082ccb3e9d9ed3fdd1750ea91521bfc637ff8484e415fa9620ac8070b4a",
+  "harness": "scripts/recall_harness.mjs evaluate (gate logic unchanged), --probe-coverage true --control-timeout 15 --max-control-increase 0, synthetic control dir",
+  "engine_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "manifest_sha256": "7036f848d0f6ef56d0221177e0a129fed1a2a55db36deebe26e1fb762d08534c",
+  "cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "source": "161/161 cases on both arms: revisions, diff, changed-file inventory and source packets equal to recall-evaluation-eed93d96-exposed161-opengrep210.json",
+  "guard": {
+   "decision": "ACCEPT",
+   "lost": [],
+   "new_errors": [],
+   "new_coverage_gaps": [],
+   "control_increase": 0
+  },
+  "fixed_side": {
+   "residual": [
+    17,
+    18
+   ],
+   "hunk_hits": [
+    39,
+    40
+   ],
+   "rate": [
+    0.4359,
+    0.45
+   ],
+   "limit_rate": 0.4795,
+   "tolerance": "unchanged default 10%"
+  },
+  "denominator": 161,
+  "gained": [
+   "GHSA-23fx-92m6-4f2g"
+  ],
+  "new_fixed_side_alert": {
+   "case": "GHSA-fr3h-cpq2-9496",
+   "path": "src/mailparser/utils.py",
+   "line": 860,
+   "note": "Correct fix whose stored-result guard goes through a second normalized name; the same shape is the annotated known-gap control. Not adjudicated."
+  },
+  "earlier_attempts": [
+   "Two earlier replays of this pair were REJECTED only for GHSA-2rc4-7jc6-qffh (Go server/mock/datastore_mock.go): a partial parse, then a go.parameter-shell-command timeout, both under host load. The Go rule is byte-identical in both arms and takes ~2.5 s on that file with either rule set when the host is idle. The fresh replay at low load is the receipt above."
+  ]
+ },
+ "shell_span_review": "docs/evidence/recall-exposed-161-shell-span-review-20261126.json",
+ "accessed_inputs": [
+  "gh api issues/415/comments (last 4)",
+  "deploy/deep-adapters/rules/semgrep-pattern-limited.yml (rule bytes 1c60974c...)",
+  "deploy/deep-adapters/rules/tests/python-path-join-controls.txt",
+  "deploy/deep-adapters/rules/tests/python-path-request-controls.txt",
+  "grep keywords over deploy/deep-adapters/rules/tests/* (synthetic controls)",
+  "ls docs/evidence (filenames only; no held-out file opened)",
+  "git show 1e77f9c8:docs/evidence/recall-exposed-161-residual-84e99896.json (pinned 7 spans)",
+  "docs/evidence/recall-exposed-replay-index-20261126.json (exposed index, head only)",
+  "docs/evidence/recall-exposed-161-gains-20261126.json (exposed receipt summary)",
+  "docs/evidence/recall-engine-pins.json (head)",
+  "docs/evidence/qualification-3b5b28ff/README.md",
+  "docs/evidence/qualification-3b5b28ff/recall-evaluation-1c60974c-final.json (top-level summary printed; output incidentally included per-case rows of the earlier 'fresh-20261124' dev manifest - NOT Q2; not used for design)",
+  "/home/claude/pins/exposed-161-5f332b15.json (exposed manifest, keys/first row)",
+  "/home/claude/pins/profile-opengrep210.json",
+  "/home/claude/run-r161.sh, /home/claude/run-ra.sh (scripts only; referenced held-out paths not opened)",
+  "/home/claude/shim/opengrep; /opt/og21/bin/opengrep_linux_x86 (engine d6a68a84)",
+  "scripts/recall_harness.mjs (header, gate())",
+  "/home/claude/run-r161/captures/cases-v4 (exposed-161 prepared source cache, copied read-only)",
+  "/home/claude/pins/retention-receipt.json, prior-receipt.json (schema+manifest names only)",
+  "NOTE: `git log --oneline -3 origin/codex/recall-rule-speed` and `git branch -r --contains 1e77f9c8` printed commit subjects only (incl. b7be1f91 \"Publish paired primary Q2 held-out recall results\", fac44c87 \"Withdraw preliminary Q2 results...\"); no diff/show/grep of those commits or of heldout-recall-2026-q2.json / RECALL_PRECISION.md. Only file read from that history: the pinned recall-exposed-161-residual-84e99896.json at 1e77f9c8.",
+  "Never accessed: /home/claude/report/q2-*, /home/claude/report/tmp-q2v, /home/claude/wt-q2s, /home/claude/wt-q2v, /home/claude/fresh, /home/claude/heldout*, /home/claude/ho-sepoct.",
+  "cases-v4/728a78ea.../{old,new}/executors/sshexec/device.go (GHSA-6g56 exposed packet)",
+  "cases-v4/56cb193c.../{old,new}/lib/asciidoctor/include_ext/include_processor.rb + diff.patch (GHSA-v222 exposed packet); cases-v4/728a78ea.../diff.patch",
+  "cases-v4/0e14ae93.../{old,new} export_schedule_html.py (GHSA-23fx), cases-v4/c12e072f.../new/src/mailparser/utils.py (GHSA-fr3h), cases-v4/55d6b4c7.../new/server/mock/datastore_mock.go (GHSA-2rc4, timing only)",
+  "docs/evidence/qualification-3b5b28ff/control-plan-1c60974c.json (first 2.5 KB: control directories/exclusions)",
+  "docs/evidence/recall-evaluation-eed93d96-exposed161-opengrep210.json (exposed-161 receipt: Python path findings; source-binding comparison)",
+  "find over /home/claude for *.yml >100 KB, sha256 prefixes only (pruned wt-q2s, wt-q2v, report, fresh, heldout, heldout-run, ho-sepoct, wt-audit, cf, wt-q7, wt-pt, wt-det); looked for archived rules 84e99896/651996a0, none found; no file content read",
+  "A second broader search (git log --all -S / wider find) was denied by the permission classifier and not run",
+  "Timing scans: 60 largest exposed-161 *.py files from the cases-v4 cache (both rule sets)",
+  "Exposed-161 paired replays (scripts/recall_harness.mjs evaluate, flock /tmp/recall-replay.lock): 1c60974c->f904d35c prelim (REJECT, load-induced GHSA-2rc4 parse gap); 8cd65488->b2a2800f (REJECT, load-induced GHSA-2rc4 timeout); 8cd65488->b2a2800f fresh (ACCEPT, committed)",
+  "Synthetic controls: /home/claude/synthctl (control dir in replays); native fixtures built by scripts/verify_semgrep_surface.mjs --fixtures-only from deploy/deep-adapters/rules/tests/*"
+ ]
+}

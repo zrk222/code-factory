@@ -1,0 +1,4221 @@
+{
+ "schema": "factory.adjudicated-precision.v3",
+ "packet_sha256": "354929bdf9b4a355da62e3d1cbc91871ad940df8958887a8712a3f942b970f54",
+ "reviewers": [
+  "claude-opus-5.5",
+  "claude-sonnet-5.5"
+ ],
+ "judge": "fable-5.2",
+ "inputs": {
+  "packet": {
+   "sha256": "354929bdf9b4a355da62e3d1cbc91871ad940df8958887a8712a3f942b970f54"
+  },
+  "key": {
+   "sha256": "68c94117d03290835d2b364aafeb90f818c27557b8bf35fd3745ca28b3eeeb54"
+  },
+  "labels": [
+   {
+    "file": "labels-claude-exposed-67456bde.json",
+    "sha256": "a83efac3a51521961d26fbc62788434d87e5f13aa4bf70293ce1e3b1a30ce090",
+    "reviewer": "claude-opus-5.5"
+   },
+   {
+    "file": "labels-sonnet-exposed-67456bde.json",
+    "sha256": "c9aafd9a293b271e8adbf6c1e3918a7f8895f68543ab5a60b0394f1bc585b9bf",
+    "reviewer": "claude-sonnet-5.5"
+   }
+  ],
+  "judge_assignment": {
+   "file": "judge-packet.json",
+   "sha256": "308b511aaafc102a7a389adbb158f48f514f8feff22514de8dc52e0bf564cbd9"
+  },
+  "judge": {
+   "file": "judge-fable.json",
+   "sha256": "7ae9ebe88def55322773e0c7f20de7262dd80d18fddaa82646517230a416b190"
+  },
+  "context_supplement": {
+   "file": "context.json",
+   "sha256": "70a93a926ce9f8d076c720459f1f69ddc055e8c45c881b25b559754262e30913"
+  }
+ },
+ "independence": "AI reviewers and judge unless stated otherwise; independence from AI is unestablished",
+ "agreed_positions": 169,
+ "positions": 208,
+ "unresolved": {
+  "jointly_unclear": [
+   "4a991470fbaa",
+   "4d813df0e243",
+   "7f9811a3b175"
+  ],
+  "judge_unclear": [
+   "d509faa7feab"
+  ]
+ },
+ "final_counts": {
+  "FP": 111,
+  "TP": 93,
+  "UNCLEAR": 4
+ },
+ "rows": [
+  {
+   "position": 0,
+   "item": "8e34467e78e9",
+   "case": "GHSA-w62v-xxxg-mg59",
+   "file": "src/helper/css/index.ts",
+   "line": 85,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "cee26a6d9bca81f8665f06050041c60d0cade6bf8e3d9daf56b10e827aaefe91",
+   "span": [
+    39,
+    0,
+    56
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 1,
+   "item": "be590f0b67ea",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 963,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    44,
+    0,
+    75
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 2,
+   "item": "1bfbf815101b",
+   "case": "GHSA-3vfr-4gwf-qxfp",
+   "file": "lib/util/index.js",
+   "line": 318,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "a2d6358fee54c205acd6795d56022bd135b4f96845a494f8bf269fd82dce9524",
+   "span": [
+    44,
+    0,
+    63
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 3,
+   "item": "8ecccfa47db4",
+   "case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4447,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "19199171566df903b8abf5e3a31dde2600ba4563fed47eb9cfbebfc8be2393db",
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 4,
+   "item": "863f46beadc6",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/crop.py",
+   "line": 192,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "20f43017eeb69b8c2c61585394a8c11787ce73c58506032f774e81e5e8337086",
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 5,
+   "item": "04a136cad8ee",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/compress.py",
+   "line": 175,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "eb7128c64c6c21498e960a8c15c4cd3f196692b7b28322ba46052f3257c6252c",
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 6,
+   "item": "edfa319cc9b9",
+   "case": "GHSA-p853-83gj-wjj3",
+   "file": "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+   "line": 812,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "b59dd4b8fc0f04e0a4c5ea6a0904a6e7ab87ba1141742e0e0fd27d595ff20660",
+   "span": [
+    15,
+    0,
+    44
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 7,
+   "item": "f71189b35e7d",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 776,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    9,
+    0,
+    72
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 8,
+   "item": "ab254a94ce79",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 235,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "9ff5ce0756f5d15c959e9da84b763d4c3fd4baf2784904a8dae606ca162afa9b",
+   "span": [
+    9,
+    0,
+    58
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 9,
+   "item": "b5a475a02570",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 612,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    101
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 10,
+   "item": "26f7fc63859e",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/resize.py",
+   "line": 154,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "02f74357a8cba4ebf702ea3cdfb8cc1b358164ae14c5e98d1ca97a204af5bba0",
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 11,
+   "item": "59ed03a9e4d8",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1094,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    44,
+    0,
+    62
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 12,
+   "item": "7bc1d5ede5a5",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1074,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    44,
+    0,
+    66
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 13,
+   "item": "fadfe3afcddd",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 704,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    177
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 14,
+   "item": "a29843127af8",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 2471,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    10,
+    0,
+    167
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 15,
+   "item": "9ebec1776bbc",
+   "case": "GHSA-rcv6-pvrj-4xcg",
+   "file": "packages/nodes-base/nodes/EmailSend/v2/send.operation.ts",
+   "line": 238,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "c446d87ef186675bd739a96d23b8005f1a2ddcffa52c84683b9a293f7dbfe227",
+   "span": [
+    28,
+    0,
+    45
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 16,
+   "item": "11f23bcd0cd8",
+   "case": "GHSA-gxmw-5f7x-6g22",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4494,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "19199171566df903b8abf5e3a31dde2600ba4563fed47eb9cfbebfc8be2393db",
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 17,
+   "item": "8ee79fbaa242",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/compress.py",
+   "line": 171,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "eb7128c64c6c21498e960a8c15c4cd3f196692b7b28322ba46052f3257c6252c",
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 18,
+   "item": "95f903da5ec9",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/crop.py",
+   "line": 203,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "20f43017eeb69b8c2c61585394a8c11787ce73c58506032f774e81e5e8337086",
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 19,
+   "item": "2f3cd24d20c0",
+   "case": "GHSA-2mhj-fhvg-v428",
+   "file": "models/DataObject/ClassDefinition/Data/Block.php",
+   "line": 750,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "b5513d4bd5da74f44beda883d8e3c250f5f75f0e60cc94bcd312e4080261c4ec",
+   "span": [
+    35,
+    0,
+    41
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 20,
+   "item": "32e804de2adc",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 458,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    171
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 21,
+   "item": "aa545448ab61",
+   "case": "GHSA-g5r6-gv6m-f5jv",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 41,
+   "rule": "python.disabled-tls-verification",
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "66806709a3ee08d2c547ac3b2b8ca4313d64071b42f8a55b01351b897c4270de",
+   "span": [
+    9,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 22,
+   "item": "d018adb1fb23",
+   "case": "GHSA-p6gw-4frg-j7jw",
+   "file": "wsgidav/samples/mysql_dav_provider.py",
+   "line": 376,
+   "rule": "python.parameter-sql-text",
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": [
+    24,
+    0,
+    48
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 23,
+   "item": "be9f6a73e24e",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 417,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    82
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 24,
+   "item": "15e3ff46bf26",
+   "case": "GHSA-jmv2-qgxf-f995",
+   "file": "packages/integrations/solid/src/server.ts",
+   "line": 70,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d82e0ee2a5ed931e772db78fdd9f1cbe81bb5f3ae50fe7ecff19afa46171250c",
+   "span": [
+    23,
+    0,
+    49
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 25,
+   "item": "69629160bb38",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 1188,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    28,
+    0,
+    32
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 26,
+   "item": "f26318e2becd",
+   "case": "GHSA-g5r6-gv6m-f5jv",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 42,
+   "rule": "python.disabled-tls-verification",
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "66806709a3ee08d2c547ac3b2b8ca4313d64071b42f8a55b01351b897c4270de",
+   "span": [
+    9,
+    0,
+    44
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 27,
+   "item": "aefc95460065",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/resize.py",
+   "line": 161,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "02f74357a8cba4ebf702ea3cdfb8cc1b358164ae14c5e98d1ca97a204af5bba0",
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 28,
+   "item": "d445c7d3c718",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/document/pdf_fill_form.py",
+   "line": 130,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "64f958588739acadce28d576ca4750d129f67fe75f857f12824302f6e5b72ee8",
+   "span": [
+    21,
+    0,
+    56
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 29,
+   "item": "72ca226e3e9a",
+   "case": "GHSA-2gx6-7gx2-wwcf",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 43,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d07163ea4f9ca546a1980d441d3ea310ab306b066b5d6a68c41176f89e6c1270",
+   "span": [
+    33,
+    0,
+    54
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 30,
+   "item": "116ced3f5b7a",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 357,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    9,
+    0,
+    72
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 31,
+   "item": "97489d7e0492",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 579,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 32,
+   "item": "5fa7ced4561d",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/output-formatting/smart-pretty.ts",
+   "line": 1189,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "698ae6a26027af2bb17c1e335f974a17734087f329fa5d37deb08b22a19fd282",
+   "span": [
+    10,
+    0,
+    36
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 33,
+   "item": "ffab17dc5f81",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/watermark.py",
+   "line": 250,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "005f4002c35e3f437c0ae7eca9b58bdda6306be1534814efffd84ead40ebe564",
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 34,
+   "item": "0047cf5ecdf9",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 464,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    33,
+    0,
+    47
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 35,
+   "item": "9593f952a125",
+   "case": "GHSA-w93q-cq9w-58p7",
+   "file": "src/plugins/modal/embed.js",
+   "line": 876,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "2cbcc0e2f1463a309d34497d25000734497642bab14aabde13f5ec6aea6b6481",
+   "span": [
+    5,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 36,
+   "item": "0fdb1033ef22",
+   "case": "GHSA-vvr2-h2jp-838m",
+   "file": "codebase_rag/mcp/tools.py",
+   "line": 562,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "c609ae9a4fdb75d2a21b050818b017f2420d44c03aac73dd39f7d70b4307c4de",
+   "span": [
+    29,
+    0,
+    64
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 37,
+   "item": "6436e34ac372",
+   "case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/Postgre/Builder.php",
+   "line": 107,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "f95870aa40ae5b305a262069cea2f1845261935ddd7e22135e4e2723bc4a1868",
+   "span": [
+    37,
+    0,
+    41
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 38,
+   "item": "408293fa2e5d",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 567,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    35,
+    0,
+    49
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 39,
+   "item": "447533ab1329",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack/cjs/react-server-dom-webpack-server.node.development.js",
+   "line": 2832,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "59595cb0cd497248c2603478539843d6cbcacd9f3ca05b75fbf0defc9711bfe7",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 40,
+   "item": "3e0007d2f667",
+   "case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/android/icon_analysis.py",
+   "line": 357,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "464719df7ea2a685a84177732249e25e9f078b3150197c7e84c59d0004a6289e",
+   "span": [
+    18,
+    0,
+    37
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 41,
+   "item": "e90713e3f0d9",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1683,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    12,
+    0,
+    184
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 42,
+   "item": "e6e1fc760915",
+   "case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 396,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "569dc9bbecfd0c4aea8a5c140db4cbec33f497dbd03f743c05ad10f1099bbfca",
+   "span": [
+    30,
+    0,
+    82
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 43,
+   "item": "1d39a1f583d4",
+   "case": "GHSA-rjjv-87mx-6x3h",
+   "file": "packages/kit/src/exports/vite/utils.js",
+   "line": 92,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "6486b0026fe01fdbf28d9553547cafe48d7922aae2eb62682b765912c1ca8b00",
+   "span": [
+    88,
+    0,
+    109
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 44,
+   "item": "9154cb41862e",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack-experimental/cjs/react-server-dom-webpack-server.browser.development.js",
+   "line": 2577,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "29bd09e94d2ddd1560ef2d29f1e0fb80a730f9352c44ca4f7c25a897361df309",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 45,
+   "item": "c587306e1515",
+   "case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 396,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "569dc9bbecfd0c4aea8a5c140db4cbec33f497dbd03f743c05ad10f1099bbfca",
+   "span": [
+    30,
+    0,
+    53
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 46,
+   "item": "2c5c57ff42b0",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2003,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    30,
+    0,
+    34
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 47,
+   "item": "d509faa7feab",
+   "case": "GHSA-r7h9-qx4h-77j5",
+   "file": "src/Utils/ListFormatHelper.php",
+   "line": 129,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "UNCLEAR",
+   "final": "UNCLEAR"
+  },
+  {
+   "position": 48,
+   "item": "64b0b968e16b",
+   "case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1201,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "091043dc10687ec83209d297ea31eca908965001fb687c711beb2e59ae35a311",
+   "span": [
+    24,
+    0,
+    54
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 49,
+   "item": "8005930a3b15",
+   "case": "GHSA-4g3v-8h47-v7g6",
+   "file": "packages/astro/src/runtime/server/render/server-islands.ts",
+   "line": 201,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "df8d3a69264454ede3fab647d110487189a558794f9adc1b8189d687cb89a1b3",
+   "span": [
+    7,
+    0,
+    63
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 50,
+   "item": "bff7eb50cade",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 1266,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 51,
+   "item": "c97c9593d18a",
+   "case": "GHSA-gxmw-5f7x-6g22",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1292,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "091043dc10687ec83209d297ea31eca908965001fb687c711beb2e59ae35a311",
+   "span": [
+    24,
+    0,
+    54
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 52,
+   "item": "265755a58b76",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 465,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    151
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 53,
+   "item": "7cf3df6acccb",
+   "case": "GHSA-jg4p-g6xj-4qmf",
+   "file": "src/extractors/x-article.ts",
+   "line": 114,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "8271d3dd6d795d531603b3087e350f6f0e1933a897fd71e4728b7aabd4f6833b",
+   "span": [
+    11,
+    0,
+    63
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 54,
+   "item": "557d76ff5344",
+   "case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 200,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": [
+    66,
+    0,
+    78
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 55,
+   "item": "b8cd40a4c59b",
+   "case": "GHSA-2mhj-fhvg-v428",
+   "file": "models/DataObject/ClassDefinition/Data/Block.php",
+   "line": 736,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "b5513d4bd5da74f44beda883d8e3c250f5f75f0e60cc94bcd312e4080261c4ec",
+   "span": [
+    35,
+    0,
+    41
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 56,
+   "item": "402c4717eff3",
+   "case": "GHSA-pr22-p9rp-2cqv",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 43,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d07163ea4f9ca546a1980d441d3ea310ab306b066b5d6a68c41176f89e6c1270",
+   "span": [
+    33,
+    0,
+    54
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 57,
+   "item": "edfdf6e58058",
+   "case": "GHSA-p6gw-4frg-j7jw",
+   "file": "wsgidav/samples/mysql_dav_provider.py",
+   "line": 531,
+   "rule": "python.parameter-sql-text",
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": [
+    24,
+    0,
+    48
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 58,
+   "item": "44138652c091",
+   "case": "GHSA-4g3v-8h47-v7g6",
+   "file": "packages/astro/src/runtime/server/render/server-islands.ts",
+   "line": 88,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "df8d3a69264454ede3fab647d110487189a558794f9adc1b8189d687cb89a1b3",
+   "span": [
+    5,
+    0,
+    70
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 59,
+   "item": "6f93ef01b3ab",
+   "case": "GHSA-p853-83gj-wjj3",
+   "file": "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+   "line": 775,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "b59dd4b8fc0f04e0a4c5ea6a0904a6e7ab87ba1141742e0e0fd27d595ff20660",
+   "span": [
+    17,
+    0,
+    28
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 60,
+   "item": "e3e5d6aa017e",
+   "case": "GHSA-2mhj-fhvg-v428",
+   "file": "models/DataObject/ClassDefinition/Data/Block.php",
+   "line": 761,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "b5513d4bd5da74f44beda883d8e3c250f5f75f0e60cc94bcd312e4080261c4ec",
+   "span": [
+    35,
+    0,
+    41
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 61,
+   "item": "8e9d9a75f009",
+   "case": "GHSA-9qw7-j9xw-fv9c",
+   "file": "src/commands/checkout.js",
+   "line": 703,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "rule_revision": "a676bbe752616f7c1240f9976d39b2d533075b220a0dcff64c9cc503a4c67ca5",
+   "source_sha256": "dab452a74a0c95f81ba0dc69c32e78db37a70f46875843f08c15ccedf9b8bfb1",
+   "span": [
+    13,
+    0,
+    19
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 62,
+   "item": "cff637afe7bd",
+   "case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 403,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 63,
+   "item": "a2730b53cfa5",
+   "case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4417,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "19199171566df903b8abf5e3a31dde2600ba4563fed47eb9cfbebfc8be2393db",
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "TP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 64,
+   "item": "e699301854f9",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 363,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    28,
+    0,
+    32
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 65,
+   "item": "4d813df0e243",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 3031,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    27,
+    0,
+    31
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "UNCLEAR",
+   "judge": null,
+   "final": "UNCLEAR"
+  },
+  {
+   "position": 66,
+   "item": "39c31836b53a",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4161,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": [
+    95,
+    0,
+    119
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 67,
+   "item": "70df1de56846",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 304,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    79
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 68,
+   "item": "1ca443bbf865",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 599,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    43
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 69,
+   "item": "ea8ffefbcc62",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 512,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 70,
+   "item": "c81e5918cd39",
+   "case": "GHSA-5xpp-75jx-m839",
+   "file": "lib/network.js",
+   "line": 422,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "68451aef799f3391248045bac63142fdf1f623b1f9af74ab6f44f92023c3d288",
+   "span": [
+    35,
+    0,
+    81
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 71,
+   "item": "77061e4d20b6",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4215,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": [
+    92,
+    0,
+    116
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 72,
+   "item": "fea8ff126fa8",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2779,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 73,
+   "item": "c7624fdd7b86",
+   "case": "GHSA-79cw-hfcc-7mw9",
+   "file": "src/Note/Service/FilterService.php",
+   "line": 66,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "9de0ae4f03b30b85c34cdb9cec7c43eb6f798751d73bfa58b851a84b212822c0",
+   "span": [
+    44,
+    0,
+    107
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 74,
+   "item": "7f9811a3b175",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 3253,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": [
+    40,
+    0,
+    44
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "UNCLEAR",
+   "judge": null,
+   "final": "UNCLEAR"
+  },
+  {
+   "position": 75,
+   "item": "84f156dda918",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-process.ts",
+   "line": 452,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "ed5fb8cad4fc1dba1047d31a8db8e7a72d9dff7ced1fe882f346bfaf905b86e7",
+   "span": [
+    40,
+    0,
+    45
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 76,
+   "item": "269c25092427",
+   "case": "GHSA-jq3q-62jc-fqq9",
+   "file": "src/utils/githubProvider/cliProvider.ts",
+   "line": 40,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "f7b2aa64ffdea7eb5b1aaa3c61c14aa059443b1ea1b2adea387935d525da4eab",
+   "span": [
+    11,
+    0,
+    124
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 77,
+   "item": "eef25fa2f939",
+   "case": "GHSA-88pr-878c-24wf",
+   "file": "packages/components/nodes/documentloaders/S3File/S3File.ts",
+   "line": 756,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "rule_revision": "a676bbe752616f7c1240f9976d39b2d533075b220a0dcff64c9cc503a4c67ca5",
+   "source_sha256": "cfc531181afc4689ae511f8a9fd4cab42c75f1c6d19179028b8be89b5404234a",
+   "span": [
+    30,
+    0,
+    57
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 78,
+   "item": "58f0efe72caf",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack/cjs/react-server-dom-webpack-server.edge.development.js",
+   "line": 2555,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "5f2b88a73a80f18c91d3116cd077f0e3afcf1353a859f3cd69c2f6434656c179",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 79,
+   "item": "0c2b369b6b25",
+   "case": "GHSA-fhff-qmm8-h2fp",
+   "file": "mlflow/utils/file_utils.py",
+   "line": 980,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "a71e4ce5713712e6605f5c6fc7ebbec9878d083bf78bdd294c16dae34051dec2",
+   "span": [
+    15,
+    0,
+    44
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 80,
+   "item": "b8848b8544fa",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 430,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    28
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 81,
+   "item": "567cf8187ccb",
+   "case": "GHSA-v95x-xhq5-4929",
+   "file": "pkg/intercp/client/client.go",
+   "line": 39,
+   "rule": "go.tls-peer-not-verified",
+   "rule_revision": "ef0accea1f689004f3d10b9c133d6613f3cee699e115cc1aa46d93b95fe24758",
+   "source_sha256": "698c2f25f518242efb29451f79a64c7dc91c575a6782ffae70fcdd1280da04a5",
+   "span": [
+    31,
+    0,
+    87
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 82,
+   "item": "9ace743e40b5",
+   "case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/DynamicAnalyzer/views/ios/device/report.py",
+   "line": 104,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "a14b4a8f26571b32e0f55c853608ae068a31034b9f9e5530bbb95d9d91991ee4",
+   "span": [
+    16,
+    0,
+    47
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 83,
+   "item": "59a1814ecb3d",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4216,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": [
+    63,
+    0,
+    88
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 84,
+   "item": "8e5709d8ef3d",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-cron.ts",
+   "line": 1020,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "388b963fe73861cb83a2bbbd1882303feb2635fa3f507747be2fef7d97c32b02",
+   "span": [
+    11,
+    0,
+    58
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 85,
+   "item": "da999f336c54",
+   "case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 109,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "108a6f911b23e810b1df755c495431d7524c7150a160e4578093abc1a14092b4",
+   "span": [
+    8,
+    0,
+    90
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 86,
+   "item": "3dbe5324ca54",
+   "case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 189,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": [
+    67,
+    0,
+    80
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 87,
+   "item": "9bb6f12d09ba",
+   "case": "GHSA-3cgg-c5pp-57h6",
+   "file": "src/odt/to-html/html-renderer.ts",
+   "line": 197,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "ba067b8dad805f2d706d45a539c7caef073db3e9efcf95a71a2d378d662dbbc0",
+   "span": [
+    22,
+    0,
+    42
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 88,
+   "item": "d506bef2e14c",
+   "case": "GHSA-h8fp-f39c-q6mh",
+   "file": "packages/react-router/lib/hooks.tsx",
+   "line": 816,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "3e498d08b21365d3a93edf1d7beb2d0acc7b1fbde9987788af29bea41e940fbd",
+   "span": [
+    35,
+    0,
+    62
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 89,
+   "item": "79bc7b9ee097",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1273,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    10,
+    0,
+    189
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 90,
+   "item": "e6c8b3e668bc",
+   "case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 418,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "569dc9bbecfd0c4aea8a5c140db4cbec33f497dbd03f743c05ad10f1099bbfca",
+   "span": [
+    28,
+    0,
+    60
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 91,
+   "item": "f9c2c982f6a0",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-log.ts",
+   "line": 479,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "cd336ab18f1c85b0945f0abb4179fd0944c634b6d42645c047c5341d971f2b2a",
+   "span": [
+    31,
+    0,
+    73
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 92,
+   "item": "780943d09b47",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 300,
+   "rule": "javascript.request-path-traversal",
+   "rule_revision": "c383aeeaf76f8850cd982bc5a0ff46e3ed0663c0169dccbe89129d29f42f9679",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": [
+    7,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 93,
+   "item": "6f80d130dceb",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 236,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "9ff5ce0756f5d15c959e9da84b763d4c3fd4baf2784904a8dae606ca162afa9b",
+   "span": [
+    9,
+    0,
+    81
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 94,
+   "item": "d0fcfd4b5724",
+   "case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1292,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "091043dc10687ec83209d297ea31eca908965001fb687c711beb2e59ae35a311",
+   "span": [
+    24,
+    0,
+    54
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "TP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 95,
+   "item": "959b53e305e5",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 963,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    44,
+    0,
+    75
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 96,
+   "item": "2c15b7e6cc24",
+   "case": "GHSA-r7h9-qx4h-77j5",
+   "file": "src/Utils/ListFormatHelper.php",
+   "line": 72,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": [
+    13,
+    0,
+    33
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 97,
+   "item": "ff07029f80c8",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 230,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "9ff5ce0756f5d15c959e9da84b763d4c3fd4baf2784904a8dae606ca162afa9b",
+   "span": [
+    11,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 98,
+   "item": "9a1d1b693a06",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 871,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    11,
+    0,
+    84
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 99,
+   "item": "ea47312ed217",
+   "case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 1226,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "108a6f911b23e810b1df755c495431d7524c7150a160e4578093abc1a14092b4",
+   "span": [
+    10,
+    0,
+    64
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 100,
+   "item": "407ef1436540",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-turbopack-experimental/cjs/react-server-dom-turbopack-server.node.development.js",
+   "line": 2914,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "8d5cdc43021a264515ae47ec9f9d346c93fb078808fa7217c8a0b7303066ce58",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 101,
+   "item": "da9f1fb16d3b",
+   "case": "GHSA-3vfr-4gwf-qxfp",
+   "file": "lib/util/index.js",
+   "line": 308,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "a2d6358fee54c205acd6795d56022bd135b4f96845a494f8bf269fd82dce9524",
+   "span": [
+    58,
+    0,
+    75
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 102,
+   "item": "965176f9e73e",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-status.ts",
+   "line": 579,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "0764c4c8a4c82949966cb673245b11c0725ed40572cce55cb0875635c5a4a8ce",
+   "span": [
+    25,
+    0,
+    36
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 103,
+   "item": "4c5c5942a992",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/rotate.py",
+   "line": 195,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "99e68fe885e92c87866d389eb45813cfa4f97e3ae22e8dd30448d6f1a96ec104",
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "TP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 104,
+   "item": "22237ed0638c",
+   "case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 607,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "108a6f911b23e810b1df755c495431d7524c7150a160e4578093abc1a14092b4",
+   "span": [
+    10,
+    6,
+    6
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 105,
+   "item": "d5a9e1353b92",
+   "case": "GHSA-r7h9-qx4h-77j5",
+   "file": "src/Utils/ListFormatHelper.php",
+   "line": 77,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 106,
+   "item": "9f5b9d074e1a",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4221,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": [
+    20,
+    0,
+    24
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 107,
+   "item": "01cf523da2a4",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2063,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    30,
+    0,
+    34
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 108,
+   "item": "e4c090b25be5",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 76,
+   "rule": "javascript.request-path-traversal",
+   "rule_revision": "c383aeeaf76f8850cd982bc5a0ff46e3ed0663c0169dccbe89129d29f42f9679",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": [
+    7,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 109,
+   "item": "bdcca0cb099f",
+   "case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 645,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "108a6f911b23e810b1df755c495431d7524c7150a160e4578093abc1a14092b4",
+   "span": [
+    9,
+    0,
+    109
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 110,
+   "item": "9d025778d311",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 514,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    32,
+    0,
+    46
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 111,
+   "item": "4208333a5e35",
+   "case": "GHSA-6vmq-24h2-pj7j",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 42,
+   "rule": "python.disabled-tls-verification",
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "66806709a3ee08d2c547ac3b2b8ca4313d64071b42f8a55b01351b897c4270de",
+   "span": [
+    9,
+    0,
+    44
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 112,
+   "item": "99cafb7c97a1",
+   "case": "GHSA-xrqw-3rrv-vx5w",
+   "file": "src/transformers/tokenization_utils_base.py",
+   "line": 3316,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "c2cce6123f042052475867332cac670d245d0364a56f82a2724fa14adecbcc1d",
+   "span": [
+    41,
+    0,
+    98
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 113,
+   "item": "9eca1fb0e881",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 311,
+   "rule": "javascript.request-path-traversal",
+   "rule_revision": "c383aeeaf76f8850cd982bc5a0ff46e3ed0663c0169dccbe89129d29f42f9679",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": [
+    42,
+    0,
+    55
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 114,
+   "item": "9894126eadbb",
+   "case": "GHSA-22g5-r2x5-97cx",
+   "file": "src/subParsers/makehtml/cmInline.js",
+   "line": 765,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d6ddf986976b7f99bd36de9fa9c777a90d31e29a593940333bbe25bc3bd40e4d",
+   "span": [
+    54,
+    0,
+    74
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 115,
+   "item": "2f1d22aa4b74",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 743,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    9,
+    0,
+    89
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 116,
+   "item": "37c465ad3ef6",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-log.ts",
+   "line": 459,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "cd336ab18f1c85b0945f0abb4179fd0944c634b6d42645c047c5341d971f2b2a",
+   "span": [
+    9,
+    0,
+    62
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 117,
+   "item": "3aaaa996f41c",
+   "case": "GHSA-cj54-hpcc-gj6h",
+   "file": "thumbor/loaders/file_loader.py",
+   "line": 19,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "d612a17cc6fcb8f7bbe8fcabdb37821eb47d3b4f3eabcc228e419f2549274d10",
+   "span": [
+    17,
+    2,
+    6
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 118,
+   "item": "dbc7680a17f9",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4167,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": [
+    23,
+    0,
+    27
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 119,
+   "item": "905dc781eda3",
+   "case": "GHSA-w3fx-mc44-mf6j",
+   "file": "backend/chainlit/server.py",
+   "line": 290,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "ff4869493d041a88845f562660cc545863ea9211fbc9d61d6266b0dafdfca9d3",
+   "span": [
+    17,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 120,
+   "item": "1cbd086d9208",
+   "case": "GHSA-fhff-qmm8-h2fp",
+   "file": "mlflow/utils/file_utils.py",
+   "line": 963,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "a71e4ce5713712e6605f5c6fc7ebbec9878d083bf78bdd294c16dae34051dec2",
+   "span": [
+    15,
+    0,
+    44
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 121,
+   "item": "0e3ae08287e5",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-branch.ts",
+   "line": 437,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "2000fadb9931b65ff3846365c5689899864f6aec69adfb5cc5e079defbadd574",
+   "span": [
+    31,
+    0,
+    62
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 122,
+   "item": "1fe46a9570dd",
+   "case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 407,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "569dc9bbecfd0c4aea8a5c140db4cbec33f497dbd03f743c05ad10f1099bbfca",
+   "span": [
+    32,
+    0,
+    60
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 123,
+   "item": "bc13d9963c04",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 501,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 124,
+   "item": "c8ffb25221c7",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1115,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    51,
+    0,
+    69
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 125,
+   "item": "6daad23ffe18",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1018,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    9,
+    0,
+    68
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 126,
+   "item": "748f1d1d90f4",
+   "case": "GHSA-4xm8-rg9h-jhq2",
+   "file": "packages/resources-provider-plugin/src/filestorage.ts",
+   "line": 123,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "rule_revision": "a676bbe752616f7c1240f9976d39b2d533075b220a0dcff64c9cc503a4c67ca5",
+   "source_sha256": "b0ec5b644abf2efc50492824bcb72e4842a5ded37f7582223d6254c45b8e01ef",
+   "span": [
+    24,
+    0,
+    70
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 127,
+   "item": "626f75bd1ac5",
+   "case": "GHSA-w93q-cq9w-58p7",
+   "file": "src/plugins/modal/embed.js",
+   "line": 847,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "2cbcc0e2f1463a309d34497d25000734497642bab14aabde13f5ec6aea6b6481",
+   "span": [
+    4,
+    0,
+    96
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 128,
+   "item": "eb88e309fa3c",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1035,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    44,
+    0,
+    68
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 129,
+   "item": "9ef2e299c069",
+   "case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 565,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "108a6f911b23e810b1df755c495431d7524c7150a160e4578093abc1a14092b4",
+   "span": [
+    10,
+    0,
+    21
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 130,
+   "item": "6770ef535742",
+   "case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 137,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": [
+    64,
+    0,
+    78
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 131,
+   "item": "ae08e65f9ac3",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 918,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    11,
+    0,
+    76
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 132,
+   "item": "dda9e20536d4",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1266,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    13,
+    0,
+    51
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 133,
+   "item": "9d9520e00b2e",
+   "case": "GHSA-3cgg-c5pp-57h6",
+   "file": "src/odt/to-html/html-renderer.ts",
+   "line": 273,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "ba067b8dad805f2d706d45a539c7caef073db3e9efcf95a71a2d378d662dbbc0",
+   "span": [
+    18,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 134,
+   "item": "8a1c6f8f69dc",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 854,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    30,
+    0,
+    34
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 135,
+   "item": "ed131b76f7a1",
+   "case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4494,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "19199171566df903b8abf5e3a31dde2600ba4563fed47eb9cfbebfc8be2393db",
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 136,
+   "item": "d47ed6dcd53e",
+   "case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/DynamicAnalyzer/views/ios/corellium_instance.py",
+   "line": 779,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "ee0148e568fead7e86a3a46a02a9501cc4c23ac92ee90c5f72e7e3f67c6a09d9",
+   "span": [
+    16,
+    0,
+    47
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 137,
+   "item": "18ef2cef1a35",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/rotate.py",
+   "line": 179,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "99e68fe885e92c87866d389eb45813cfa4f97e3ae22e8dd30448d6f1a96ec104",
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 138,
+   "item": "41ff079e7a73",
+   "case": "GHSA-4vjg-vx72-qq4g",
+   "file": "lib/network.js",
+   "line": 1408,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "56c236e32b8576e3e4c76d37ed4a4bc9be933241d5d8b607ff258c2410e0555f",
+   "span": [
+    18,
+    0,
+    21
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 139,
+   "item": "4a991470fbaa",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 379,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    9,
+    0,
+    64
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "UNCLEAR",
+   "judge": null,
+   "final": "UNCLEAR"
+  },
+  {
+   "position": 140,
+   "item": "7aeeada44fb5",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1244,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": [
+    44,
+    0,
+    68
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 141,
+   "item": "7d003c2f9dc6",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-branch.ts",
+   "line": 485,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "2000fadb9931b65ff3846365c5689899864f6aec69adfb5cc5e079defbadd574",
+   "span": [
+    9,
+    0,
+    61
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 142,
+   "item": "b4224d621e1e",
+   "case": "GHSA-6vmq-24h2-pj7j",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 41,
+   "rule": "python.disabled-tls-verification",
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "66806709a3ee08d2c547ac3b2b8ca4313d64071b42f8a55b01351b897c4270de",
+   "span": [
+    9,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 143,
+   "item": "6d42b5b1876b",
+   "case": "GHSA-88pr-878c-24wf",
+   "file": "packages/components/nodes/documentloaders/S3Directory/S3Directory.ts",
+   "line": 191,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "rule_revision": "a676bbe752616f7c1240f9976d39b2d533075b220a0dcff64c9cc503a4c67ca5",
+   "source_sha256": "477e3c8d5a9960a1485a6d9efbeb1299c505e2c97c49f87be2589fdbcc227844",
+   "span": [
+    38,
+    0,
+    61
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 144,
+   "item": "daad7fd96bae",
+   "case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/android/icon_analysis.py",
+   "line": 332,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "464719df7ea2a685a84177732249e25e9f078b3150197c7e84c59d0004a6289e",
+   "span": [
+    24,
+    0,
+    43
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 145,
+   "item": "0f2b3be2427b",
+   "case": "GHSA-p34x-fmph-9fjx",
+   "file": "src/core/modules/atomic/data/csv_write.py",
+   "line": 118,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "8eebdc8802bb5a70570f12c5fd4d9e3dd5c11a1088bc5304a8f7c9a8908ee075",
+   "span": [
+    19,
+    0,
+    28
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 146,
+   "item": "84952d1fa1d8",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-diff.ts",
+   "line": 444,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5b395c84835a1f333f4c2cc4f28c690b0cb34a45a2589befef81d0844aa96f66",
+   "span": [
+    31,
+    0,
+    38
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 147,
+   "item": "ddd1da22580c",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-cron.ts",
+   "line": 991,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "388b963fe73861cb83a2bbbd1882303feb2635fa3f507747be2fef7d97c32b02",
+   "span": [
+    11,
+    0,
+    66
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 148,
+   "item": "8c57a0c4e8a6",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2621,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    27,
+    0,
+    31
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 149,
+   "item": "c19425cdd0d3",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2542,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    28,
+    0,
+    32
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 150,
+   "item": "894186d0173e",
+   "case": "GHSA-g3hq-hphg-8fhh",
+   "file": "pheditor.php",
+   "line": 334,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "42286d6ef2f80ce10b714e6132b8a395278aed5b0a09c40ee8f72d33c9648331",
+   "span": [
+    21,
+    2,
+    19
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 151,
+   "item": "9f0e293a4f90",
+   "case": "GHSA-2gx6-7gx2-wwcf",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 48,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d07163ea4f9ca546a1980d441d3ea310ab306b066b5d6a68c41176f89e6c1270",
+   "span": [
+    51,
+    0,
+    72
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 152,
+   "item": "bfe7a697bf3d",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 974,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    9,
+    0,
+    21
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 153,
+   "item": "c450917e248b",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 521,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    50,
+    0,
+    57
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 154,
+   "item": "d31600eac605",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1019,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    9,
+    0,
+    19
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 155,
+   "item": "31ca3c3b7ea4",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1706,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    33,
+    0,
+    216
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 156,
+   "item": "92638e4c690c",
+   "case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 230,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": [
+    60,
+    0,
+    66
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 157,
+   "item": "112dcb21c044",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-merge.ts",
+   "line": 348,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "59d6f31eaae01d715dd6b01a6937ca93bd016351b1bd33ee6798adc15194a91d",
+   "span": [
+    23,
+    0,
+    45
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 158,
+   "item": "7d7105d0099b",
+   "case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1498,
+   "rule": "python.parameter-path-join-without-containment",
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "091043dc10687ec83209d297ea31eca908965001fb687c711beb2e59ae35a311",
+   "span": [
+    27,
+    0,
+    69
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 159,
+   "item": "bb34760d41fc",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-status.ts",
+   "line": 578,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "0764c4c8a4c82949966cb673245b11c0725ed40572cce55cb0875635c5a4a8ce",
+   "span": [
+    34,
+    0,
+    45
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 160,
+   "item": "522539c51703",
+   "case": "GHSA-f4j9-crrj-867q",
+   "file": "packages/integrations/svelte/src/server.ts",
+   "line": 48,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "0f8b57f61bba54fd3026cff149c10e54bbd899dc6e2376d5e4b2390a063fdb1c",
+   "span": [
+    20,
+    0,
+    45
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 161,
+   "item": "b9b5bd6e3d78",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 613,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 162,
+   "item": "efe3b50ac18e",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 680,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    10,
+    0,
+    129
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 163,
+   "item": "545a59ce22e8",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 447,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    9,
+    0,
+    63
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 164,
+   "item": "a3644c356e0c",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack/cjs/react-server-dom-webpack-server.browser.development.js",
+   "line": 2495,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "bc5941b2200e146d6b400d0d49a771dca2d25cf864bbee1df2997f93c78fe039",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 165,
+   "item": "05b5cc7f1aae",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1297,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    10,
+    0,
+    174
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 166,
+   "item": "da7544295cc8",
+   "case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 245,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": [
+    60,
+    0,
+    66
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 167,
+   "item": "9daa4333dfb3",
+   "case": "GHSA-22g5-r2x5-97cx",
+   "file": "src/subParsers/makehtml/cmInline.js",
+   "line": 590,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d6ddf986976b7f99bd36de9fa9c777a90d31e29a593940333bbe25bc3bd40e4d",
+   "span": [
+    20,
+    0,
+    40
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 168,
+   "item": "e00b8ffe5785",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 472,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    114
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 169,
+   "item": "bf212a821829",
+   "case": "GHSA-v5ff-xmfp-p245",
+   "file": "src/app/lib/fs.js",
+   "line": 117,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "97b438fd4d7e696299023a44d0398b01d7ec41fe6ab905732c16b0224a30ee0a",
+   "span": [
+    16,
+    0,
+    34
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 170,
+   "item": "f79501900c5f",
+   "case": "GHSA-v95x-xhq5-4929",
+   "file": "pkg/intercp/client/client.go",
+   "line": 48,
+   "rule": "go.disabled-tls-verification",
+   "rule_revision": "fb847bf8f4fcf8857f47b17a51f3656a96aa8339f33623a5d9fb26e58b357b6e",
+   "source_sha256": "698c2f25f518242efb29451f79a64c7dc91c575a6782ffae70fcdd1280da04a5",
+   "span": [
+    4,
+    0,
+    39
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 171,
+   "item": "798739302c48",
+   "case": "GHSA-pr22-p9rp-2cqv",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 48,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d07163ea4f9ca546a1980d441d3ea310ab306b066b5d6a68c41176f89e6c1270",
+   "span": [
+    51,
+    0,
+    72
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 172,
+   "item": "1a60c6fc77a5",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1721,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    12,
+    0,
+    192
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 173,
+   "item": "b6e31235bd0d",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-branch.ts",
+   "line": 485,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "2000fadb9931b65ff3846365c5689899864f6aec69adfb5cc5e079defbadd574",
+   "span": [
+    9,
+    0,
+    61
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 174,
+   "item": "dfa3d950b0c1",
+   "case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 316,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 175,
+   "item": "886f97867dcf",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 420,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    68
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 176,
+   "item": "860c9643c5ce",
+   "case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/BaseBuilder.php",
+   "line": 1851,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1eae7866c416f9bd899ecf4aedfbf38af80c546685f492b5ab4f073bfef4b1de",
+   "span": [
+    34,
+    0,
+    38
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "UNCLEAR",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 177,
+   "item": "856dde61206d",
+   "case": "GHSA-22g5-r2x5-97cx",
+   "file": "src/subParsers/makehtml/cmInline.js",
+   "line": 603,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "d6ddf986976b7f99bd36de9fa9c777a90d31e29a593940333bbe25bc3bd40e4d",
+   "span": [
+    20,
+    0,
+    38
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 178,
+   "item": "39312718e81a",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-cron.ts",
+   "line": 817,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "388b963fe73861cb83a2bbbd1882303feb2635fa3f507747be2fef7d97c32b02",
+   "span": [
+    7,
+    0,
+    51
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 179,
+   "item": "71d7c7e8bce1",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-turbopack/cjs/react-server-dom-turbopack-server.node.development.js",
+   "line": 2832,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "bac72ad4dc97a573551f3b4903850094422834f6fde14be97862084ef9d070cb",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 180,
+   "item": "fccf1398e772",
+   "case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/ios/views/view_source.py",
+   "line": 72,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": [
+    42,
+    0,
+    50
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 181,
+   "item": "7491d652bf0e",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4058,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": [
+    57,
+    0,
+    93
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 182,
+   "item": "1859066a20e8",
+   "case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/Postgre/Builder.php",
+   "line": 129,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "f95870aa40ae5b305a262069cea2f1845261935ddd7e22135e4e2723bc4a1868",
+   "span": [
+    37,
+    0,
+    41
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 183,
+   "item": "92c0dccf7dc0",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 459,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    174
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 184,
+   "item": "1ea24838e5ef",
+   "case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/ios/views/view_source.py",
+   "line": 138,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": [
+    26,
+    0,
+    31
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 185,
+   "item": "736dcc264880",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack-experimental/cjs/react-server-dom-webpack-server.node.development.js",
+   "line": 2914,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "00795e3043e819b2873b621336aa00f8128503a6a6628c9125bcc5421d25790a",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 186,
+   "item": "23b175c5a0b2",
+   "case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 624,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    50,
+    0,
+    57
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 187,
+   "item": "704a137065c8",
+   "case": "GHSA-gr4j-r575-g665",
+   "file": "js/parts/SVGRenderer.js",
+   "line": 830,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "b39d194a947272e0ba20dcee8c2c43044cf6ff677716f9b7c348a2d548a4b7dd",
+   "span": [
+    61,
+    0,
+    92
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 188,
+   "item": "eab57ef19005",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1265,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    10,
+    0,
+    183
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 189,
+   "item": "0c950c8a135d",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 670,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    50,
+    0,
+    57
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 190,
+   "item": "cecde6b571bb",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 88,
+   "rule": "javascript.request-path-traversal",
+   "rule_revision": "c383aeeaf76f8850cd982bc5a0ff46e3ed0663c0169dccbe89129d29f42f9679",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": [
+    42,
+    0,
+    55
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 191,
+   "item": "9850439a8373",
+   "case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/document/pdf_fill_form.py",
+   "line": 137,
+   "rule": "python.request-path-traversal",
+   "rule_revision": "d99ad0dea329be3f538c79577319de14b0f2556818d8516199d8d98bd4ab36a7",
+   "source_sha256": "64f958588739acadce28d576ca4750d129f67fe75f857f12824302f6e5b72ee8",
+   "span": [
+    19,
+    0,
+    30
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 192,
+   "item": "4acf18d38b1d",
+   "case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 959,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": [
+    9,
+    0,
+    76
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 193,
+   "item": "0dc0d6ee6538",
+   "case": "GHSA-3cgg-c5pp-57h6",
+   "file": "src/odt/to-html/html-renderer.ts",
+   "line": 252,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "ba067b8dad805f2d706d45a539c7caef073db3e9efcf95a71a2d378d662dbbc0",
+   "span": [
+    19,
+    0,
+    39
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 194,
+   "item": "58f5174b8e3b",
+   "case": "GHSA-v5ff-xmfp-p245",
+   "file": "src/app/lib/fs.js",
+   "line": 140,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "97b438fd4d7e696299023a44d0398b01d7ec41fe6ab905732c16b0224a30ee0a",
+   "span": [
+    39,
+    0,
+    42
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 195,
+   "item": "8a891467318c",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 461,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    8,
+    0,
+    153
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 196,
+   "item": "13c795b0c1e5",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 530,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": [
+    15,
+    0,
+    138
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 197,
+   "item": "e9eb558d0274",
+   "case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/BaseBuilder.php",
+   "line": 3018,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "1eae7866c416f9bd899ecf4aedfbf38af80c546685f492b5ab4f073bfef4b1de",
+   "span": [
+    37,
+    0,
+    41
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 198,
+   "item": "1c77fd7884cc",
+   "case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 416,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "569dc9bbecfd0c4aea8a5c140db4cbec33f497dbd03f743c05ad10f1099bbfca",
+   "span": [
+    28,
+    0,
+    60
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 199,
+   "item": "baac06766b90",
+   "case": "GHSA-5m6h-8g35-p3m7",
+   "file": "app-vite/templates/entry/ssg-script.js",
+   "line": 56,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "5c8f5f8e5a90426ee2abfe2dd977818e685d35d328b21613aec0e69e1865e183",
+   "span": [
+    8,
+    0,
+    41
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 200,
+   "item": "1986404e851a",
+   "case": "GHSA-5xpp-75jx-m839",
+   "file": "lib/network.js",
+   "line": 1449,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "68451aef799f3391248045bac63142fdf1f623b1f9af74ab6f44f92023c3d288",
+   "span": [
+    18,
+    0,
+    21
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 201,
+   "item": "a84259a71984",
+   "case": "GHSA-jq3q-62jc-fqq9",
+   "file": "src/utils/getGitHandler.ts",
+   "line": 340,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "c964b9a819c54460f4b9e2d9f18e818e5e1f9fa1965ab42078383b3208daef63",
+   "span": [
+    34,
+    0,
+    82
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 202,
+   "item": "dea62e4c9e3e",
+   "case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 412,
+   "rule": "javascript.parameter-shell-command",
+   "rule_revision": "6bf82c7d929eeab2b10247251da3d4a40855122e5890e458cd742b421898a448",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": [
+    40,
+    0,
+    71
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 203,
+   "item": "9fb1dfd9fa61",
+   "case": "GHSA-79cw-hfcc-7mw9",
+   "file": "src/Note/Service/FilterService.php",
+   "line": 70,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "9de0ae4f03b30b85c34cdb9cec7c43eb6f798751d73bfa58b851a84b212822c0",
+   "span": [
+    31,
+    0,
+    102
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 204,
+   "item": "d3d27f8a15d3",
+   "case": "GHSA-79cw-hfcc-7mw9",
+   "file": "src/Listing/Filter/EqualsFilter.php",
+   "line": 42,
+   "rule": "php.parameter-sql-text",
+   "rule_revision": "974ecaa6126866005a18494a1e5d82fffcdc630926938717973e69c51c9374c1",
+   "source_sha256": "915e3c526dc80ecd61310d07a5726b1cdc7f7734994f038d3a6be3544aa9901f",
+   "span": [
+    23,
+    0,
+    58
+   ],
+   "on_fix_hunk": true,
+   "reviewer_1": "TP",
+   "reviewer_2": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 205,
+   "item": "74eaa726883a",
+   "case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-turbopack-experimental/cjs/react-server-dom-turbopack-server.edge.development.js",
+   "line": 2637,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "5008641433cea4b4bd9c7a3bbf06112901a788c466d999358704fe3251718ec1",
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 206,
+   "item": "5515079d6a16",
+   "case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 407,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "rule_revision": "5cf73c2f8f7c0147279da1027d1ffcbde65905f244c16328bb2b27769cf4873d",
+   "source_sha256": "569dc9bbecfd0c4aea8a5c140db4cbec33f497dbd03f743c05ad10f1099bbfca",
+   "span": [
+    32,
+    0,
+    89
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 207,
+   "item": "a824ea59599e",
+   "case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 219,
+   "rule": "php.request-html-injection",
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "9ff5ce0756f5d15c959e9da84b763d4c3fd4baf2784904a8dae606ca162afa9b",
+   "span": [
+    9,
+    0,
+    87
+   ],
+   "on_fix_hunk": false,
+   "reviewer_1": "FP",
+   "reviewer_2": "FP",
+   "judge": null,
+   "final": "FP"
+  }
+ ]
+}

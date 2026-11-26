@@ -1,0 +1,424 @@
+{
+ "schema": "factory.recall-control-locators.v1",
+ "receipt": "docs/evidence/qualification-3b5b28ff/recall-evaluation-1c60974c-final.json",
+ "control_plan": "docs/evidence/qualification-3b5b28ff/control-plan-1c60974c.json",
+ "normalization": "harness source_tree digest over the staged directory after --control-exclude build/test (tree hash as computed by scripts/recall_harness.mjs); git_tree is the upstream HEAD tree",
+ "controls": [
+  {
+   "control": "ZJONSSON_node-unzipper",
+   "repository": "https://github.com/ZJONSSON/node-unzipper.git",
+   "commit": "431c45c5bcf0e95a8a3f56ca7da8f46daffb8ac2",
+   "git_tree": "fd022993195ec92109cd0fedca2bc1a08d4c143c",
+   "harness_source_tree_sha256": "70741b358922f1df5fe1352e002db30d1893cb535fa978dd014bc719437caf5a",
+   "harness_entries": 111,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "apache_commons-compress",
+   "repository": "https://github.com/apache/commons-compress.git",
+   "commit": "17796875a060734aeb2bfd4c2d3ea0a5aa546c22",
+   "git_tree": "0bfc7b80fe97785be3ffb0c151ae6f9324d239b5",
+   "harness_source_tree_sha256": "c1914653b30e4d820508b4608a3750fcb21571e431a78215eafacd998e365ec0",
+   "harness_entries": 1172,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "caddyserver_caddy",
+   "repository": "https://github.com/caddyserver/caddy.git",
+   "commit": "edcdfa0ed88f7dcc1c53720d25218fde9d63eb1e",
+   "git_tree": "e418c0f5ed614b1bcf1455c083040bd856da0652",
+   "harness_source_tree_sha256": "28cdd464c184c650045f4e5288ba48d361cfa608c0cc4565407422368e90b15e",
+   "harness_entries": 780,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "composer_composer",
+   "repository": "https://github.com/composer/composer.git",
+   "commit": "edc2b0dbc63b9fad29b0b72311fe7247ffae33e1",
+   "git_tree": "23e0c31eef23e22593ab89cbc9896898cfc5c895",
+   "harness_source_tree_sha256": "3d4722d12e8e741c75fb3b8227176e243d74cc82b9e0c38b1035dc8d278017ec",
+   "harness_entries": 1151,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "cthackers_adm-zip",
+   "repository": "https://github.com/cthackers/adm-zip.git",
+   "commit": "72587088fb1acfdd5abd46ac7b492f7582944270",
+   "git_tree": "da84a7877539045e64b03f5e403411fe36fbfa38",
+   "harness_source_tree_sha256": "4d5bcf94f4aefff069a7b1525be474bf10bad26523ee5acb8964cdd59f1c4937",
+   "harness_entries": 82,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "expressjs_express",
+   "repository": "https://github.com/expressjs/express.git",
+   "commit": "43fca52d28a422c8be48fd489cbd4f2d6152bab6",
+   "git_tree": "697a8f753f84d52149bce47e75228d3d6ef4ed77",
+   "harness_source_tree_sha256": "52ebaac07e67d2caa455849aa1851e1ba8ab8ff438b784378c7e8a73e79ccb90",
+   "harness_entries": 216,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "getgrav_grav",
+   "repository": "https://github.com/getgrav/grav.git",
+   "commit": "491762339c32b2c653358067b946ce19861c4b70",
+   "git_tree": "3f1bd60ad28f2f08e3707d9332e74fd9827ef04b",
+   "harness_source_tree_sha256": "b92bcf2b4cd0efe1290435df8a6982e38aed8785182ce1acbc2b2ae1728598d1",
+   "harness_entries": 1353,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "gohugoio_hugo",
+   "repository": "https://github.com/gohugoio/hugo.git",
+   "commit": "61e3122e370bb0aac204d90c4a69d3c936a8709c",
+   "git_tree": "7478d35a8deb12d79ae05c68f44560cec6ad1f57",
+   "harness_source_tree_sha256": "8ddd8cea09c810d2fd9e47c4907f6a1b8d16b49e5485a501aca5bf74faba375d",
+   "harness_entries": 2619,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "jekyll_jekyll",
+   "repository": null,
+   "commit": null,
+   "git_tree": null,
+   "harness_source_tree_sha256": "fb8903e34041560ea0afaaf42da1329bde93af493c3bb7bfc7214e00dc44bec0",
+   "harness_entries": 806,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": "staged from an archive without git metadata; reproduce by matching harness_source_tree_sha256"
+  },
+  {
+   "control": "jquery_jquery",
+   "repository": "https://github.com/jquery/jquery.git",
+   "commit": "effd615f0009e927dfd1f41d04fb6073478076d4",
+   "git_tree": "a756a881143e8395243600f3138cdc44f1757776",
+   "harness_source_tree_sha256": "b5adf837963f086c837b59a9480c89f986ef726baae6d5c8e2a0ee96a0c9efca",
+   "harness_entries": 351,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [
+     "dist/wrappers/jquery.bundler-require-wrapper.js",
+     "dist/wrappers/jquery.bundler-require-wrapper.slim.js"
+    ],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "laravel_framework",
+   "repository": "https://github.com/laravel/framework.git",
+   "commit": "817f2fc80be4c95f59f7c7f0e696ae1383899fdb",
+   "git_tree": "c3506ea460ddf14558b0a4053e57d25144192751",
+   "harness_source_tree_sha256": "fc09874aa4d1c3bef971ffe7b01ea98cb6b792e13da62affff3f36278b9cbd99",
+   "harness_entries": 3528,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [
+     "src/Illuminate/Foundation/resources/exceptions/renderer/dist/scripts.js"
+    ],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "markedjs_marked",
+   "repository": "https://github.com/markedjs/marked.git",
+   "commit": "5c0869f8ab352219eef03202b31a2fba6d957efc",
+   "git_tree": "b043ccaf919651651936a5808427f42d55a71a2c",
+   "harness_source_tree_sha256": "3311f469e7f80073a15b6b7368fc3d6319d204008e518488a1e976849d3dc0b5",
+   "harness_entries": 706,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "mozilla_pdf.js",
+   "repository": "https://github.com/mozilla/pdf.js.git",
+   "commit": "32fb05b3b7216a9d9f496284392f04a5601266fb",
+   "git_tree": "992cb9e448d2c9886450595be063471db7180b8b",
+   "harness_source_tree_sha256": "a054c4d3cd1ea43460dc58bed82f13f39de4448584b5d6ceb1124bf3e0a1e834",
+   "harness_entries": 2754,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [
+     "docs/contents/js/bootstrap.min.js",
+     "docs/contents/js/jquery-3.7.1.min.js",
+     "external/dist/legacy/web/pdf_viewer.d.mts",
+     "external/dist/web/pdf_viewer.d.mts",
+     "external/dist/webpack.mjs",
+     "external/jbig2/jbig2_nowasm_fallback.js"
+    ],
+    "plan_timeout_seconds": 30
+   },
+   "note": null
+  },
+  {
+   "control": "phpbb_phpbb",
+   "repository": "https://github.com/phpbb/phpbb.git",
+   "commit": "394ee33c35107b64f765e81cf91a5074302176ab",
+   "git_tree": "65e545f84d216c54cd54b10a5ebb8ad65251327e",
+   "harness_source_tree_sha256": "3d1b297fdb96266015fa28bd18630aa49c694fd243812761dbd89522a5b6224e",
+   "harness_entries": 3014,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "rubygems_rubygems",
+   "repository": "https://github.com/rubygems/rubygems.git",
+   "commit": "a7de0cda3142f789a3c84ad85602df13cf3cc931",
+   "git_tree": "c69f49a1efd50c2a5659a7accf406f75c2122ef0",
+   "harness_source_tree_sha256": "3cc49f9f3b4189255d351709ddd0b15fc1c68427fc8f3a33b6be4d6308eabbfb",
+   "harness_entries": 2123,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [
+     "lib/bundler/vendor/fileutils/lib/fileutils.rb",
+     "lib/bundler/vendor/thor/lib/thor.rb",
+     "lib/bundler/vendor/thor/lib/thor/actions.rb",
+     "lib/bundler/vendor/thor/lib/thor/actions/create_file.rb",
+     "lib/bundler/vendor/thor/lib/thor/actions/create_link.rb",
+     "lib/bundler/vendor/thor/lib/thor/actions/directory.rb",
+     "lib/bundler/vendor/thor/lib/thor/actions/empty_directory.rb",
+     "lib/bundler/vendor/thor/lib/thor/actions/file_manipulation.rb",
+     "lib/bundler/vendor/thor/lib/thor/actions/inject_into_file.rb",
+     "lib/bundler/vendor/thor/lib/thor/base.rb",
+     "lib/bundler/vendor/thor/lib/thor/command.rb",
+     "lib/bundler/vendor/thor/lib/thor/core_ext/hash_with_indifferent_access.rb",
+     "lib/bundler/vendor/thor/lib/thor/error.rb",
+     "lib/bundler/vendor/thor/lib/thor/group.rb",
+     "lib/bundler/vendor/thor/lib/thor/invocation.rb",
+     "lib/bundler/vendor/thor/lib/thor/line_editor.rb",
+     "lib/bundler/vendor/thor/lib/thor/line_editor/basic.rb",
+     "lib/bundler/vendor/thor/lib/thor/line_editor/readline.rb",
+     "lib/bundler/vendor/thor/lib/thor/nested_context.rb",
+     "lib/bundler/vendor/thor/lib/thor/parser.rb",
+     "lib/bundler/vendor/thor/lib/thor/parser/argument.rb",
+     "lib/bundler/vendor/thor/lib/thor/parser/arguments.rb",
+     "lib/bundler/vendor/thor/lib/thor/parser/option.rb",
+     "lib/bundler/vendor/thor/lib/thor/parser/options.rb",
+     "lib/bundler/vendor/thor/lib/thor/rake_compat.rb",
+     "lib/bundler/vendor/thor/lib/thor/runner.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell/basic.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell/color.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell/column_printer.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell/html.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell/table_printer.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell/terminal.rb",
+     "lib/bundler/vendor/thor/lib/thor/shell/wrapped_printer.rb",
+     "lib/bundler/vendor/thor/lib/thor/util.rb",
+     "lib/bundler/vendor/thor/lib/thor/version.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/exceptions.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/generic_request.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/header.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/proxy_delta.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/request.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/requests.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/response.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/responses.rb",
+     "lib/rubygems/vendor/net-http/lib/net/http/status.rb",
+     "lib/rubygems/vendor/net-http/lib/net/https.rb",
+     "lib/rubygems/vendor/net-protocol/lib/net/protocol.rb",
+     "lib/rubygems/vendor/optparse/lib/optionparser.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse/ac.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse/date.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse/kwargs.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse/shellwords.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse/time.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse/uri.rb",
+     "lib/rubygems/vendor/optparse/lib/optparse/version.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/assignment.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/basic_package_source.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/failure_writer.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/incompatibility.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/package.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/partial_solution.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/rubygems.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/solve_failure.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/static_package_source.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/strategy.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/term.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/version.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_constraint.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_range.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_solver.rb",
+     "lib/rubygems/vendor/pub_grub/lib/pub_grub/version_union.rb",
+     "lib/rubygems/vendor/securerandom/lib/securerandom.rb",
+     "lib/rubygems/vendor/timeout/lib/timeout.rb",
+     "lib/rubygems/vendor/tsort/lib/tsort.rb",
+     "lib/rubygems/vendor/uri/lib/uri.rb",
+     "lib/rubygems/vendor/uri/lib/uri/common.rb",
+     "lib/rubygems/vendor/uri/lib/uri/file.rb",
+     "lib/rubygems/vendor/uri/lib/uri/ftp.rb",
+     "lib/rubygems/vendor/uri/lib/uri/generic.rb",
+     "lib/rubygems/vendor/uri/lib/uri/http.rb",
+     "lib/rubygems/vendor/uri/lib/uri/https.rb",
+     "lib/rubygems/vendor/uri/lib/uri/ldap.rb",
+     "lib/rubygems/vendor/uri/lib/uri/ldaps.rb",
+     "lib/rubygems/vendor/uri/lib/uri/mailto.rb",
+     "lib/rubygems/vendor/uri/lib/uri/rfc2396_parser.rb",
+     "lib/rubygems/vendor/uri/lib/uri/rfc3986_parser.rb",
+     "lib/rubygems/vendor/uri/lib/uri/version.rb",
+     "lib/rubygems/vendor/uri/lib/uri/ws.rb",
+     "lib/rubygems/vendor/uri/lib/uri/wss.rb"
+    ],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "spring-projects_spring-petclinic",
+   "repository": "https://github.com/spring-projects/spring-petclinic.git",
+   "commit": "500158f732419217507c7656904b8e6aa1bcc0d6",
+   "git_tree": "37586ef83808eeaa25706068d89caf60feb134ce",
+   "harness_source_tree_sha256": "b1667ed7ea72a6adfe159b6a0ca550d8b5c4be0c83bfe9eed926dcb8c756430f",
+   "harness_entries": 132,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "sveltejs_kit",
+   "repository": "https://github.com/sveltejs/kit.git",
+   "commit": "efced484bbbd3fbbf0419b9117fef3474118d241",
+   "git_tree": "4ed582e878b6f311e090f5d0a3132dc70d9a7816",
+   "harness_source_tree_sha256": "ec932fea1cc1dab900465dc4079029891886566acff5d4ce1377b279c031bf47",
+   "harness_entries": 3302,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [],
+    "plan_timeout_seconds": null
+   },
+   "note": null
+  },
+  {
+   "control": "ctl-mastodon",
+   "repository": null,
+   "commit": null,
+   "git_tree": null,
+   "harness_source_tree_sha256": "315535cad6a69097fda41d82bc92e0955011f8de68d7638defa16bf2298a21da",
+   "harness_entries": 3412,
+   "staging": {
+    "control_exclude_dirs": [
+     "build",
+     "test"
+    ],
+    "plan_exclude_paths": [
+     "app/models/generated_annual_report.rb",
+     "db/migrate/20240111033014_create_generated_annual_reports.rb",
+     "db/migrate/20251202140424_add_share_key_to_generated_annual_reports.rb",
+     "db/migrate/20260805130216_fix_generated_annual_reports_foreign_key.rb"
+    ],
+    "plan_timeout_seconds": null
+   },
+   "note": "staged from an archive without git metadata; reproduce by matching harness_source_tree_sha256"
+  }
+ ]
+}

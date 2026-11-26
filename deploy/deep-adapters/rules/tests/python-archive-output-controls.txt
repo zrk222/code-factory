@@ -114,3 +114,13 @@ def hello_safe():
 def static_markup():
     # ok: python.request-html-injection
     return Markup("<b>fixed</b>")
+
+def expand_chained(archive_path, destination):
+    # ruleid: python.tarfile-extractall-without-filter
+    tarfile.open(archive_path).extractall(destination)
+
+def expand_chained_safely(archive_path, destination):
+    # ok: python.tarfile-extractall-without-filter
+    tarfile.open(archive_path).extractall(destination, filter="data")
+    # ok: python.tarfile-extractall-without-filter
+    tarsafe.open(archive_path).extractall(destination)

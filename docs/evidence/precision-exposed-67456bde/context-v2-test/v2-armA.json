@@ -1,0 +1,199 @@
+{
+ "labels": [
+  {
+   "item": "1bfbf815101b",
+   "verdict": "TP",
+   "reason": "The URL value from whistle rule configuration is concatenated into a link href attribute with no HTML/attribute escaping, so a crafted rule value can break out of the attribute in the injected page."
+  },
+  {
+   "item": "f71189b35e7d",
+   "verdict": "FP",
+   "reason": "$ldap_loginsmb comes from the administrator-managed LDAP directory rather than from request input, so attackers do not realistically control it."
+  },
+  {
+   "item": "fadfe3afcddd",
+   "verdict": "FP",
+   "reason": "Only $_SERVER['PHP_SELF'] (which Dolibarr's main.inc.php checks for injection) and the numeric $object->id are concatenated into the href."
+  },
+  {
+   "item": "a29843127af8",
+   "verdict": "FP",
+   "reason": "showdocuments receives a dol_sanitizeFileName-cleaned ref, a server-built directory and a URL made from PHP_SELF and the numeric id, so no unescaped user data reaches the output."
+  },
+  {
+   "item": "be9f6a73e24e",
+   "verdict": "FP",
+   "reason": "The form action is built only from PHP_SELF, which main.inc.php checks for script injection, and no other user data is placed on the line."
+  },
+  {
+   "item": "e90713e3f0d9",
+   "verdict": "FP",
+   "reason": "The link is built only from PHP_SELF and the integer user id, with no attacker-controlled HTML."
+  },
+  {
+   "item": "1d39a1f583d4",
+   "verdict": "TP",
+   "reason": "req.url, which the attacker controls, is put unescaped into an HTML 404 response (both the href and the link text) by the dev/preview server's not_found handler."
+  },
+  {
+   "item": "2c5c57ff42b0",
+   "verdict": "TP",
+   "reason": "$group is concatenated unquoted into the SQL, and one caller (the SOAP webservice in server_user.php) passes request-supplied group_id after only a loose '> 0' check that strings like '1 OR 1=1' pass."
+  },
+  {
+   "item": "d509faa7feab",
+   "verdict": "FP",
+   "reason": "The content-type slugs come from Bolt's contenttype/field configuration, not from request data, and the order is whitelisted by fixOrder while the limit is cast to int."
+  },
+  {
+   "item": "edfdf6e58058",
+   "verdict": "FP",
+   "reason": "get_resource_inst calls exists() before building resources, and exists() checks the table name against SHOW TABLES, so the DESCRIBE table name is limited to real table names."
+  },
+  {
+   "item": "44138652c091",
+   "verdict": "FP",
+   "reason": "hostId is a server-generated randomUUID and the island content is built internally by Astro (encrypted props and script-safe stringification), not from raw attacker HTML."
+  },
+  {
+   "item": "6f93ef01b3ab",
+   "verdict": "UNCLEAR",
+   "reason": "srcSchema/targetSchema are put unquoted into a shell command, but the shown context does not reveal whether they come from the uploaded backup or are checked by the assertPostgresSchemaIdentifier helper defined in this file."
+  },
+  {
+   "item": "a2730b53cfa5",
+   "verdict": "TP",
+   "reason": "The checkpoint name passed into workflow execution is put straight into a filename under the checkpoints directory with no sanitization or containment check, so '../' can write JSON outside it."
+  },
+  {
+   "item": "c81e5918cd39",
+   "verdict": "FP",
+   "reason": "The SSID (even if broadcast by an attacker) goes through util.sanitizeString/sanitizeShellString, which strips shell metacharacters and quotes, before it is put into the quoted netsh argument."
+  },
+  {
+   "item": "fea8ff126fa8",
+   "verdict": "FP",
+   "reason": "The only external filter is 'statut = '.$search_statut in hierarchy.php, a numeric search parameter checked with >= 0; other callers pass no filter."
+  },
+  {
+   "item": "d0fcfd4b5724",
+   "verdict": "TP",
+   "reason": "delete_session builds the path from the caller-supplied name (e.g. CLI /session delete args) with no sanitization or containment check before unlink, allowing traversal to delete arbitrary .json files."
+  },
+  {
+   "item": "ff07029f80c8",
+   "verdict": "UNCLEAR",
+   "reason": "The line prints Project::getNomUrl() built from DB-stored project ref and title, and whether that method escapes them is not shown (the resolved helper is a different class)."
+  },
+  {
+   "item": "da9f1fb16d3b",
+   "verdict": "TP",
+   "reason": "The script URL from whistle rule values is concatenated into a script src attribute with no attribute escaping, so a quote in the value injects markup or script into the proxied page."
+  },
+  {
+   "item": "4c5c5942a992",
+   "verdict": "TP",
+   "reason": "output_path from workflow params is used directly for makedirs and save, and _validate_rotate_params only checks that it is present, so arbitrary write locations are possible."
+  },
+  {
+   "item": "d5a9e1353b92",
+   "verdict": "FP",
+   "reason": "contentType['slug'] comes from Bolt's ContentType configuration, the order is whitelisted by fixOrder and the amount is an int, so no request data reaches the SQL."
+  },
+  {
+   "item": "01cf523da2a4",
+   "verdict": "FP",
+   "reason": "All shown callers pass integer group IDs taken from fetched objects (card.php group/card.php, LDAP sync script), with no raw request string reaching the unquoted SQL."
+  },
+  {
+   "item": "bdcca0cb099f",
+   "verdict": "FP",
+   "reason": "select_input/optionlist HTML-escape the $_GET order value with h(), and $i is an integer counter, so the reflected value is encoded."
+  },
+  {
+   "item": "2f1d22aa4b74",
+   "verdict": "FP",
+   "reason": "$ldap_lastname is read from the administrator-managed LDAP directory, not from attacker-controlled request input."
+  },
+  {
+   "item": "bc13d9963c04",
+   "verdict": "FP",
+   "reason": "$rid is escaped and comes from integer rights IDs (perms pages or module install), $module/$perms come from the rights_def table, and the callers need permission-editing rights."
+  },
+  {
+   "item": "6daad23ffe18",
+   "verdict": "FP",
+   "reason": "$ldap_mail comes from the administrator-managed LDAP directory record, not from request input."
+  },
+  {
+   "item": "9ef2e299c069",
+   "verdict": "FP",
+   "reason": "$column is produced by select_input, which HTML-escapes the $_GET column value through optionlist/h(), and $i is an integer."
+  },
+  {
+   "item": "ddd1da22580c",
+   "verdict": "TP",
+   "reason": "options.historyLimit comes from the tool's caller-supplied options and is put into a shell command executed via exec with no runtime numeric validation (the TypeScript type is not enforced)."
+  },
+  {
+   "item": "bfe7a697bf3d",
+   "verdict": "FP",
+   "reason": "$ldap_mobile comes from the administrator-managed LDAP directory, not from attacker-controlled input."
+  },
+  {
+   "item": "d31600eac605",
+   "verdict": "FP",
+   "reason": "$ldap_mail is LDAP directory data controlled by the directory administrator, not by an attacker."
+  },
+  {
+   "item": "31ca3c3b7ea4",
+   "verdict": "FP",
+   "reason": "Only PHP_SELF and the integer user id are concatenated into the href."
+  },
+  {
+   "item": "112dcb21c044",
+   "verdict": "FP",
+   "reason": "getGitHash is only called with the constant 'HEAD' (from buildCacheKey), so no attacker-controlled ref reaches execSync."
+  },
+  {
+   "item": "b9b5bd6e3d78",
+   "verdict": "FP",
+   "reason": "$rid is escaped and integer-sourced, $module/$perms come from the rights_def table, and the callers (perms pages) need permission-editing rights and pass numeric IDs."
+  },
+  {
+   "item": "9daa4333dfb3",
+   "verdict": "TP",
+   "reason": "In safeMode the scheme check isSafeUrl runs on the raw destination before resolveBackslash/normalization, so a destination like 'javascript\\:alert(1)' passes the check and is then rendered as an executable javascript: href."
+  },
+  {
+   "item": "798739302c48",
+   "verdict": "FP",
+   "reason": "The Revue importer is an admin-only import that already emits item.description as raw HTML by design, so the unescaped url adds no capability beyond the trusted importer's content."
+  },
+  {
+   "item": "1a60c6fc77a5",
+   "verdict": "FP",
+   "reason": "Only PHP_SELF and the integer user id are concatenated into the href."
+  },
+  {
+   "item": "860c9643c5ce",
+   "verdict": "UNCLEAR",
+   "reason": "batchExecute is a generic query-builder sink whose SQL comes from the _insertBatch/_updateBatch/_upsertBatch render methods, and their key/value escaping is not shown."
+  },
+  {
+   "item": "856dde61206d",
+   "verdict": "TP",
+   "reason": "The img attributes use the same pre-normalization scheme check, and the alt text is built by regex tag-stripping of rendered inner HTML, which can leave a raw quote that breaks out of the alt attribute."
+  },
+  {
+   "item": "cecde6b571bb",
+   "verdict": "TP",
+   "reason": "The sessionId query parameter is joined into a file path with no traversal check, so '../' sequences let any (CORS-enabled) caller read arbitrary .jsonl files outside the hooks data directory."
+  },
+  {
+   "item": "13c795b0c1e5",
+   "verdict": "FP",
+   "reason": "formconfirm receives only PHP_SELF plus the numeric object id and translated strings, so no attacker HTML is placed on the line."
+  }
+ ]
+}

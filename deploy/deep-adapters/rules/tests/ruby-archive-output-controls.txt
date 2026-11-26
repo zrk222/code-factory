@@ -55,3 +55,13 @@ class FilesController < ApplicationController
     @safe = ERB::Util.html_escape(params[:bio]).html_safe
   end
 end
+
+class GemCache
+  def find_in_cache(filename)
+    Gem.path.each do |path|
+      # ok: ruby.request-path-traversal
+      this_path = File.join(path, "cache", filename)
+      return this_path if File.exist? this_path
+    end
+  end
+end

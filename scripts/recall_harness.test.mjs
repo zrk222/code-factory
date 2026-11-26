@@ -1084,7 +1084,7 @@ test('an empty successful scanner result needs old-side coverage to count as a m
   assert.equal(verdict.decision, 'REJECT');
 
   const checkpoint = join(root, 'checkpoint.json');
-  writeFileSync(checkpoint, JSON.stringify({ schema: 'factory.recall-evaluation.v1', gained: [feederRow.ghsa], dev: [{
+  writeFileSync(checkpoint, JSON.stringify({ schema: 'factory.recall-evaluation.v1', engine: { executable_sha256: sha256(readFileSync(process.execPath)) }, gained: [feederRow.ghsa], dev: [{
     manifest_cases_sha256: before.manifest_cases_sha256, after_evidence: { cases: before.cases },
     cases: [{ ghsa: feederRow.ghsa, before: 'miss', after: 'hit' }],
   }] }));
@@ -2067,6 +2067,8 @@ test('a resumed score reuses only exactly matching completed cases', () => feede
     noReports.initial_scan_sides.old = { ...watchdog, [field]: 'a'.repeat(64) };
     assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports), false);
   }
+  noReports.initial_scan_sides.old = { ...watchdog, watchdog_timeout: false };
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports), false);
   noReports.initial_scan_sides.old = watchdog;
   assert.equal(checkpointArtifactsIntact(fixture.workdir, { ...noReports, captures: { ...noReports.captures, old: null } }), false);
   const checkpoints = readdirSync(checkpointDir).map(name => JSON.parse(readFileSync(join(checkpointDir, name), 'utf8')));
@@ -2137,7 +2139,7 @@ test('scored cases reach the checkpoint directory only under the verified execut
   assert.deepEqual(readdirSync(checkpoints), records);
 }));
 
-test('an interrupted scoring group preserves only earlier verified checkpoints', () => feederFixture(async fixture => {
+test('checkpoint batches keep workers active and preserve only verified results on interruption', () => feederFixture(async fixture => {
   const { root, workdir, manifest, baseline, opts } = fixture;
   const checkpoints = join(root, 'group-checkpoints');
   const casesRoot = join(workdir, 'cases-v4');
@@ -2214,6 +2216,15 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   assert.equal(readdirSync(checkpointDir).length, 1);
   assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0]), true);
   const prepared = join(workdir, 'cases-v4', caseDigest([feederRow]));
+  const recordPath = join(prepared, 'case.json');
+  const recordBytes = readFileSync(recordPath);
+  const changedRecord = JSON.parse(recordBytes);
+  changedRecord.revisions.old = '4'.repeat(40);
+  writeFileSync(recordPath, JSON.stringify(changedRecord));
+  const rebound = await scoreManifest(manifest, baseline, resumable);
+  assert.deepEqual(rebound.resumed_cases, []);
+  assert.equal(rebound.cases[0].revisions.old, changedRecord.revisions.old);
+  writeFileSync(recordPath, recordBytes);
   for (const name of ['case.json', 'diff.patch', 'changes.z']) {
     const path = join(prepared, name);
     const original = readFileSync(path);
@@ -2252,6 +2263,15 @@ test('assertReviewOutput refuses the score receipt, its aliases and the capture 
   assert.throws(() => assertReviewOutput(join(work, 'alerts.json'), score, realpathSync(work)), /capture workdir/);
   assertReviewOutput(join(root, 'alerts.json'), score, realpathSync(work));
   assert.equal(readFileSync(score, 'utf8'), '{}');
+});
+
+test('assertPinnedRetention requires the bound engine on every retention checkpoint', async () => {
+  const { assertPinnedRetention } = await import('./recall_harness.mjs');
+  const pin = 'a'.repeat(64);
+  const receipt = engine => Buffer.from(JSON.stringify({ schema: 'factory.recall-evaluation.v1', ...(engine ? { engine } : {}) }));
+  assert.throws(() => assertPinnedRetention(receipt(null), pin), /not engine-pinned/);
+  assert.throws(() => assertPinnedRetention(receipt({ executable_sha256: 'b'.repeat(64) }), pin), /engine differs/);
+  assertPinnedRetention(receipt({ executable_sha256: pin }), pin);
 });
 
 test('reviewCapturePath verifies that both literal and resolved files stay within the capture root', t => {

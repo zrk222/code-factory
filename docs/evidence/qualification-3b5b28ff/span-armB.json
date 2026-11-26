@@ -1,0 +1,54 @@
+{
+ "labels": [
+  {
+   "item": "s00",
+   "verdict": "FP",
+   "reason": "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+  },
+  {
+   "item": "s01",
+   "verdict": "FP",
+   "reason": "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+  },
+  {
+   "item": "s02",
+   "verdict": "FP",
+   "reason": "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+  },
+  {
+   "item": "s03",
+   "verdict": "FP",
+   "reason": "Interpolated value is a test-name label passed to a local console-logging helper, not a shell command."
+  },
+  {
+   "item": "s04",
+   "verdict": "FP",
+   "reason": "Both the href dataUrl and the download label are passed through escapeHtml before attribute interpolation, so attribute breakout is not possible (scheme is unvalidated but the download attribute and user-click requirement limit impact)."
+  },
+  {
+   "item": "s05",
+   "verdict": "FP",
+   "reason": "messagesFieldName.channelName is a real column name resolved from the plugin's own collection metadata, not request input."
+  },
+  {
+   "item": "s06",
+   "verdict": "FP",
+   "reason": "channelsTableAliasName is a quoteIdentifier-quoted internal collection name, not user-controlled."
+  },
+  {
+   "item": "s07",
+   "verdict": "FP",
+   "reason": "channelsFieldName.name is a column name resolved from the internal collection definition, not request input."
+  },
+  {
+   "item": "s08",
+   "verdict": "FP",
+   "reason": "messagesFieldName.userId is an internal column name from collection metadata, not request input."
+  },
+  {
+   "item": "s09",
+   "verdict": "FP",
+   "reason": "messagesFieldName.receiveTimestamp is an internal column name from collection metadata, not request input."
+  }
+ ]
+}
