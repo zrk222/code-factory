@@ -2923,7 +2923,7 @@ rules:
       - pattern: $P
       - metavariable-regex:
           metavariable: $P
-          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path|filename|file_name)$
+          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path)$
       label: PARAM_KEY
     - patterns:
       - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
