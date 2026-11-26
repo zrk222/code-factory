@@ -3171,7 +3171,7 @@ rules:
       - pattern: $P
       - metavariable-regex:
           metavariable: $P
-          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path|filename|file_name)$
+          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path)$
       label: PARAM_KEY
     - patterns:
       - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
@@ -3180,6 +3180,9 @@ rules:
           metavariable: $P
           regex: ^(?i)\w*(path|file)\w*$
       label: PARAM_PATH
+    - pattern: File.join(...)
+      requires: PARAM_PATH
+      label: JOINED_PARAM_PATH
     pattern-sanitizers:
     - pattern: File.basename(...)
     - pattern: $X.to_i
@@ -3303,6 +3306,10 @@ rules:
       - pattern: File.join($ROOT, ..., $P, ...)
       - focus-metavariable: $P
       requires: PARAM_KEY
+    - patterns:
+      - pattern: IO.foreach($P, ...)
+      - focus-metavariable: $P
+      requires: JOINED_PARAM_PATH
     - patterns:
       - pattern-either:
         - pattern: _serve_file($P, ...)
