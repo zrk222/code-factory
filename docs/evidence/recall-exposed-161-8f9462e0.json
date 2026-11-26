@@ -2,7 +2,7 @@
   "schema": "factory.recall-exposed-run-readback.v1",
   "review_head": "8f9462e03d18585960f9106c7de32e75fd31f5fd",
   "scorer_commit": "98175891015bc6fea771d7977749e4bb828e248b",
-  "scope": "161 registered exposed advisories, byte-identical source across the verified 39-hit reference and the newly executed candidate",
+  "scope": "161 registered exposed advisories; baseline is the previously verified 39-hit ruleset",
   "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
   "manifest_cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
   "baseline_rules_sha256": "c320e746865981856fd36ac97e2fbe858cfa502c41b9c7c65e7cc876d203a754",
@@ -18,11 +18,18 @@
   ],
   "case_workers": 3,
   "initial_score_checkpoints": 0,
+  "baseline_initial_score_checkpoints": 0,
+  "initial_score_checkpoints_scope": "Candidate when measured for this task and separately rerun comparison baseline",
+  "current_fresh_candidate_source_receipt_sha256": "51ccc6b52220b28975931909d8d6338dde33038968fa3138cabdf73a1fae48a7",
+  "current_fresh_candidate_checkpoints_available_to_corrected_run": 158,
+  "comparison_baseline_commit": "325d3529b635f9d18169859e8466f810b3c20d71",
   "prepared_source_cache": "warm, byte-verified",
-  "elapsed_seconds": 379.6548519,
-  "development_gate": "RETENTION_FAILED",
+  "elapsed_seconds": 204.4405076,
+  "exit_code": 2,
+  "development_gate": "REJECT",
   "gate_failures": [
-    "Seven exact baseline hits are absent from the fresh candidate."
+    "lost 7 dev hit(s): GHSA-4pj9-g833-qx53, GHSA-69p3-xp37-f692, GHSA-c5r5-7pfh-6qg6, GHSA-fg4q-ccq8-3r5q, GHSA-r7j3-vvh2-xrpj, GHSA-rfx3-98h7-v3xp, GHSA-rp2v-v467-q9vq",
+    "fix-side residuals per hit 0.44 -> 0.53 (17 -> 17)"
   ],
   "baseline": {
     "registered": 161,
@@ -42,6 +49,32 @@
       "context_only_hunk_hits": 7,
       "added_line_residual_alerts": 8,
       "context_only_residual_alerts": 9
+    },
+    "by_ecosystem": {
+      "Packagist": {
+        "scored": 25
+      },
+      "PyPI": {
+        "scored": 25
+      },
+      "Maven": {
+        "scored": 23
+      },
+      "NuGet": {
+        "scored": 9
+      },
+      "Go": {
+        "scored": 24
+      },
+      "npm": {
+        "scored": 23
+      },
+      "crates.io": {
+        "scored": 2
+      },
+      "RubyGems": {
+        "scored": 25
+      }
     }
   },
   "candidate": {
@@ -93,14 +126,14 @@
   "gained_count": 0,
   "lost_count": 7,
   "new_error_count": 0,
-  "new_coverage_gap_count": null,
+  "new_coverage_gap_count": 0,
   "synthetic_control": {
     "baseline_alerts": 0,
     "candidate_alerts": 0,
     "limit": 0,
     "complete": true
   },
-  "raw_receipt_sha256": "51ccc6b52220b28975931909d8d6338dde33038968fa3138cabdf73a1fae48a7",
+  "raw_receipt_sha256": "3ab3d42ab5e4235b5d058f637480f70339265b93cbd16c25a999064f0b8f96bd",
   "verified_scanner_reports": 1276,
   "verified_source_diff_files": 3445,
   "cases": [
@@ -1553,69 +1586,5 @@
       "baseline_deleted_line_hit": false,
       "candidate_deleted_line_hit": false
     }
-  ],
-  "comparison_baseline_commit": "325d3529b635f9d18169859e8466f810b3c20d71",
-  "comparison_method": "Independent fresh runs on identical cases, source bytes, profile and engine arguments",
-  "baseline_source_receipt_sha256": "c248621623a77d97fcb6d8dcae95c99212b35f2b67ea582561547b754fb41bd3",
-  "regression_cases": [
-    {
-      "advisory": "GHSA-4pj9-g833-qx53",
-      "ecosystem": "crates.io",
-      "baseline_families": [
-        "tls"
-      ],
-      "candidate_outcome": "miss"
-    },
-    {
-      "advisory": "GHSA-69p3-xp37-f692",
-      "ecosystem": "RubyGems",
-      "baseline_families": [
-        "tls"
-      ],
-      "candidate_outcome": "miss"
-    },
-    {
-      "advisory": "GHSA-c5r5-7pfh-6qg6",
-      "ecosystem": "RubyGems",
-      "baseline_families": [
-        "cmd"
-      ],
-      "candidate_outcome": "miss"
-    },
-    {
-      "advisory": "GHSA-fg4q-ccq8-3r5q",
-      "ecosystem": "NuGet",
-      "baseline_families": [
-        "sql"
-      ],
-      "candidate_outcome": "miss"
-    },
-    {
-      "advisory": "GHSA-r7j3-vvh2-xrpj",
-      "ecosystem": "RubyGems",
-      "baseline_families": [
-        "cmd"
-      ],
-      "candidate_outcome": "miss"
-    },
-    {
-      "advisory": "GHSA-rfx3-98h7-v3xp",
-      "ecosystem": "NuGet",
-      "baseline_families": [
-        "sql"
-      ],
-      "candidate_outcome": "miss"
-    },
-    {
-      "advisory": "GHSA-rp2v-v467-q9vq",
-      "ecosystem": "PyPI",
-      "baseline_families": [
-        "path"
-      ],
-      "candidate_outcome": "miss"
-    }
-  ],
-  "gate_basis": "Verified retention comparison. The direct paired evaluator rerun is underway.",
-  "elapsed_scope": "Original fresh-candidate acquisition evaluation",
-  "candidate_acquisition_exit_code": 2
+  ]
 }
