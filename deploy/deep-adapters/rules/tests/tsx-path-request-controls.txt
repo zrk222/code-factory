@@ -11,7 +11,7 @@ export function sessionLog(req: any) {
   const sessionId = req.query.sessionId as string;
   // ruleid: javascript.request-path-traversal
   const file = path.join(LOG_DIR, `session-${sessionId}.jsonl`);
-  // ruleid: javascript.request-path-traversal
+  // ok: javascript.request-path-traversal
   return fs.existsSync(file);
 }
 

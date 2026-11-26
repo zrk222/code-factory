@@ -1,0 +1,67 @@
+export function attachment(name: string, href: string) {
+  const label = escapeHtml(name);
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<a class="attachment" download="${label}">${label}</a>`;
+}
+
+export function attachmentRaw(name: string) {
+  const label = name.trim();
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return `<a class="attachment" download="${label}">${label}</a>`;
+}
+
+export function attribute(name: string, value: string) {
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return " " + name + "=\"" + value + "\"";
+}
+
+export function checkbox(name: string) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return $('input[name="' + name + '"]');
+}
+
+export function boundQuery(db: any, name: string) {
+  // ok: javascript.parameter-sql-text
+  return db.query(sql`SELECT * FROM users WHERE name = ${name}`);
+}
+
+export function prose(name: string) {
+  // ok: javascript.parameter-sql-text
+  return `with ${name} we select a theme from the list`;
+}
+
+export function rawQuery(db: any, name: string) {
+  // ruleid: javascript.parameter-sql-text
+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);
+}
+
+export function anchor(href: string) {
+  href = escapeHtmlEntities(cleanUrl(href));
+  // ok: javascript.html-template-unescaped-interpolation
+  return '<a href="' + href + '">';
+}
+
+export function appendSeparator(e: any) {
+  // ok: javascript.dom-innerhtml-from-variable
+  e.innerHTML = e.innerHTML + "&nbsp;";
+}
+
+export function appendFragment(e: any, htmlFragment: string) {
+  // ruleid: javascript.dom-innerhtml-from-variable
+  e.innerHTML = e.innerHTML + htmlFragment;
+}
+
+export function aliasedRunner(folder: string, processTools: any) {
+  // ruleid: javascript.parameter-shell-command
+  return processTools.execSync(`git -C "${folder}" status`);
+}
+
+export function styleMatcher(id: string) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return new RegExp(`(<style id="${id.value}">.*?)(</style>)`);
+}
+
+export function warnParent(parent: { path: string }) {
+  // ok: javascript.html-template-unescaped-interpolation
+  console.warn(`Please change the parent <Route path="${parent.path}"> to a splat route.`);
+}

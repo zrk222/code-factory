@@ -26,3 +26,5 @@ docs/evidence/*-exposed-*.json text eol=lf
 docs/evidence/precision-adjudicated-*.json text eol=lf
 docs/evidence/rule-confidence.json text eol=lf
 docs/evidence/review-parts-*/part-*.json text eol=lf
+docs/evidence/recall-evaluation-*.json text eol=lf
+docs/evidence/loss-evidence/* -text

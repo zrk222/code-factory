@@ -2223,6 +2223,17 @@ function oldReviewAlerts(root, row, rulesSha256) {
   return alerts;
 }
 
+// The export never replaces its pinned score receipt or a retained capture it reads.
+export function assertReviewOutput(out, score, workRoot) {
+  if (typeof out !== 'string' || !out) throw new Error('Review export requires --out');
+  const parent = realpathSync(dirname(resolve(out)));
+  const target = join(parent, basename(resolve(out)));
+  const real = existsSync(target) ? realpathSync(target) : target;
+  if (real === realpathSync(resolve(score))) throw new Error('Review export output is the score receipt');
+  const inside = relative(workRoot, real);
+  if (!inside.startsWith('..') && !isAbsolute(inside)) throw new Error('Review export output is inside the capture workdir');
+}
+
 function reviewAlerts(opts) {
   const bytes = readFileSync(opts.score);
   if (sha256(bytes) !== opts['score-sha256']) throw new Error('Review score digest mismatch');
@@ -2232,6 +2243,7 @@ function reviewAlerts(opts) {
     throw new Error('Review export requires a pinned standalone score receipt');
   }
   const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
+  assertReviewOutput(opts.out, opts.score, root);
   const cases = saved.cases.filter(scoredCase);
   const alerts = cases.flatMap(row => oldReviewAlerts(root, row, saved.ruleset_sha256));
   writeFileSync(opts.out, `${JSON.stringify(alerts, null, 1)}\n`);

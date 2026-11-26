@@ -1,0 +1,608 @@
+{
+ "schema": "factory.loss-evidence-export.v1",
+ "note": "Raw evidence for span review of two unresolved losses; no verdicts.",
+ "cases": [
+  {
+   "ghsa": "GHSA-3753-m2x2-q623",
+   "kind": "baseline hit lost by candidate",
+   "score_receipt": {
+    "path": "docs/evidence/recall-evaluation-1f0ad8a0-opengrep210-dev.json",
+    "sha256": "25cf20f9325e4974e7a5161d5b87146b827dccb90688365f81986fc4d710fb05"
+   },
+   "manifest": "manifest.json",
+   "baseline_outcome": "hit",
+   "candidate_outcome": "miss",
+   "baseline_ruleset_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+   "engine_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+   "baseline_sarif": {
+    "path": "docs/evidence/loss-evidence/GHSA-3753-m2x2-q623-baseline-old.sarif",
+    "sha256": "78eb70645ddc66df092c5ee59a15ecc19cf32025e320dccf35db94854f40c2e6"
+   },
+   "revisions": {
+    "old": "772ae40de07e48134de0449997cb4924b0cde3e4",
+    "fixed": "ef045680f8d9830a3eee9612f7df46a734361b07"
+   },
+   "old_source_packets": [
+    {
+     "path": "apps/viewer-demo/scripts/verify-renderer-sanitization.mjs",
+     "bytes": 22433,
+     "sha256": "9865baf0602790857ffd744331221447fa9fc463b53c6bc3a6b0758bf076c07f"
+    },
+    {
+     "path": "packages/renderers/doc/src/index.ts",
+     "bytes": 281,
+     "sha256": "3abca7819b89276cc83af5a9a0717e01f63201cb6978e1733b8b9c0e3fe2dc43"
+    },
+    {
+     "path": "packages/renderers/doc/src/render/html.ts",
+     "bytes": 19484,
+     "sha256": "7b11473d31f8ea9ecf781f9704d2fe75e16b8d0c2632dff50a8be7a9df3bec3b"
+    },
+    {
+     "path": "packages/renderers/doc/src/types.ts",
+     "bytes": 17014,
+     "sha256": "15057a84b38a08e4be2dc90190fd10a05218da08558c8e506962cc4d3247aa02"
+    },
+    {
+     "path": "packages/renderers/doc/src/viewer.ts",
+     "bytes": 2920,
+     "sha256": "45f94ba512a5300ad534666541585edf62ab6e72fdca0457c51b7712f79f29fd"
+    },
+    {
+     "path": "packages/renderers/word/src/wordDoc.ts",
+     "bytes": 12872,
+     "sha256": "9c71f84725c807af492dc9f73f73f015afa32e4fffa66aca850521d32ed2583d"
+    }
+   ],
+   "baseline_sarif_regions": [
+    {
+     "rule": "tmp.javascript.html-template-unescaped-interpolation",
+     "path": "packages/renderers/doc/src/render/html.ts",
+     "start_line": 270,
+     "start_column": 18,
+     "end_line": 270,
+     "end_column": 106,
+     "snippet_sha256": "1f9a1c20864e2b45e474b88f93dbfce67f5e6b1dc8ab3e44a7c0f14b5787d072"
+    }
+   ]
+  },
+  {
+   "ghsa": "GHSA-p849-8hwh-84j9",
+   "kind": "reference gain not hit by candidate",
+   "reference_receipt": {
+    "path": "docs/evidence/recall-evaluation-21299b0-dev.json",
+    "sha256": "62ca978968205d2b9e099c8b689928324694fcafddcf35d0beab47b24ea17468"
+   },
+   "manifest": "heldout-recall-manifest-20261124-fresh.json",
+   "reference_candidate_sha256": "6a3457b1735c2f92b734e8af335961b126e49fb054da9a840c9311a2ce1ecb47",
+   "reference_outcome": "hit",
+   "revisions": {
+    "old": "fac62d1d495aec554351113a80500e9e7b4f3d90",
+    "fixed": "68d64e3fcfb8be2ae4f3bfc9e1ee3f85b87c89ce"
+   },
+   "old_source_packets": [
+    {
+     "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+     "bytes": 7328,
+     "sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972"
+    }
+   ],
+   "hunk_findings": [
+    [
+     "javascript.parameter-sql-text",
+     "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+     57
+    ],
+    [
+     "javascript.parameter-sql-text",
+     "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+     57
+    ],
+    [
+     "javascript.parameter-sql-text",
+     "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+     57
+    ],
+    [
+     "javascript.parameter-sql-text",
+     "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+     58
+    ],
+    [
+     "javascript.parameter-sql-text",
+     "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+     59
+    ]
+   ],
+   "hunk_spans": null,
+   "captures": null,
+   "note": "The 21299b0 receipt predates span capture. These SARIFs regenerate the reference candidate alerts: rules 6a3457b1 (21299b0 ruleset bytes) over the old source packet f7e6fc3b (identical bytes), production profile argv. Spans agree across both engines.",
+   "regenerated": [
+    {
+     "engine": "1.15.0",
+     "sarif": {
+      "path": "docs/evidence/loss-evidence/GHSA-p849-8hwh-84j9-reference-rules-opengrep1150-old.sarif",
+      "sha256": "90fee69081ac041ee7e53ddff3cc42bc7c471e6de7b12c46c8da7b92d81d2967"
+     },
+     "rules_sha256": "6a3457b1735c2f92b734e8af335961b126e49fb054da9a840c9311a2ce1ecb47",
+     "regions": [
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 54,
+       "start_column": 49,
+       "end_line": 54,
+       "end_column": 86
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 55,
+       "start_column": 38,
+       "end_line": 55,
+       "end_column": 58
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 57,
+       "start_column": 46,
+       "end_line": 57,
+       "end_column": 78
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 57,
+       "start_column": 81,
+       "end_line": 57,
+       "end_column": 106
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 57,
+       "start_column": 107,
+       "end_line": 57,
+       "end_column": 132
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 58,
+       "start_column": 50,
+       "end_line": 58,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 59,
+       "start_column": 51,
+       "end_line": 59,
+       "end_column": 88
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 75,
+       "start_column": 32,
+       "end_line": 75,
+       "end_column": 64
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 76,
+       "start_column": 20,
+       "end_line": 76,
+       "end_column": 40
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 77,
+       "start_column": 30,
+       "end_line": 77,
+       "end_column": 57
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 78,
+       "start_column": 28,
+       "end_line": 78,
+       "end_column": 55
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 97,
+       "start_column": 38,
+       "end_line": 97,
+       "end_column": 58
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 99,
+       "start_column": 46,
+       "end_line": 99,
+       "end_column": 78
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 99,
+       "start_column": 81,
+       "end_line": 99,
+       "end_column": 106
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 99,
+       "start_column": 107,
+       "end_line": 99,
+       "end_column": 132
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 100,
+       "start_column": 50,
+       "end_line": 100,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 108,
+       "start_column": 38,
+       "end_line": 108,
+       "end_column": 58
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 110,
+       "start_column": 46,
+       "end_line": 110,
+       "end_column": 78
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 110,
+       "start_column": 81,
+       "end_line": 110,
+       "end_column": 106
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 110,
+       "start_column": 107,
+       "end_line": 110,
+       "end_column": 132
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 111,
+       "start_column": 50,
+       "end_line": 111,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 112,
+       "start_column": 50,
+       "end_line": 112,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 119,
+       "start_column": 39,
+       "end_line": 119,
+       "end_column": 65
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 120,
+       "start_column": 36,
+       "end_line": 120,
+       "end_column": 56
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 122,
+       "start_column": 44,
+       "end_line": 122,
+       "end_column": 76
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 122,
+       "start_column": 79,
+       "end_line": 122,
+       "end_column": 104
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 122,
+       "start_column": 105,
+       "end_line": 122,
+       "end_column": 130
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 123,
+       "start_column": 48,
+       "end_line": 123,
+       "end_column": 75
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 124,
+       "start_column": 49,
+       "end_line": 124,
+       "end_column": 86
+      }
+     ]
+    },
+    {
+     "engine": "2.1.0",
+     "sarif": {
+      "path": "docs/evidence/loss-evidence/GHSA-p849-8hwh-84j9-reference-rules-opengrep210-old.sarif",
+      "sha256": "1d4fdfb7f467c2bdc956730c76d9ad3243921989e76f8cd226e0803cbcb6b73a"
+     },
+     "rules_sha256": "6a3457b1735c2f92b734e8af335961b126e49fb054da9a840c9311a2ce1ecb47",
+     "regions": [
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 54,
+       "start_column": 49,
+       "end_line": 54,
+       "end_column": 86
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 55,
+       "start_column": 38,
+       "end_line": 55,
+       "end_column": 58
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 57,
+       "start_column": 46,
+       "end_line": 57,
+       "end_column": 78
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 57,
+       "start_column": 81,
+       "end_line": 57,
+       "end_column": 106
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 57,
+       "start_column": 107,
+       "end_line": 57,
+       "end_column": 132
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 58,
+       "start_column": 50,
+       "end_line": 58,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 59,
+       "start_column": 51,
+       "end_line": 59,
+       "end_column": 88
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 75,
+       "start_column": 32,
+       "end_line": 75,
+       "end_column": 64
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 76,
+       "start_column": 20,
+       "end_line": 76,
+       "end_column": 40
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 77,
+       "start_column": 30,
+       "end_line": 77,
+       "end_column": 57
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 78,
+       "start_column": 28,
+       "end_line": 78,
+       "end_column": 55
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 97,
+       "start_column": 38,
+       "end_line": 97,
+       "end_column": 58
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 99,
+       "start_column": 46,
+       "end_line": 99,
+       "end_column": 78
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 99,
+       "start_column": 81,
+       "end_line": 99,
+       "end_column": 106
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 99,
+       "start_column": 107,
+       "end_line": 99,
+       "end_column": 132
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 100,
+       "start_column": 50,
+       "end_line": 100,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 108,
+       "start_column": 38,
+       "end_line": 108,
+       "end_column": 58
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 110,
+       "start_column": 46,
+       "end_line": 110,
+       "end_column": 78
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 110,
+       "start_column": 81,
+       "end_line": 110,
+       "end_column": 106
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 110,
+       "start_column": 107,
+       "end_line": 110,
+       "end_column": 132
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 111,
+       "start_column": 50,
+       "end_line": 111,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 112,
+       "start_column": 50,
+       "end_line": 112,
+       "end_column": 77
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 119,
+       "start_column": 39,
+       "end_line": 119,
+       "end_column": 65
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 120,
+       "start_column": 36,
+       "end_line": 120,
+       "end_column": 56
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 122,
+       "start_column": 44,
+       "end_line": 122,
+       "end_column": 76
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 122,
+       "start_column": 79,
+       "end_line": 122,
+       "end_column": 104
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 122,
+       "start_column": 105,
+       "end_line": 122,
+       "end_column": 130
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 123,
+       "start_column": 48,
+       "end_line": 123,
+       "end_column": 75
+      },
+      {
+       "rule": "tmp.javascript.parameter-sql-text",
+       "path": "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       "start_line": 124,
+       "start_column": 49,
+       "end_line": 124,
+       "end_column": 86
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

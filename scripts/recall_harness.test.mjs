@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { hunkAdjudicationIdentity, hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -1995,3 +1995,18 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   assert.equal(checkpointable(fresh.cases[0]), true);
   assert.match(scorerSha256(), /^[a-f0-9]{64}$/);
 }));
+
+test('assertReviewOutput refuses the score receipt, its aliases and the capture workdir', async () => {
+  const { assertReviewOutput } = await import('./recall_harness.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'review-out-'));
+  const work = join(root, 'work');
+  mkdirSync(work);
+  const score = join(root, 'score.json');
+  writeFileSync(score, '{}');
+  symlinkSync(score, join(root, 'alias.json'));
+  assert.throws(() => assertReviewOutput(score, score, realpathSync(work)), /score receipt/);
+  assert.throws(() => assertReviewOutput(join(root, 'alias.json'), score, realpathSync(work)), /score receipt/);
+  assert.throws(() => assertReviewOutput(join(work, 'alerts.json'), score, realpathSync(work)), /capture workdir/);
+  assertReviewOutput(join(root, 'alerts.json'), score, realpathSync(work));
+  assert.equal(readFileSync(score, 'utf8'), '{}');
+});

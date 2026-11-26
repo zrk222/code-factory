@@ -633,6 +633,8 @@ rules:
               regex: ^(is_?[Vv]alid|[Vv]alidate|has|includes)[A-Za-z0-9_]*$
           - focus-metavariable: $X
       - pattern: path.basename(...)
+    # Existence and metadata probes (exists, stat, access) neither read nor change file
+    # content; each vulnerable read or write the probe guards is reported on its own.
     pattern-sinks:
       - patterns:
           - pattern: fs.readFile($PATH, ...)
@@ -654,7 +656,7 @@ rules:
               regex: ^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$
           - metavariable-regex:
               metavariable: $CALL
-              regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+              regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync)$
           - focus-metavariable: $PATH
       # The same calls through a receiver bound to an fs module, under any name.
       - patterns:
@@ -674,7 +676,7 @@ rules:
           - pattern: $FS.$CALL($PATH, ...)
           - metavariable-regex:
               metavariable: $CALL
-              regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+              regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync)$
           - focus-metavariable: $PATH
       # Joining request text under a base directory is the traversal itself.
       - patterns:
@@ -3391,7 +3393,43 @@ rules:
           - focus-metavariable: $CMD
       # Shell command text assembled from a parameter (`rm -rf "${dir}"`) and handed
       # to a run/exec wrapper elsewhere; reported at the first placeholder.
-      - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+      # A command template passed straight to a call that a direct sink above already
+      # reports (same receivers, same child_process bindings) is reported once, there.
+      # Templates built elsewhere, or passed to any other receiver, stay reported here.
+      - patterns:
+          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: '$CP.exec(`...`, ...)'
+                    - pattern: '$CP.execSync(`...`, ...)'
+                - metavariable-regex: {metavariable: $CP, regex: '^(cp|child_process|childProcess|child|proc|shell)$'}
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        import { ... } from "$CPMOD"
+                        ...
+                    - pattern-inside: |
+                        import $CPX from "$CPMOD"
+                        ...
+                    - pattern-inside: |
+                        import * as $CPX from "$CPMOD"
+                        ...
+                    - pattern-inside: |
+                        $CPX = require("$CPMOD")
+                        ...
+                    - pattern-inside: |
+                        $CPX = require("$CPMOD").$CPM
+                        ...
+                    - pattern-inside: |
+                        const {...} = require("$CPMOD")
+                        ...
+                - metavariable-regex: {metavariable: $CPMOD, regex: '^(?:(?:node:)?child_process|shelljs(?:\.exec)?|execa|cross-spawn)$'}
+                - pattern-either:
+                    - pattern: 'exec(`...`, ...)'
+                    - pattern: 'execSync(`...`, ...)'
+                    - pattern: 'execAsync(`...`, ...)'
       - patterns:
           - pattern: $RUN($CMD, ...)
           - metavariable-regex:
@@ -3647,6 +3685,13 @@ rules:
       - patterns:
           - pattern: $OBJ->$M(...)
           - metavariable-regex: {metavariable: $M, regex: '^(?i:compile|wrap|quote|escape|sanitize|grammar)\w*$'}
+      # PHP arithmetic yields a number whatever its operands were.
+      - pattern: $A * $B
+      - pattern: $A - $B
+      - pattern: $A / $B
+      - pattern: $A % $B
+      - pattern: count(...)
+      - pattern: time()
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3709,6 +3754,11 @@ rules:
                 - metavariable-regex:
                     metavariable: $C
                     regex: (?i).*(Grammar|Builder|Compiler|Dialect|Platform).*
+          # The body of a quoting or escaping helper wraps its argument by design.
+          - pattern-not-inside:
+              patterns:
+                - pattern: function $QF(...) { ... }
+                - metavariable-regex: {metavariable: $QF, regex: '(?i).*(quote|escape).*'}
           - focus-metavariable: $X
       - patterns:
           - pattern: sprintf($FMT, ..., $X, ...)
@@ -3833,7 +3883,7 @@ rules:
               - pattern-inside: |
                   class $C { ... async $M(..., $P, ...) { ... } ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex|app|application|server|router|plugin|logger)$)\w+$'}
     pattern-sanitizers:
       - pattern: parseInt(...)
       - pattern: Number(...)
@@ -3878,7 +3928,33 @@ rules:
       # (`SELECT ... WHERE id = ${userId}`), each reported where it sits. \G chains
       # matches within one template; code-generation templates do not start with SQL.
       # A tagged template (sql`...`, prisma.$queryRaw`...`) binds its values as parameters.
-      - pattern-regex: '(?i)(?:(?<![\w$\].)>])`\s*\(?\s*(?:select|insert\s+into|update|delete\s+from|with)\b|\G)[^`$]*(?:\$(?!\{)[^`$]*)*\K\$\{[^}`]*\}'
+      # Each interpolation in an untagged template literal whose text is a SQL statement
+      # (tagged templates such as sql`...` bind their values). The statement shape is
+      # required up front so English text (`with scope`, `select ${x}`) is not a sink:
+      # on large minified bundles that kept OpenGrep 2.0.0 analysing every function.
+      - patterns:
+          - pattern: '`...${$X}...`'
+          - pattern-not-inside: '$TAG`...`'
+          # A template passed straight to a recognized driver call is reported once, as
+          # that call's query argument, by the first sink.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: '$DB.query(`...`, ...)'
+                    - pattern: '$DB.execute(`...`, ...)'
+                    - pattern: '$DB.raw(`...`, ...)'
+                    - pattern: '$DB.$queryRawUnsafe(`...`, ...)'
+                    - pattern: '$DB.$executeRawUnsafe(`...`, ...)'
+                    - pattern: '$DB.all(`...`, ...)'
+                    - pattern: '$DB.get(`...`, ...)'
+                    - pattern: '$DB.run(`...`, ...)'
+                    - pattern: '$DB.exec(`...`)'
+                    - pattern: '$DB.prepare(`...`)'
+                - metavariable-regex:
+                    metavariable: $DB
+                    regex: '(?i)(^|\.)(db|database|conn|connection|client|pool|knex|sequelize|prisma|tx|trx|sql|pg|mysql|sqlite|\w*(db|conn|pool|client))$'
+          - pattern-regex: '(?i)(?<![\w$\].)>])`\s*\(?\s*(?:select\s[^`]*?\bfrom\b|insert\s+into\b|update\s+[^\s`]+\s+set\b|delete\s+from\b|with\s+(?:recursive\s+)?\w+\s*(?:\([^)`]*\))?\s+as\s*\()[^`]*`'
+          - focus-metavariable: $X
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -3931,6 +4007,9 @@ rules:
           - pattern-either:
               - pattern: '"$SQL" + $X'
               - pattern: '$A + "$SQL" + $X'
+          # Literal gate for OpenGrep's prefilter (the taint source has none): without it every
+          # Java file is fully parsed. The match spans the literal and its concatenated operand.
+          - pattern-regex: '(?i)"[^"\n]*\b(?:select|insert|update|delete|create|merge|where|order|group|having|values|and|or|set|from|into)\b[^"\n]*"\s*\+(?!\s*")[^;]*'
           - metavariable-regex:
               metavariable: $SQL
               regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
@@ -3939,6 +4018,8 @@ rules:
           - pattern-either:
               - pattern: 'String.format("$SQL", ...)'
               - pattern: '"$SQL".formatted(...)'
+          # Gate on the call itself: a bare "format" literal also matches words like "information".
+          - pattern-regex: '(?s)(?:\bString\s*\.\s*format|"\s*\.\s*formatted)\s*\([^;]*'
           # Only string placeholders carry text; %d and the like format numbers.
           - metavariable-regex: {metavariable: $SQL, regex: '(?s).*%s'}
           - metavariable-regex:
@@ -4371,7 +4452,9 @@ rules:
                     ...
                   } ... }
           - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
-          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
+          # No bare copy/move/remove here: those words are everywhere, so the prefilter would
+          # admit (and force-parse) nearly every JS/TS file for this join-anchored branch.
+          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync)$'}
           - pattern-not-inside: |
               function $F(...) {
                 ...
@@ -4443,6 +4526,9 @@ rules:
       # A template-built path whose segment after a slash is a file-like name or
       # field (`${dir}/${doc.filename}`), handed to an fs call with no containment.
       - patterns:
+          # Literal gate: lets OpenGrep's prefilter skip files with no fs call, so this
+          # branch does not force full parses (and parse failures) on every JS/TS file.
+          - pattern-regex: '\b(?:fs\w*|\w*Fs|fse|fsp|fsPromises|promises)\.(?:readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)\s*\('
           - pattern-either:
               - pattern: $FS.$SINK($T, ...)
               - patterns:
@@ -4493,6 +4579,122 @@ rules:
       confidence: LOW
       cwe: ["CWE-22"]
       scope: Function parameters joined under a base path in a function that calls fs and has no containment check; callers are not checked.
+  - id: javascript.html-template-unescaped-interpolation
+    message: A value is interpolated into an HTML tag name or quoted attribute of a template string without an escaper; escape it for the attribute context or build the element with DOM APIs.
+    severity: INFO
+    languages: [javascript, typescript]
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: '`...${$X}...`'
+              - metavariable-pattern:
+                  metavariable: $X
+                  patterns:
+                    - pattern-not: $ESC(...)
+                    - pattern-not: $O.$ESC(...)
+              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
+          # A plain local is reported unless it was assigned from an escaper.
+          - patterns:
+              - pattern: '`...${$X}...`'
+              - metavariable-pattern:
+                  metavariable: $X
+                  patterns:
+                    - pattern-not: $ESC(...)
+                    - pattern-not: $O.$ESC(...)
+              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
+              - metavariable-comparison:
+                  comparison: str($X) == str($VALUE)
+              - pattern-not-inside: |
+                  $X = escapeHtml(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = escapeHTML(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = escape_html(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = escapeAttr(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = escapeAttribute(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = escapeXml(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = escapeXML(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = escape(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = encode(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = sanitize(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = encodeURIComponent(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = encodeURI(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = toAttributeString(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = $O.escape(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = $O.escapeHtml(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = $O.escapeXml(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = $O.escapeAttr(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = $O.sanitize(...);
+                  ...
+              - pattern-not-inside: |
+                  $X = $O.encode(...);
+                  ...
+          # Attribute values spliced in by concatenation ('="' + value + '"' or "=\"" + v + "\"";
+          # SQL's ='" + v + "'" quoting is a different shape). The leading
+          # character class keeps out jQuery attribute selectors ([name="' + v + '"]),
+          # which are queries, not markup.
+          - patterns:
+              - pattern: $L + $X + $R
+              - pattern-regex: '(?:^|[^\w\[\-])[\w:-]*=(?:"''|\\"[''"]|\\''[''"])\s*\+\s*(?P<VALUE>[A-Za-z_$][\w$.]*(?:\[[^\]\n]{1,40}\])?)\s*\+\s*(?:''"|[''"]\\"|[''"]\\'')'
+              - metavariable-comparison:
+                  comparison: str($X) == str($VALUE)
+              # A local reassigned from an escaper or URL cleaner is no longer raw input.
+              - pattern-not-inside:
+                  patterns:
+                    - pattern: |
+                        $X = $ESC(...);
+                        ...
+                    - metavariable-regex: {metavariable: $ESC, regex: '(?i)(\w+\.)*\w*(escape|sanitiz|encode|clean|quote)\w*'}
+              - metavariable-regex:
+                  metavariable: $VALUE
+                  regex: '^(?![A-Z_][A-Z0-9_]*$)(?!(?:width|height|x|y|size|index|count|i|j|k|n|id)$)(?!\w*(?:Width|Height)$)'
+      # Not markup sinks: regexes built from a template, dev warnings and invariant
+      # messages that only quote markup in diagnostic text.
+      - pattern-not-inside: new RegExp(...)
+      - pattern-not-inside: RegExp(...)
+      - pattern-not-inside: console.$LOG(...)
+      - pattern-not-inside: warning(...)
+      - pattern-not-inside: invariant(...)
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-79"]
+      scope: Template strings whose markup interpolates a plain identifier or member access into a double-quoted attribute; escaper calls, locals assigned from an escaper and UPPER_CASE constants are excluded.
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/docs/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js", "**/compiled/**", "**/*.development.js", "**/*.production.js"]
   - id: javascript.dom-innerhtml-from-variable
     message: A non-literal value is assigned to innerHTML or outerHTML; use textContent, or sanitize the markup first.
     severity: INFO
@@ -4513,7 +4715,11 @@ rules:
             - pattern-not: sanitize(...)
             - pattern-not: $ESC(...)
       # A static placeholder on a class or namespace (AST.emptyHTML) is not data.
-      - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)'}
+      # Empty placeholders, UPPER_CASE template constants and values already named as
+      # sanitized or purified are not raw markup.
+      - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)(?![A-Z_][A-Z0-9_]*$)(?!(?i:\w*(?:sanitiz|purif)\w*|empty\w*)$)'}
+      # Appending a string literal to an element's own markup adds no outside data.
+      - pattern-not: $E.innerHTML = $E.innerHTML + "..."
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
