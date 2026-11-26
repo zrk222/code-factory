@@ -36,7 +36,7 @@ import { basename, delimiter, dirname, extname, isAbsolute, join, relative, reso
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, completeFixedCoverage, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
-import { compileScannerPathPolicy, engineTargetIgnores, PARSER_LANGUAGE, readRuleMetadata } from './recall_coverage.mjs';
+import { engineTargetIgnores, PARSER_LANGUAGE, readRuleMetadata, scannerPathPolicy } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
@@ -743,7 +743,7 @@ function reportReferences(context, report, diagnostics) {
     } : {}) };
 }
 
-function uncoveredPolicyPaths(paths, findings, pathPolicy) {
+function uncoveredPolicyPaths(paths, findings, ruleExcludes) {
   const { coverage, notes } = findings;
   if (!coverage || notes.failed_exit !== false || notes.timeouts || notes.other || notes.blocking_parse_errors) return [];
   const reported = new Set(findings.map(finding => finding.path));
@@ -752,33 +752,45 @@ function uncoveredPolicyPaths(paths, findings, pathPolicy) {
     const skip = coverage.skipped.get(path);
     // A generic engine skip needs independent proof from the applicable rules.
     return !coverage.skipped.has(path) || skip === 'semgrepignore_patterns_match'
-      || (skip === 'always_skipped' && pathPolicy(path));
+      || (skip === 'always_skipped' && ruleExcludes(path));
   });
 }
 
+function confirmPathExclusions(coverage, unresolved, policy, ignored = null) {
+  coverage.policyExclusions = new Map();
+  for (const path of unresolved) {
+    if (policy.ruleExcludes(path)) coverage.policyExclusions.set(path, 'rule_path_exclusions');
+    else if (policy.usesTargetInventory) {
+      if (ignored?.(path)) coverage.policyExclusions.set(path, 'engine_target_ignore');
+    } else if (coverage.skipped.get(path) === 'semgrepignore_patterns_match') {
+      coverage.policyExclusions.set(path, 'engine_coverage_ignore');
+    }
+  }
+}
+
 async function observePathPolicy(context, source, report, paths, findings) {
-  if (!context.pathPolicy) return;
-  const unresolved = uncoveredPolicyPaths(paths, findings, context.pathPolicy);
+  const policy = context.pathPolicy;
+  if (!policy) return;
+  const unresolved = uncoveredPolicyPaths(paths, findings, policy.ruleExcludes);
   if (!unresolved.length) return;
   const { coverage, notes } = findings;
-  const policy = new Map(unresolved.filter(context.pathPolicy).map(path => [path, 'rule_path_exclusions']));
-  const targets = unresolved.filter(path => !policy.has(path));
-  if (targets.length) {
+  let ignored = null;
+  if (policy.usesTargetInventory && unresolved.some(path => !policy.ruleExcludes(path))) {
     const [bin, ...argv] = profileArgv(context.profile, { bin: context.bin, rules: context.rules,
       report, source: '.', extra: context.extra });
     const outputArg = argv.indexOf('--sarif-output');
-    if (outputArg < 0) return;
-    argv.splice(outputArg, 2);
-    argv.splice(argv.length - 1, 0, '--x-ls-long');
-    const observed = await runProcess(bin, argv, { cwd: source, timeout: 30000 });
-    const ignored = observed.status === 0 && engineTargetIgnores(observed.stdout, source);
-    if (ignored) {
-      writeFileSync(`${report}.targets`, observed.stdout);
-      notes.target_inventory_sha256 = sha256(observed.stdout);
-      for (const path of targets.filter(ignored)) policy.set(path, 'engine_target_ignore');
+    if (outputArg >= 0) {
+      argv.splice(outputArg, 2);
+      argv.splice(argv.length - 1, 0, '--x-ls-long');
+      const observed = await runProcess(bin, argv, { cwd: source, timeout: 30000 });
+      if (observed.status === 0) ignored = engineTargetIgnores(observed.stdout, source);
+      if (ignored) {
+        writeFileSync(`${report}.targets`, observed.stdout);
+        notes.target_inventory_sha256 = sha256(observed.stdout);
+      }
     }
   }
-  coverage.policyExclusions = policy;
+  confirmPathExclusions(coverage, unresolved, policy, ignored);
 }
 
 function captureReference(context, source, report, diagnostics) {
@@ -949,10 +961,9 @@ function scoringContext(opts, rulesPath) {
 
 function optionalScannerPolicy(opts, profile, records) {
   if (opts['scanner-path-policy'] !== 'true') return null;
-  if (profile.engine !== 'semgrep' || profile.tool_version !== '2.1.0') {
-    throw new Error('Scanner path evidence requires the verified OpenGrep 2.1.0 target inventory');
-  }
-  return compileScannerPathPolicy(records);
+  const policy = scannerPathPolicy(profile, records);
+  if (!policy) throw new Error('Scanner path evidence requires a verified OpenGrep coverage profile');
+  return policy;
 }
 
 // Restartable qualification: a completed scored case (or control pair) is
@@ -1149,7 +1160,7 @@ async function scorePreparedManifest(manifest, opts, context) {
   return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
     manifest_sha256: manifest.sha256, ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scope: context.scope, engine_args: context.extra, case_workers: jobs,
-    ...(context.pathPolicy ? { scanner_path_policy: 'opengrep-2.1.0-target-inventory-v1' } : {}),
+    ...(context.pathPolicy ? { scanner_path_policy: context.pathPolicy.proof } : {}),
     scan_directory: basename(context.scanRoot),
     ...(checkpoints ? { resumed_cases: resumed.sort() } : {}),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
@@ -2428,11 +2439,11 @@ function replayCaseSide(row, side, retained, preparedSource, pathPolicy) {
     throw new Error('Scan diagnostics differ from retained reports');
   }
   if (pathPolicy) {
-    const unresolved = uncoveredPolicyPaths(hashes.keys(), Object.assign(findings, { coverage, notes }), pathPolicy);
+    const unresolved = uncoveredPolicyPaths(hashes.keys(), Object.assign(findings, { coverage, notes }), pathPolicy.ruleExcludes);
     if (unresolved.length) {
-      const ignored = retained.target_inventory && engineTargetIgnores(utf8(retained.target_inventory), retained.source);
-      coverage.policyExclusions = new Map(unresolved.flatMap(path => pathPolicy(path) ? [[path, 'rule_path_exclusions']]
-        : ignored?.(path) ? [[path, 'engine_target_ignore']] : []));
+      const ignored = pathPolicy.usesTargetInventory && retained.target_inventory
+        ? engineTargetIgnores(utf8(retained.target_inventory), retained.source) : null;
+      confirmPathExclusions(coverage, unresolved, pathPolicy, ignored);
     }
   }
   return { findings, coverage, submitted: true, verified: true };

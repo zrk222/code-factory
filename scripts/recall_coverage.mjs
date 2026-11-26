@@ -41,10 +41,21 @@ export function sarifPath(uri, packetPaths) {
   return literal;
 }
 
+function engineSkippedPaths(entries) {
+  const skipped = new Map();
+  for (const entry of entries) {
+    const path = scannerPath(entry.path);
+    if (!path) continue;
+    const reason = skipped.has(path) && skipped.get(path) !== entry.reason ? null : entry.reason;
+    skipped.set(path, reason);
+  }
+  return skipped;
+}
+
 export function engineCoverage(report) {
   if (!Array.isArray(report?.paths?.scanned)) throw new Error('Missing engine scan paths');
   const scanned = new Set(report.paths.scanned.map(path => scannerPath(path)).filter(Boolean));
-  const skipped = new Map((report.paths.skipped ?? []).map(entry => [scannerPath(entry.path), entry.reason]));
+  const skipped = engineSkippedPaths(report.paths.skipped ?? []);
   const problems = new Map();
   const priority = { parse: 1, engine_error: 2, engine_timeout: 3 };
   let timeouts = 0;
@@ -142,6 +153,13 @@ export function compileScannerPathPolicy(rules) {
     const applicable = named.flatMap(name => byLanguage.get(name) ?? []);
     return Boolean(applicable.length) && applicable.every(rule => rule.excludes.some(glob => posix.matchesGlob(path, glob)));
   };
+}
+
+export function scannerPathPolicy(profile, rules) {
+  if (profile.engine !== 'semgrep' || !['1.15.0', '2.1.0'].includes(profile.tool_version)) return null;
+  const usesTargetInventory = profile.tool_version === '2.1.0';
+  const proof = usesTargetInventory ? 'opengrep-2.1.0-target-inventory-v1' : 'opengrep-1.15.0-coverage-report-v1';
+  return { proof, ruleExcludes: compileScannerPathPolicy(rules), usesTargetInventory };
 }
 
 export function engineTargetIgnores(stdout, source) {

@@ -7,7 +7,7 @@ import test from 'node:test';
 import { caseDigest, sha256, sortKeys } from './recall_harness.mjs';
 import { scoreCodeqlPairs } from './recall_codeql_pairs.mjs';
 
-function stagedPair(t, archivePrefix = 'src') {
+function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI') {
   const root = mkdtempSync(join(tmpdir(), 'cf-codeql-pair-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (path, bytes) => {
@@ -15,15 +15,18 @@ function stagedPair(t, archivePrefix = 'src') {
     return { path, sha256: sha256(bytes) };
   };
   const json = (path, value) => write(path, JSON.stringify(value));
-  const row = { ghsa: 'GHSA-2222-3333-4444', repository: 'example/project', ecosystem: 'PyPI',
+  const sample = ecosystem === 'npm' ? 'sample.js' : 'sample.py';
+  const extractionId = ecosystem === 'npm' ? 'factory/js/diagnostics/parsed-source-files'
+    : 'py/diagnostics/successfully-extracted-files';
+  const row = { ghsa: 'GHSA-2222-3333-4444', repository: 'example/project', ecosystem,
     fix: 'b'.repeat(40), cwes: ['CWE-89'] };
   const manifest = json('manifest.json', { cases: [row], cases_sha256: caseDigest([row]) });
-  const diff = write('diff.patch', 'diff --git a/sample.py b/sample.py\n--- a/sample.py\n+++ b/sample.py\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n');
-  const changes = write('changes.z', 'M\0sample.py\0');
+  const diff = write('diff.patch', `diff --git a/${sample} b/${sample}\n--- a/${sample}\n+++ b/${sample}\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n`);
+  const changes = write('changes.z', `M\0${sample}\0`);
   const source = { old: 'VALUE = 1\n', fixed: 'VALUE = 2\n' };
   const revisions = { old: 'a'.repeat(40), fixed: row.fix };
   const source_packets = Object.fromEntries(Object.entries(source).map(([side, bytes]) => [
-    side, [{ path: 'sample.py', bytes: bytes.length, sha256: sha256(bytes) }],
+    side, [{ path: sample, bytes: bytes.length, sha256: sha256(bytes) }],
   ]));
   const binding = { ghsa: row.ghsa, revisions, source_packets, diff_sha256: diff.sha256, changed_files_sha256: changes.sha256 };
   const prepared = json('case.json', { ...binding, status: 'ready', case_sha256: caseDigest([row]) });
@@ -35,14 +38,17 @@ function stagedPair(t, archivePrefix = 'src') {
   const id = 'test/fixture.scope.detail';
   const query = write('query.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
   const zip = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c',
-    'import json, sys, zipfile\nfor side, text in json.load(sys.stdin).items():\n with zipfile.ZipFile(side + ".zip", "w") as a:\n  a.writestr(sys.argv[1] + "/sample.py", text)\n  a.writestr(sys.argv[1] + "/helper.py", "VALUE = 0\\n")',
-    archivePrefix],
+    'import json, sys, zipfile\nfor side, text in json.load(sys.stdin).items():\n with zipfile.ZipFile(side + ".zip", "w") as a:\n  a.writestr(sys.argv[1] + "/" + sys.argv[2], text)\n  a.writestr(sys.argv[1] + "/helper.py", "VALUE = 0\\n")',
+    archivePrefix, sample],
   { cwd: root, input: JSON.stringify(source), encoding: 'utf8', windowsHide: true });
   assert.equal(zip.status, 0, zip.stderr ?? zip.error?.message);
-  const capture = (side, invocations = [{ executionSuccessful: true }], located = true,
+  const capture = (side, invocations = [{ executionSuccessful: true, toolExecutionNotifications: [{
+    descriptor: { id: extractionId }, level: 'none',
+    locations: [{ physicalLocation: { artifactLocation: { uri: sample } } }],
+  }] }], located = true,
     regions = side === 'old' ? [{ startLine: 1 }] : []) => {
     const results = regions.map(region => ({ ruleId: id, locations: located ? [
-      { physicalLocation: { artifactLocation: { uri: 'sample.py' }, region } },
+      { physicalLocation: { artifactLocation: { uri: sample }, region } },
     ] : [] }));
     const sarif = json(side + '.sarif', { version: '2.1.0', runs: [{ tool: { driver: { name: 'CodeQL',
       semanticVersion: '2.27.1', rules: [{ id, properties: { tags: ['external/cwe/cwe-089'] } }] } }, results, invocations }] });
@@ -56,6 +62,21 @@ function stagedPair(t, archivePrefix = 'src') {
   return { root, row, value, capture, binding, inputSha256, json, write,
     run: (input, pattern) => scoreCodeqlPairs(join(root, json('bundle.json', input).path), pattern) };
 }
+
+test('JavaScript needs parsed content evidence in addition to archive membership', t => {
+  const { value, capture, run } = stagedPair(t, 'src', 'npm');
+  const qualified = run(value).cases[0];
+  assert.equal(qualified.native_coverage.old.complete, true);
+  assert.equal(qualified.native_coverage.fixed.complete, true);
+  const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [{
+    descriptor: { id: 'js/diagnostics/successfully-extracted-files' },
+    locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.js' } } }],
+  }] }]);
+  const recorded = run({ ...value, cases: [{ ...value.cases[0], fixed }] }).cases[0];
+  assert.equal(recorded.hunk_hit, true);
+  assert.equal(recorded.native_coverage.fixed.complete, false);
+  assert.deepEqual(recorded.native_coverage.fixed.missing, ['sample.js']);
+});
 
 test('paired CodeQL scoring requires both revisions and verifies actual source archive bytes', t => {
   const { value, capture, inputSha256, run } = stagedPair(t);
@@ -209,7 +230,7 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
 });
 
 test('native and pattern hits join only on identical evidence and are counted once', t => {
-  const { root, row, value, binding, json, run } = stagedPair(t);
+  const { root, row, value, binding, capture, json, run } = stagedPair(t);
   const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false, hunk_findings: [],
     file_coverage: { fixed: binding.source_packets.fixed.map(packet => ({
       ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths',
@@ -227,6 +248,7 @@ test('native and pattern hits join only on identical evidence and are counted on
   const joined = (candidate, bundle = value) => run(bundle, score(candidate)).pattern_join;
   const detected = joined(base);
   assert.equal(detected.eligible_native_additions, 1);
+  assert.equal(detected.native_extraction_complete_pairs, 1);
   assert.equal(detected.observed_union_hunk_hits, 1);
   assert.equal(detected.observed_union_file_hits, 1);
   const found = joined({ ...base, outcome: 'hit', hunk_hit: true, file_hit: true,
@@ -246,6 +268,21 @@ test('native and pattern hits join only on identical evidence and are counted on
   assert.throws(() => run(value, score(base, { file_hits: 1 })), /Pattern hit count differs/);
 
   const pair = value.cases[0];
+  const note = (id, uri = 'sample.py') => ({ descriptor: { id },
+    locations: [{ physicalLocation: { artifactLocation: { uri } } }] });
+  for (const notifications of [
+    [note('py/baseline/expected-extracted-files')],
+    [note('py/diagnostics/successfully-extracted-files', 'other.py')],
+    [note('py/diagnostics/successfully-extracted-files'), note('py/extractor/parse-error')],
+  ]) {
+    const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: notifications }]);
+    const observed = joined(base, { ...value, cases: [{ ...pair, fixed }] });
+    assert.equal(observed.cases[0].disposition, 'native_extraction_unresolved');
+    assert.equal(observed.native_extraction_complete_pairs, 0);
+    assert.equal(observed.observed_union_hunk_hits, 1);
+    assert.equal(observed.combined_hunk_hits, 0);
+  }
+  capture('fixed');
   const nativeReport = JSON.parse(readFileSync(join(root, pair.old.sarif.path), 'utf8'));
   nativeReport.runs[0].results[0].locations[0].physicalLocation.region.startLine = 4;
   const sarif = json('file-only.sarif', nativeReport);
