@@ -3920,17 +3920,18 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
+      # Seed taint at the binding and let the engine follow its uses.
       - patterns:
           - pattern-either:
-              - pattern-inside: function $F(..., $P, ...) { ... }
-              - pattern-inside: async function $F(..., $P, ...) { ... }
-              - pattern-inside: (..., $P, ...) => { ... }
-              - pattern-inside: async (..., $P, ...) => { ... }
-              - pattern-inside: |
+              - pattern: function $F(..., $P, ...) { ... }
+              - pattern: async function $F(..., $P, ...) { ... }
+              - pattern: (..., $P, ...) => { ... }
+              - pattern: async (..., $P, ...) => { ... }
+              - pattern: |
                   class $C { ... $M(..., $P, ...) { ... } ... }
-              - pattern-inside: |
+              - pattern: |
                   class $C { ... async $M(..., $P, ...) { ... } ... }
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex|app|application|server|router|plugin|logger)$)\w+$'}
     pattern-sanitizers:
       - pattern: parseInt(...)
