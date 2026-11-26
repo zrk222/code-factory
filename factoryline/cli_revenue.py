@@ -766,12 +766,14 @@ def _command_appforge_init(args: Any, root: Path) -> dict:
 def _command_appforge_status(args: Any, root: Path) -> dict:
     from .appforge_design import appforge_design_projection, appforge_status_brief
 
-    payload = appforge_design_projection(root, stage=args.stage)
-    if getattr(args, "brief", False):
-        return appforge_status_brief(root, payload)
-    if args.stage is None:
-        payload["next"] = appforge_status_brief(root, payload)["next"]
-    return payload
+    if args.stage is not None:
+        return appforge_design_projection(root, stage=args.stage)
+    from .revenue_evidence import receipt_paths
+
+    inventory = tuple(receipt_paths(root, "*.json"))  # one walk serves status and next
+    payload = appforge_design_projection(root, inventory=inventory)
+    brief = appforge_status_brief(root, payload, inventory)
+    return brief if getattr(args, "brief", False) else {**payload, "next": brief["next"]}
 
 
 def _command_appforge_next(args: Any, root: Path) -> dict:

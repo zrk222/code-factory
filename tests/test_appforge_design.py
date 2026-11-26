@@ -201,8 +201,8 @@ def test_appforge_next_reports_a_blocked_stage_and_all_done(tmp_path: Path, monk
     statuses = {name: {"current_count": 1, "latest": {"ok": True, "marker": "OK"}} for name, *_ in design._NEXT_CHAIN}
     statuses["quality_audit"] = {"current_count": 1, "latest": {"ok": False, "marker": "QUALITY_BLOCKED",
                                                                  "findings": [{"detail": "contrast below 4.5"}]}}
-    monkeypatch.setattr(design, "appforge_design_projection", lambda _root: {**statuses["design"], **statuses})
-    monkeypatch.setattr(design, "_receipt_only_status", lambda _w, _p: statuses["store_media"])
+    monkeypatch.setattr(design, "appforge_design_projection", lambda _root, **_k: {**statuses["design"], **statuses})
+    monkeypatch.setattr(design, "_receipt_only_status", lambda _w, _p, _i=None: statuses["store_media"])
     step = design.appforge_next(tmp_path)
     assert step["stage"] == "quality-audit" and step["state"] == "blocked" and "contrast below 4.5" in step["why"]
     statuses["quality_audit"] = {"current_count": 1, "latest": {"ok": True, "marker": "OK"}}

@@ -126,7 +126,7 @@ _STAGES: dict[str, tuple[Callable[..., dict[str, Any]], str]] = {
 
 
 def appforge_design_projection(
-    root: Path, *, stage: str | None = None
+    root: Path, *, stage: str | None = None, inventory: tuple[Path, ...] | None = None
 ) -> dict[str, Any]:
     """Inspect one AppForge stage or reuse one path inventory for full status."""
     workspace = Path(root).resolve()
@@ -148,7 +148,8 @@ def appforge_design_projection(
             "repair_messages": _focused_repair_messages(workspace, status),
             "help_command": ["factory", "revenue", command, "--help"],
         }
-    inventory = tuple(receipt_paths(workspace, "*.json"))
+    if inventory is None:
+        inventory = tuple(receipt_paths(workspace, "*.json"))
     return {
         **_design_status(workspace),
         **{
@@ -214,7 +215,8 @@ def _stage_status_lines(label: str, status: dict[str, Any]) -> Iterator[str]:
         yield f"{label} has no local receipts"
 
 
-def appforge_status_brief(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def appforge_status_brief(root: Path, payload: dict[str, Any],
+                          inventory: tuple[Path, ...] | None = None) -> dict[str, Any]:
     """The compact status: one row per stage that has receipts, plus the next command."""
     stages = {}
     for name in _STAGES:
@@ -223,7 +225,7 @@ def appforge_status_brief(root: Path, payload: dict[str, Any]) -> dict[str, Any]
         if status.get("current_count") or status.get("invalid_count"):
             stages[name.replace("_", "-")] = {"marker": latest.get("marker"), "ok": _stage_state(status) == "done",
                                               "path": latest.get("path")}
-    step = appforge_next(root)
+    step = appforge_next(root, payload, inventory)
     return {"schema": "factory.appforge.status-brief.v1", "marker": "APPFORGE_DESIGN_READ_ONLY", "stages": stages,
             "next": {key: step[key] for key in ("stage", "argv", "inputs_missing", "human_required")}}
 
@@ -497,8 +499,8 @@ def _sealed_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
     return value if seal in (canonical_sha(value), compat_sha(value)) and seal is not None else None
 
 
-def _receipt_only_status(workspace: Path, pattern: str) -> dict[str, Any]:
-    current = [(path, value) for path in sorted(receipt_paths(workspace, pattern))[:100]
+def _receipt_only_status(workspace: Path, pattern: str, inventory: tuple[Path, ...] | None = None) -> dict[str, Any]:
+    current = [(path, value) for path in sorted(receipt_paths(workspace, pattern, inventory))[:100]
                if (value := _sealed_receipt(workspace, path)) is not None]
     if not current:
         return {"current_count": 0}
@@ -548,12 +550,16 @@ def _candidate_drift(statuses: dict[str, dict[str, Any]], current: object) -> li
     return stale
 
 
-def appforge_next(root: Path) -> dict[str, Any]:
+def appforge_next(root: Path, projection: dict[str, Any] | None = None,
+                  inventory: tuple[Path, ...] | None = None) -> dict[str, Any]:
     """The first AppForge stage without a current valid receipt, and the command that produces it. Runs nothing."""
     workspace = Path(root).resolve()
-    projection = appforge_design_projection(workspace)
+    if inventory is None:
+        inventory = tuple(receipt_paths(workspace, "*.json"))
+    if projection is None:
+        projection = appforge_design_projection(workspace, inventory=inventory)
     statuses = {name: (projection if name == "design" else
-                       _receipt_only_status(workspace, _RECEIPT_ONLY[name]) if name in _RECEIPT_ONLY else
+                       _receipt_only_status(workspace, _RECEIPT_ONLY[name], inventory) if name in _RECEIPT_ONLY else
                        projection.get(name, {}))
                 for name, *_ in _NEXT_CHAIN}
     init_latest = statuses["init"].get("latest") or {}
