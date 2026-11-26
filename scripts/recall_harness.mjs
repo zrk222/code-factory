@@ -1061,15 +1061,25 @@ async function scorePreparedManifest(manifest, opts, context) {
   };
   const rows = [];
   if (checkpoints) {
-    // Publish only after the group still matches the inputs used in its keys.
-    const groupSize = Math.max(16, jobs);
-    for (let start = 0; start < manifest.cases.length; start += groupSize) {
-      const staged = [];
-      const group = manifest.cases.slice(start, start + groupSize);
-      rows.push(...await pool(group, jobs, row => checkpointed(row, staged)));
-      await verifyPins('case checkpoint');
-      for (const { inputs, result } of staged) writeCheckpoint(checkpoints, inputs, result);
-    }
+    const staged = [];
+    let publishing = Promise.resolve();
+    const publish = () => {
+      const batch = staged.splice(0);
+      publishing = publishing.then(async () => {
+        await verifyPins('case checkpoint');
+        for (const { inputs, result } of batch) writeCheckpoint(checkpoints, inputs, result);
+      });
+      return publishing;
+    };
+    const batchSize = Math.max(16, jobs);
+    // A slow case does not keep idle workers at a checkpoint boundary.
+    rows.push(...await pool(manifest.cases, jobs, async row => {
+      const result = await checkpointed(row, staged);
+      if (staged.length >= batchSize) await publish();
+      return result;
+    }));
+    if (staged.length) await publish();
+    else await verifyPins('case scoring');
   } else {
     rows.push(...await pool(manifest.cases, jobs, row => one(row)));
   }

@@ -2023,6 +2023,30 @@ test('an interrupted scoring group preserves only earlier verified checkpoints',
   assert.deepEqual(resumed.resumed_cases, cases.slice(0, 16).map(row => row.ghsa));
   assert.equal(resumed.cases.filter(row => row.outcome === 'hit').length, cases.length);
   assert.equal(readdirSync(checkpoints).length, cases.length);
+
+  const scanner = join(root, 'scanner.mjs');
+  const marker = join(root, 'next-group-started');
+  const slow = caseDigest([cases[0]]), next = caseDigest([cases[16]]);
+  const inject = [
+    "const key = basename(dirname(process.cwd()));",
+    "const marker = " + JSON.stringify(marker) + ";",
+    "if (old && key === " + JSON.stringify(next) + ") writeFileSync(marker, '');",
+    "if (old && key === " + JSON.stringify(slow) + ") {",
+    "  const deadline = Date.now() + 25000;",
+    "  while (!existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));",
+    "  if (!existsSync(marker)) throw Error('Checkpoint boundary held an idle worker');",
+    "}",
+  ].join('\n');
+  const script = readFileSync(scanner, 'utf8');
+  const before = "const control = basename(process.cwd()) === 'control';";
+  assert.ok(script.includes(before));
+  writeFileSync(scanner, script.replace(before, inject + '\n' + before));
+  const rollingDir = join(root, 'rolling-checkpoints');
+  const rolling = await scoreManifest(manifest, baseline, { ...settings, jobs: 2, 'checkpoint-dir': rollingDir });
+  assert.deepEqual(rolling.cases.map(row => row.ghsa), cases.map(row => row.ghsa));
+  assert.equal(rolling.cases[0].outcome, 'hit');
+  assert.deepEqual(rolling.summary, resumed.summary);
+  assert.equal(readdirSync(rollingDir).length, cases.length);
 }));
 
 test('incomplete cases and rows with missing artifacts are rescanned, never resumed', () => feederFixture(async fixture => {
