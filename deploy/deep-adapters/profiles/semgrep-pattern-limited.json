@@ -3,7 +3,7 @@
   "engine": "semgrep",
   "mode": "pattern-limited",
   "tool_version": "1.15.0",
-  "ruleset_sha256": "075001ace41727c312d4dcc8d9f005a8f9c9b8c0087d9ae9a7349ad0d8ca655d",
+  "ruleset_sha256": "e0ccdabc3cdc4a7b615c5a021c381efd0d9c7cb80c1f9f7217e8a9a484812dfd",
   "commands": [
     {
       "argv": [
