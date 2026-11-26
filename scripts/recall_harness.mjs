@@ -101,39 +101,60 @@ function diffPath(header, prefix) {
   return path.startsWith(prefix) ? path.slice(prefix.length) : null;
 }
 
+const editLanes = { '-': ['old'], '+': ['fixed'], ' ': ['old', 'fixed'] };
+const hunkHasLines = cursor => Boolean(cursor?.old.remaining || cursor?.fixed.remaining);
+
+function markEdit(lines, path, line) {
+  if (!path) return;
+  if (!lines.has(path)) lines.set(path, new Set());
+  lines.get(path).add(line);
+}
+
+function readEditLine(cursor, line) {
+  if (line === '\\ No newline at end of file') return true;
+  const lanes = editLanes[line[0]];
+  if (!lanes || lanes.some(side => cursor[side].remaining === 0)) return false;
+  for (const side of lanes) {
+    const position = cursor[side];
+    if (lanes.length === 1) markEdit(position.edits, position.path, position.line);
+    position.line++;
+    position.remaining--;
+  }
+  return true;
+}
+
+function editRecorder() {
+  const deleted = new Map(), added = new Map();
+  let cursor = null, valid = true;
+  return {
+    start(match, oldPath, newPath) {
+      const [oldStart, oldCount, newStart, newCount] = [match[1], match[2] ?? '1', match[3], match[4] ?? '1'].map(Number);
+      cursor = {
+        old: { path: oldPath, line: oldStart, remaining: oldCount, edits: deleted },
+        fixed: { path: newPath, line: newStart, remaining: newCount, edits: added },
+      };
+    },
+    consume(line) {
+      if (!hunkHasLines(cursor)) return false;
+      if (readEditLine(cursor, line)) return true;
+      cursor = null;
+      valid = false;
+      return false;
+    },
+    finish(editedLines) {
+      if (valid && !hunkHasLines(cursor)) Object.assign(editedLines, { deleted, added });
+    },
+  };
+}
+
 // Old- and new-side line sets of every in-language, non-test file in a -U5 diff.
 export function parseHunks(diff, extensions, editedLines = null) {
-  const files = {};
+  const files = {}, edits = editedLines ? editRecorder() : null;
   let oldPath = null, newPath = null;
-  let inHunks = false, cursor = null, valid = true;
-  const deleted = new Map(), added = new Map();
-  const mark = (side, path, line) => {
-    if (!path) return;
-    if (!side.has(path)) side.set(path, new Set());
-    side.get(path).add(line);
-  };
+  let inHunks = false;
   const keep = path => path && extensions.some(ext => path.endsWith(`.${ext}`)) && !isTestPath(path);
   for (const line of diff.split('\n')) {
-    if (cursor && (cursor.oldLeft || cursor.newLeft)) {
-      if (line === '\\ No newline at end of file') continue;
-      if (line.startsWith('-') && cursor.oldLeft > 0) {
-        mark(deleted, oldPath, cursor.oldAt++);
-        cursor.oldLeft--;
-        continue;
-      }
-      if (line.startsWith('+') && cursor.newLeft > 0) {
-        mark(added, newPath, cursor.newAt++);
-        cursor.newLeft--;
-        continue;
-      }
-      if (line.startsWith(' ') && cursor.oldLeft > 0 && cursor.newLeft > 0) {
-        cursor.oldAt++; cursor.newAt++;
-        cursor.oldLeft--; cursor.newLeft--;
-        continue;
-      }
-      valid = false;
-      cursor = null;
-    }
+    if (edits?.consume(line)) continue;
     if (line.startsWith('diff --git ')) { oldPath = newPath = null; inHunks = false; continue; }
     if (!inHunks && line.startsWith('--- ')) { oldPath = diffPath(line, 'a/'); continue; }
     if (!inHunks && line.startsWith('+++ ')) { newPath = diffPath(line, 'b/'); continue; }
@@ -141,12 +162,9 @@ export function parseHunks(diff, extensions, editedLines = null) {
     if (!match) continue;
     inHunks = true;
     appendHunk(files, match, oldPath, newPath, keep);
-    if (editedLines) {
-      const [oldAt, oldLeft, newAt, newLeft] = [match[1], match[2] ?? '1', match[3], match[4] ?? '1'].map(Number);
-      cursor = { oldAt, oldLeft, newAt, newLeft };
-    }
+    edits?.start(match, oldPath, newPath);
   }
-  if (editedLines && valid && !cursor?.oldLeft && !cursor?.newLeft) Object.assign(editedLines, { deleted, added });
+  edits?.finish(editedLines);
   return files;
 }
 
@@ -864,10 +882,11 @@ export function writeCheckpoint(root, inputs, result) {
 // unfetchable or parentless cases, timeouts and errors are always rescanned.
 const EMPTY_CASE_STATUSES = new Set(['no_old_side_source', 'no_in_language_source_change']);
 const scoredCase = row => row.status === 'scored' && ['hit', 'miss'].includes(row.outcome);
-export const checkpointable = row => (scoredCase(row)
-  || (EMPTY_CASE_STATUSES.has(row.status) && row.outcome === 'unknown'))
-  && ['old', 'fixed'].every(side => Array.isArray(row.file_coverage?.[side])
-    && !coverageGaps(row.file_coverage[side]).length);
+export function checkpointable(row) {
+  return (scoredCase(row) || (EMPTY_CASE_STATUSES.has(row.status) && row.outcome === 'unknown'))
+    && ['old', 'fixed'].every(side => Array.isArray(row.file_coverage?.[side])
+      && !coverageGaps(row.file_coverage[side]).length);
+}
 
 // The scorer's own code is part of every checkpoint key.
 let scorerFingerprint;
@@ -879,6 +898,20 @@ export function scorerSha256() {
 
 // A saved row is reusable only while the captures and source packets it cites
 // are still present in this work directory with the same bytes.
+function checkpointCaptureIntact(root, capture, notes, packets, checkedSources) {
+  if (!capture) return packets.length === 0;
+  if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
+    || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
+  const artifacts = [capture.sarif, capture.native_report].filter(Boolean);
+  if (!artifacts.every(artifact => sha256(readFileSync(reviewCapturePath(root, artifact.path))) === artifact.sha256)) return false;
+  const source = reviewCapturePath(root, capture.source_root);
+  if (!checkedSources.has(source)) {
+    verifyPreparedBytes(source, packets);
+    checkedSources.add(source);
+  }
+  return true;
+}
+
 export function checkpointArtifactsIntact(workdir, row) {
   try {
     const root = realpathSync(workdir);
@@ -888,19 +921,7 @@ export function checkpointArtifactsIntact(workdir, row) {
       const packets = row.source_packets?.[side] ?? [];
       const checkedSources = new Set();
       for (const [captures, diagnostics] of attempts) {
-        const capture = captures?.[side];
-        if (!capture) { if (packets.length) return false; continue; }
-        const notes = diagnostics?.[side];
-        if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
-          || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
-        for (const artifact of [capture.sarif, capture.native_report].filter(Boolean)) {
-          if (sha256(readFileSync(reviewCapturePath(root, artifact.path))) !== artifact.sha256) return false;
-        }
-        const source = reviewCapturePath(root, capture.source_root);
-        if (!checkedSources.has(source)) {
-          verifyPreparedBytes(source, packets);
-          checkedSources.add(source);
-        }
+        if (!checkpointCaptureIntact(root, captures?.[side], diagnostics?.[side], packets, checkedSources)) return false;
       }
     }
     return true;

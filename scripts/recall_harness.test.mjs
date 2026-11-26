@@ -8,8 +8,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
-  publishPreparedCase } from './recall_harness.mjs';
-import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
+  publishPreparedCase, checkpointable, controlGapDelta } from './recall_harness.mjs';
+import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
 --- a/app/files.py
@@ -101,6 +101,43 @@ test('rule families read both inline and block CWE lists', () => {
   const shippedRuleCount = Object.keys(shipped).length;
   assert.ok(shippedRuleCount > 0 && shippedRuleCount <= 64, `shipped rules must stay within the 64-rule ceiling (${shippedRuleCount})`);
   assert.deepEqual(shipped['php.archive-path-traversal'], ['path']);
+});
+
+test('coverageGapEntries requires native path evidence for scored files', () => {
+  const findingOnly = { path: 'partial.py', state: 'reported_scanned', reason: 'sarif_finding' };
+  const timeout = { path: 'late.py', state: 'not_scanned', reason: 'timeout' };
+  const files = [
+    findingOnly, timeout,
+    { path: 'safe.py', state: 'reported_scanned', reason: 'engine_scan_paths' },
+    { path: 'gone.py', state: 'absent' },
+    { path: 'note.md', state: 'excluded' },
+  ];
+  assert.deepEqual(coverageGapEntries(files), [findingOnly, timeout]);
+});
+
+test('checkpointable requires verified coverage on both completed sides', () => {
+  const covered = [{ path: 'complete.py', state: 'reported_scanned', reason: 'engine_scan_paths' }];
+  const row = { status: 'scored', outcome: 'miss', file_coverage: { old: covered, fixed: covered } };
+  assert.equal(checkpointable(row), true);
+  assert.equal(checkpointable({ ...row, outcome: 'timeout' }), false);
+  assert.equal(checkpointable({ ...row, file_coverage: { old: covered } }), false);
+  const missing = [{ path: 'complete.py', state: 'reported_scanned', reason: 'sarif_finding' }];
+  assert.equal(checkpointable({ ...row, file_coverage: { old: covered, fixed: missing } }), false);
+});
+
+test('controlGapDelta compares exact reasons and rejects an unverifiable report', () => {
+  const digest = '1'.repeat(64);
+  const side = gaps => ({ failed_exit: false, coverage_report_sha256: digest,
+    reports: { native_report: { sha256: digest } }, control_coverage: { gaps } });
+  const shared = { path: 'known.py', reason: 'parse' };
+  const first = { path: 'other.py', reason: 'parse' };
+  const second = { path: 'other.py', reason: 'timeout' };
+  const before = side([shared, first]), after = side([shared, second]);
+  assert.deepEqual(controlGapDelta({ before, after }), {
+    state: 'COMPARED', shared: [shared], baseline_only: [first], candidate_only: [second],
+  });
+  assert.deepEqual(controlGapDelta({ before, after: { ...after, coverage_report_sha256: '2'.repeat(64) } }),
+    { state: 'UNCOMPARABLE' });
 });
 
 test('selection excludes prior advisories, prior fix commits, duplicates and capped repositories', () => {
