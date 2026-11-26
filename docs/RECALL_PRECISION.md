@@ -238,6 +238,12 @@ Held-out numbers are produced by one committed tool instead of scratch scripts.
 | `evaluate` | The gate for one candidate ruleset against a baseline: every dev manifest plus benign control repositories. It rejects lost baseline hits, new engine errors or timeouts, more fix-side residuals, control growth beyond `--max-control-increase`, and, with `--labels`, labeled false positives that return or labeled true positives that disappear. A flag on trial (for example `--taint-intrafile`) can apply to the candidate only. |
 | `observe` | Adds new control alerts to a label file (`TP`, `FP`, `UNCLEAR`, or pending). Labels are keyed by rule, repository, path and snippet digest, so line shifts do not orphan them. |
 
+Evaluation receipts record the control alert limit and the original alert spans
+for lost baseline hits. Use `--adjudicated-losses` for the baseline and
+`--gain-adjudicated-losses` for a separate `--retain-gains-from` checkpoint.
+The checkpoint plan requires the exact score digest, span and source hash for
+each reviewed alert. A candidate coverage gap still blocks qualification.
+
 A held-out manifest is scored once per ruleset; any later scoring of it is a
 development run and is reported as such.
 

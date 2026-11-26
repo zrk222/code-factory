@@ -1204,8 +1204,54 @@ test('evaluate preserves a raw lost hit with two pinned all-FP spans on the same
   assert.deepEqual(report.raw_lost_baseline_hits, [expected]);
   assert.deepEqual(report.lost_fp_only, [expected]);
   assert.deepEqual(report.lost_baseline_hits, []);
+  assert.deepEqual(report.dev[0].cases[0].baseline_hunk_findings, prior.hunk_findings);
+  assert.deepEqual(report.dev[0].cases[0].baseline_hunk_spans, prior.hunk_spans);
   assert.deepEqual(report.gain_retention.lost_fp_only, [expected]);
   assert.equal(report.gain_retention.retained, 0);
+  const retentionRules = join(root, 'retention.yml');
+  writeFileSync(retentionRules, readFileSync(baseline, 'utf8') + '# distinct checkpoint rules\n');
+  const retentionScore = await scoreManifest(manifest, retentionRules, opts);
+  assert.notEqual(retentionScore.ruleset_sha256, before.ruleset_sha256);
+  assert.deepEqual(retentionScore.cases[0].hunk_spans, prior.hunk_spans);
+  const checkpoint = save('retention-score.json', {
+    ...score, candidate_sha256: retentionScore.ruleset_sha256,
+    dev: [{ ...score.dev[0], after_evidence: retentionScore }],
+  });
+  const gainAdjudication = { ...adjudication, candidate: `owned (ruleset ${retentionScore.ruleset_sha256.slice(0, 8)})` };
+  const gainPlan = name => save(`gain-plan-${name}.json`, {
+    schema: 'factory.recall-adjudicated-losses.v1', score: checkpoint,
+    adjudication: save(`gain-adjudication-${name}.json`, gainAdjudication),
+    manifest_cases_sha256: retentionScore.manifest_cases_sha256,
+  });
+  const args = ['scripts/recall_harness.mjs', 'evaluate', '--baseline', baseline,
+    '--candidate', candidate, '--manifest', manifest, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--out', output, '--adjudicated-losses', join(root, plan.path),
+    '--retain-gains-from', join(root, checkpoint.path)];
+  const evaluate = (selected) => spawnSync(process.execPath,
+    [...args, '--gain-adjudicated-losses', join(root, selected.path)], { encoding: 'utf8', timeout: 20000 });
+
+  const mismatch = evaluate(plan);
+  assert.notEqual(mismatch.status, 0);
+  assert.match(mismatch.stderr, /exact retention checkpoint/);
+  const independent = evaluate(gainPlan('exact'));
+  assert.equal(independent.status, 0, independent.stderr);
+  const separate = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(separate.max_control_increase, 0);
+  assert.deepEqual(separate.lost_fp_only, [expected]);
+  assert.deepEqual(separate.gain_retention.lost_fp_only, [expected]);
+  assert.equal(separate.adjudicated_loss_basis.score_sha256, scoreRef.sha256);
+  assert.equal(separate.gain_retention.adjudicated_loss_basis.score_sha256, checkpoint.sha256);
+  assert.equal(separate.gain_retention.adjudicated_loss_basis.exact_spans_and_source, true);
+  gainAdjudication.rows = adjudication.rows.map(({ source_sha256, ...row }) => row);
+  const unbound = evaluate(gainPlan('unpinned'));
+  assert.equal(unbound.status, 2, unbound.stderr);
+  const blocked = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(blocked.lost_fp_only, [expected]);
+  assert.deepEqual(blocked.gain_retention.lost, [expected]);
+  const invalidLimit = spawnSync(process.execPath, [...args, '--max-control-increase', 'NaN'],
+    { encoding: 'utf8', timeout: 20000 });
+  assert.notEqual(invalidLimit.status, 0);
+  assert.match(invalidLimit.stderr, /one safe integer/);
 }, { ...feederRow, ghsa: 'GHSA-2345-6789-cfgh' }));
 
 test('declared control directories are excluded and unrelated missing paths remain coverage gaps', () => feederFixture(fixture => {

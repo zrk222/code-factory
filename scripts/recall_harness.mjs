@@ -13,6 +13,7 @@
 //            [--probe-coverage true] [--control-exclude DIRECTORY]... [--control-timeout SECONDS]
 //            [--parallel-controls WORKERS_PER_ARM]
 //            [--adjudicated-losses plan.json] [--checkpoint-dir DIR]
+//            [--retain-gains-from verdict.json [--gain-adjudicated-losses plan.json]]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   review-alerts --score result.json --score-sha256 HEX --workdir DIR --out alerts.json
@@ -1113,7 +1114,7 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
       adjudicated_loss_basis: lossPolicy.receipt } : {}),
     new_coverage_gaps: newCoverageGaps,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
-    control_increase: controlIncrease };
+    control_increase: controlIncrease, max_control_increase: maxControlIncrease };
 }
 
 function evaluationEvidence(result) {
@@ -1129,9 +1130,12 @@ function pairedCaseEvidence({ before, after }) {
   const baseline = indexCases(before.cases);
   return after.cases.map(row => {
     const previous = baseline.get(row.ghsa);
+    const rawLoss = previous && measuredOutcome(previous) === 'hit' && measuredOutcome(row) !== 'hit';
     return { ghsa: row.ghsa, fix: row.fix, before: previous?.outcome ?? previous?.status ?? null,
       after: row.outcome ?? row.status, hunk_findings: row.hunk_findings ?? [],
       ...(row.hunk_spans ? { hunk_spans: row.hunk_spans } : {}),
+      ...(rawLoss ? { baseline_hunk_findings: previous.hunk_findings ?? [],
+        ...(previous.hunk_spans ? { baseline_hunk_spans: previous.hunk_spans } : {}) } : {}),
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
       retried_serially: Boolean(row.retried_serially) };
   });
@@ -1233,9 +1237,11 @@ export function gainRetention(reference, pairs, lossPolicy = null) {
 }
 
 function applyGainRetention(verdict, bytes, pairs, lossPolicy) {
-  const compatible = lossPolicy?.receipt.score_sha256 === sha256(bytes) ? lossPolicy : null;
+  const checkpointSha256 = sha256(bytes);
+  const compatible = lossPolicy?.receipt.score_sha256 === checkpointSha256 ? lossPolicy : null;
   const retention = gainRetention(JSON.parse(utf8(bytes)), pairs, compatible);
-  verdict.gain_retention = { checkpoint_sha256: sha256(bytes), ...retention };
+  verdict.gain_retention = { checkpoint_sha256: checkpointSha256, ...retention,
+    ...(compatible ? { adjudicated_loss_basis: compatible.receipt } : {}) };
   if (retention.lost.length) verdict.failures.push(`lost ${retention.lost.length} checkpoint hit(s): ${retention.lost.join(', ')}`);
 }
 
@@ -1305,6 +1311,15 @@ async function evaluate(input) {
   const profile = JSON.parse(utf8(opts.profileBytes));
   const controlSettings = { ...controlTimeoutSettings(opts, profile), ...parallelControlSettings(opts, profile) };
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
+  const gainPlan = opts['gain-adjudicated-losses'];
+  if ('gain-adjudicated-losses' in opts && (!checkpoint || typeof gainPlan !== 'string' || !gainPlan)) {
+    throw new Error('--gain-adjudicated-losses requires one plan and --retain-gains-from');
+  }
+  const controlLimit = 'max-control-increase' in opts ? opts['max-control-increase'] : '0';
+  const maxControlIncrease = Number(controlLimit);
+  if (typeof controlLimit !== 'string' || !/^-?\d+$/.test(controlLimit) || !Number.isSafeInteger(maxControlIncrease)) {
+    throw new Error('--max-control-increase requires one safe integer');
+  }
   const excludedDirs = controlExcludedDirectories(opts);
   const labels = suppliedLabels(opts);
   const reviewOption = opts['require-reviewed-controls'];
@@ -1315,6 +1330,11 @@ async function evaluate(input) {
   const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
+  const gainPolicy = gainPlan
+    ? loadAdjudicatedLosses(gainPlan, engine.receipt.executable_sha256, { requireBoundSpans: true }) : lossPolicy;
+  if (gainPlan && gainPolicy.receipt.score_sha256 !== sha256(checkpoint)) {
+    throw new Error('Gain adjudication must reference the exact retention checkpoint');
+  }
   opts.opengrep = engine.path;
   const rules = evaluationRules(opts);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
@@ -1339,8 +1359,8 @@ async function evaluate(input) {
   await verifyBoundEngine(engine, 'evaluation');
   verifyEvaluationManifests(manifests);
   verifyEvaluationRules(opts, rules);
-  const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0), lossPolicy });
-  if (checkpoint) applyGainRetention(verdict, checkpoint, dev, lossPolicy);
+  const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease, lossPolicy });
+  if (checkpoint) applyGainRetention(verdict, checkpoint, dev, gainPolicy);
   const settings = { ...rules, ...controlSettings, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
     extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []),
     ...(excludedDirs.length ? { control_excluded_directories: excludedDirs } : {}) };
