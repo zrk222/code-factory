@@ -162,7 +162,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.c.unsafe-gets': 2,
   'opt.factory.rules.csharp.disabled-certificate-verification': 1,
   'opt.factory.rules.csharp.request-command-injection': 3,
-  'opt.factory.rules.csharp.request-sql-injection': 3,
+  'opt.factory.rules.csharp.request-sql-injection': 7,
   'opt.factory.rules.go.archive-path-traversal': 4,
   'opt.factory.rules.go.disabled-tls-verification': 1,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
@@ -214,14 +214,14 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.unsafe-deserialization': 2,
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 6,
   'opt.factory.rules.ruby.archive-path-traversal': 2,
-  'opt.factory.rules.ruby.disabled-tls-verification': 2,
-  'opt.factory.rules.ruby.parameter-shell-command': 1,
+  'opt.factory.rules.ruby.disabled-tls-verification': 5,
+  'opt.factory.rules.ruby.parameter-shell-command': 3,
   'opt.factory.rules.ruby.parameter-sql-text': 4,
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 4,
   'opt.factory.rules.ruby.request-sql-injection': 4,
-  'opt.factory.rules.rust.reqwest-disabled-tls-verification': 1,
+  'opt.factory.rules.rust.reqwest-disabled-tls-verification': 4,
   'opt.factory.rules.swift.trust-exceptions': 3,
 });
 // Fixed reviewed sink lines of the rule-family controls appended to the .ts
@@ -282,9 +282,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 260 annotated findings.
+// Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 260;
+const REVIEWED_FINDINGS = 272;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -347,6 +347,8 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-html-escaped-local-controls.txt', 'typescript-html-escaped-local.ts'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
+  ['cs', 'csharp-sql-builder-controls.txt', 'csharp-sql-builder.cs'],
+  ['rs', 'rust-boring-hostname-controls.txt', 'rust-boring-hostname.rs'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
   ['php', 'php-path-upload-controls.php'],
 ]);
