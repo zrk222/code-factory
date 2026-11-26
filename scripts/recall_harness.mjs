@@ -921,26 +921,31 @@ function checkpointCaptureIntact(root, capture, notes, packets, checkedSources, 
   return true;
 }
 
+function preparedInputsIntact(root, row, manifestRow, scope) {
+  if (row.revisions?.fixed !== manifestRow.fix || !/^[0-9a-f]{40}$/.test(row.revisions?.old ?? '')) return false;
+  const key = caseDigest([manifestRow]);
+  const prepared = preparedCaseDirectory(root, key, scope);
+  const readPrepared = name => readFileSync(reviewCapturePath(root, relative(root, join(prepared, name))));
+  const record = JSON.parse(utf8(readPrepared('case.json')));
+  if (record.status !== 'ready' || record.case_sha256 !== key
+    || caseInputFingerprint(record) !== caseInputFingerprint(row)) return false;
+  const inputs = [['diff.patch', row.diff_sha256], ['changes.z', row.changed_files_sha256]];
+  return inputs.every(([name, digest]) => sha256(readPrepared(name)) === digest);
+}
+
+function sideCapturesIntact(root, row, side) {
+  const packets = row.source_packets?.[side] ?? [];
+  const checkedSources = new Set();
+  if (!checkpointCaptureIntact(root, row.captures?.[side], row.scan_sides?.[side], packets, checkedSources)) return false;
+  return !row.retried_serially || checkpointCaptureIntact(root, row.initial_captures?.[side],
+    row.initial_scan_sides?.[side], packets, checkedSources, true);
+}
+
 export function checkpointArtifactsIntact(workdir, row, manifestRow, scope = 'ecosystem') {
   try {
     const root = realpathSync(workdir);
-    if (row.revisions?.fixed !== manifestRow.fix || !/^[0-9a-f]{40}$/.test(row.revisions?.old ?? '')) return false;
-    const key = caseDigest([manifestRow]);
-    const prepared = preparedCaseDirectory(root, key, scope);
-    const readPrepared = name => readFileSync(reviewCapturePath(root, relative(root, join(prepared, name))));
-    const record = JSON.parse(utf8(readPrepared('case.json')));
-    if (record.status !== 'ready' || record.case_sha256 !== key
-      || caseInputFingerprint(record) !== caseInputFingerprint(row)) return false;
-    const inputs = [['diff.patch', row.diff_sha256], ['changes.z', row.changed_files_sha256]];
-    if (!inputs.every(([name, digest]) => sha256(readPrepared(name)) === digest)) return false;
-    for (const side of ['old', 'fixed']) {
-      const packets = row.source_packets?.[side] ?? [];
-      const checkedSources = new Set();
-      if (!checkpointCaptureIntact(root, row.captures?.[side], row.scan_sides?.[side], packets, checkedSources)) return false;
-      if (row.retried_serially && !checkpointCaptureIntact(root, row.initial_captures?.[side],
-        row.initial_scan_sides?.[side], packets, checkedSources, true)) return false;
-    }
-    return true;
+    return preparedInputsIntact(root, row, manifestRow, scope)
+      && ['old', 'fixed'].every(side => sideCapturesIntact(root, row, side));
   } catch { return false; }
 }
 
