@@ -285,9 +285,10 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
         { physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } },
       ] }];
     }
-    const sarif = json('plan-' + side + '.sarif', raw);
+    const name = (complete ? 'plan-' : 'incomplete-plan-') + side;
+    const sarif = json(name + '.sarif', raw);
     const prior = JSON.parse(readFileSync(join(root, pair[side].observation.path), 'utf8'));
-    const observation = json('plan-' + side + '.json', { ...prior, plan_sha256: plan.sha256,
+    const observation = json(name + '.json', { ...prior, plan_sha256: plan.sha256,
       queries_sha256, native_sha256: sarif.sha256, reported_alerts: run.results.length });
     return { ...pair[side], sarif, observation };
   };
@@ -321,4 +322,28 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   assert.throws(() => run({ ...bundle, plan: truncated }), /schedule omits or adds registered cases/);
   assert.throws(() => run({ ...bundle, cases: [{ ...bundle.cases[0], fixed: capture('fixed', false) }] }),
     /CodeQL query inventory or alert count differs/);
+
+  const aliasCapture = side => {
+    const observed = JSON.parse(readFileSync(join(root, pair[side].observation.path), 'utf8'));
+    return { ...pair[side], observation: json('supplemental-' + side + '.json', { ...observed, case: alias.ghsa }) };
+  };
+  const supplemental = json('supplemental.json', { ...value, manifest, reference,
+    cases: [{ ...pair, advisory: alias.ghsa, prepared: linked.row.prepared,
+      old: aliasCapture('old'), fixed: aliasCapture('fixed') }] });
+  const registered = json('registered.json', bundle);
+  const cohort = { schema: 'factory.recall-codeql-cohort.v1', bundles: [registered, supplemental] };
+  const combined = run(cohort);
+  assert.equal(combined.schema, 'factory.recall-codeql-cohort-score.v1');
+  assert.equal(combined.registered_cases, 5);
+  assert.equal(combined.captured_pairs, 2);
+  assert.equal(combined.strict_hunk_hits, 2);
+  assert.deepEqual(combined.unscored_advisories, [unobserved.ghsa, unsupported.ghsa, divergent.ghsa]);
+  assert.deepEqual(combined.cases.map(row => row.native_bundle_sha256), [registered.sha256, supplemental.sha256]);
+  assert.equal(combined.bundles[0].plan_sha256, plan.sha256);
+  assert.throws(() => run({ ...cohort, bundles: [registered, { ...supplemental, sha256: 'a'.repeat(64) }] }),
+    /Artifact fingerprint differs/);
+  assert.throws(() => run({ ...cohort, bundles: [registered, json('other-cohort.json', value)] }),
+    /different registry, reference or engine pins/);
+  const overlap = json('registered-overlap.json', { ...bundle, cases: [...bundle.cases, linked.row] });
+  assert.throws(() => run({ ...cohort, bundles: [overlap, supplemental] }), /Duplicate CodeQL advisory across/);
 });

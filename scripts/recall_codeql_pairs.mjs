@@ -4,6 +4,7 @@
 // separate plan that assigns one query inventory to each supported ecosystem.
 // Each old/fixed capture pins observation JSON, SARIF and the CodeQL source ZIP.
 // A v2 row may reuse a verified capture from another advisory in the same plan.
+// A cohort bundle joins pinned, advisory-disjoint pair bundles from one registry.
 // Artifact paths are relative to the bundle, and archive prefixes identify source roots.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -16,6 +17,7 @@ import { inputFingerprint } from './verify_registered_recall.mjs';
 
 const FORMAT = 'factory.recall-codeql-pairs.v1';
 const PLAN_BUNDLE = 'factory.recall-codeql-pairs.v2';
+const COHORT_BUNDLE = 'factory.recall-codeql-cohort.v1';
 const digest = /^[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
 const relativeEntry = path => typeof path === 'string' && !path.includes('\\')
@@ -35,10 +37,14 @@ function boundPath(root, pin) {
   return reviewCapturePath(root, pin.path);
 }
 
-function artifact(root, pin) {
-  const bytes = readFileSync(boundPath(root, pin));
+function readPinnedArtifact(path, pin) {
+  const bytes = readFileSync(path);
   requireProof(sha256(bytes) === pin.sha256, 'Artifact fingerprint differs for ' + pin.path);
   return bytes;
+}
+
+function artifact(root, pin) {
+  return readPinnedArtifact(boundPath(root, pin), pin);
 }
 
 function queryBinding(root, id, pin) {
@@ -445,13 +451,11 @@ function scheduledCoverage(plan, policies, manifest, observations) {
   return cohortCoverage;
 }
 
-export function scoreCodeqlPairs(bundlePath, patternPin = null) {
-  const bytes = readFileSync(bundlePath);
-  const root = realpathSync(dirname(bundlePath));
-  const bundle = json(bytes);
+function verifyPairBundle(root, bundle) {
   requireProof([FORMAT, PLAN_BUNDLE].includes(bundle.schema) && typeof bundle.engine_version === 'string'
     && Array.isArray(bundle.cases) && bundle.cases.length > 0, 'Invalid paired CodeQL bundle');
-  const { manifest, manifestDigest, reference, cases, referenceCases } = readPairRegistry(root, bundle);
+  const registry = readPairRegistry(root, bundle);
+  const { manifest, cases, referenceCases } = registry;
   requireProof(new Set(bundle.cases.map(row => row.advisory)).size === bundle.cases.length,
     'Duplicate CodeQL advisory pair');
   const policies = bundle.schema === PLAN_BUNDLE ? registeredPolicies(root, bundle, manifest) : null;
@@ -462,18 +466,59 @@ export function scoreCodeqlPairs(bundlePath, patternPin = null) {
     .map(row => [row.advisory, scorePreparedPair(row, context)]));
   bindTraceSources(captured.values(), verifySourceArchives(archives));
   const observations = bundle.cases.map(row => captured.get(row.advisory) ?? reuseCapture(row, captured, context));
-  const cohortCoverage = scheduledCoverage(bundle.plan, policies, manifest, observations);
+  return { registry, observations, scope: policies ? 'registered-codeql-plan' : 'supplemental',
+    coverage: scheduledCoverage(bundle.plan, policies, manifest, observations) };
+}
+
+function summarizeVerifiedPairs(bundle, registry, observations, patternPin) {
+  const { manifestDigest, reference, cases, referenceCases } = registry;
   const patternJoin = patternPin && joinPatternScore(patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations);
-  return { schema: 'factory.recall-codeql-pair-score.v1', scope: policies ? 'registered-codeql-plan' : 'supplemental',
-    input_sha256: sha256(bytes), ...cohortCoverage, ...(patternJoin ? { pattern_join: patternJoin } : {}),
+  const reused = observations.filter(row => Object.hasOwn(row, 'capture_reused_from')).length;
+  return { ...(patternJoin ? { pattern_join: patternJoin } : {}),
     reference_sha256: bundle.reference.sha256, registered_cases: cases.size, reference_hunk_hits: reference.candidate.hunk_hits,
-    scored_pairs: observations.length, captured_pairs: captured.size, reused_capture_pairs: observations.length - captured.size,
+    scored_pairs: observations.length, captured_pairs: observations.length - reused, reused_capture_pairs: reused,
     strict_hunk_hits: observations.filter(row => row.hunk_hit).length,
     changed_file_hits: observations.filter(row => row.file_hit).length,
     cross_file_trace_hits: observations.filter(row => row.cross_file_trace_matches.length > 0).length,
     strict_hits_on_reference_misses: observations.filter(row => row.reference === 'miss' && row.hunk_hit).length,
     deleted_line_hits: observations.filter(row => row.deleted_line_hit).length,
     fixed_hunk_residuals: observations.reduce((sum, row) => sum + row.fixed_hunk_residuals, 0), cases: observations };
+}
+
+function scoreCohortBundle(root, bytes, bundle, patternPin) {
+  requireProof(Array.isArray(bundle.bundles) && bundle.bundles.length > 0
+    && new Set(bundle.bundles.map(pin => pin?.sha256)).size === bundle.bundles.length, 'Missing or duplicate cohort bundle pins');
+  const lanes = bundle.bundles.map(pin => {
+    const path = boundPath(root, pin);
+    return { pin, input: json(readPinnedArtifact(path, pin)), root: dirname(path) };
+  });
+  const first = lanes[0].input;
+  requireProof(lanes.every(({ input }) => input.manifest?.sha256 === first.manifest?.sha256
+    && input.reference?.sha256 === first.reference?.sha256 && input.engine_version === first.engine_version),
+  'Cohort bundles use different registry, reference or engine pins');
+
+  const verified = lanes.map(lane => verifyPairBundle(lane.root, lane.input));
+  const observations = verified.flatMap(({ observations }, index) =>
+    observations.map(row => ({ ...row, native_bundle_sha256: lanes[index].pin.sha256 })));
+  const covered = new Set(observations.map(row => row.advisory));
+  requireProof(covered.size === observations.length, 'Duplicate CodeQL advisory across cohort bundles');
+  const { registry } = verified[0];
+  return { schema: 'factory.recall-codeql-cohort-score.v1', scope: 'verified paired native cohort',
+    input_sha256: sha256(bytes), manifest_sha256: first.manifest.sha256, engine_version: first.engine_version,
+    bundles: verified.map((lane, index) => ({ ...lanes[index].pin, scope: lane.scope,
+      scored_pairs: lane.observations.length, ...lane.coverage })),
+    unscored_advisories: [...registry.cases.keys()].filter(id => !covered.has(id)),
+    ...summarizeVerifiedPairs(first, registry, observations, patternPin) };
+}
+
+export function scoreCodeqlPairs(bundlePath, patternPin = null) {
+  const bytes = readFileSync(bundlePath);
+  const root = realpathSync(dirname(bundlePath));
+  const bundle = json(bytes);
+  if (bundle.schema === COHORT_BUNDLE) return scoreCohortBundle(root, bytes, bundle, patternPin);
+  const { registry, observations, scope, coverage } = verifyPairBundle(root, bundle);
+  return { schema: 'factory.recall-codeql-pair-score.v1', scope, input_sha256: sha256(bytes), ...coverage,
+    ...summarizeVerifiedPairs(bundle, registry, observations, patternPin) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
