@@ -1939,6 +1939,21 @@ def assemble_cli(
         }
 
 
+def _read_rollup_receipt(path: Path, feature: str) -> tuple[Receipt, bytes, int]:
+    before = path.stat()
+    if before.st_size > MAX_RECEIPT_BYTES:
+        raise ValueError(f"receipt exceeds {MAX_RECEIPT_BYTES} bytes")
+    raw = path.read_bytes()
+    payload = json.loads(raw.decode("utf-8-sig"))
+    after = path.stat()
+    if (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
+        raise ValueError("receipt changed while being read")
+    receipt = Receipt.from_dict(payload)
+    if receipt.feature != feature:
+        raise ValueError("receipt feature does not match requested feature")
+    return receipt, raw, after.st_mtime_ns
+
+
 def rollup_receipts(root: Path, feature: str) -> dict:
     """Load exact-feature receipts with deterministic supersession.
 
@@ -1964,27 +1979,8 @@ def rollup_receipts(root: Path, feature: str) -> dict:
         paths = paths[-MAX_RECEIPT_FILES:]
     for path in paths:
         try:
-            before = path.stat()
-            if before.st_size > MAX_RECEIPT_BYTES:
-                raise ValueError(f"receipt exceeds {MAX_RECEIPT_BYTES} bytes")
-            raw = path.read_bytes()
-            payload = __import__("json").loads(raw.decode("utf-8-sig"))
-            after = path.stat()
-            if (before.st_mtime_ns, before.st_size) != (
-                after.st_mtime_ns,
-                after.st_size,
-            ):
-                raise ValueError("receipt changed while being read")
-            receipt = Receipt.from_dict(payload)
-            if receipt.feature != feature:
-                raise ValueError("receipt feature does not match requested feature")
-        except (
-            ValueError,
-            TypeError,
-            OSError,
-            UnicodeDecodeError,
-            __import__("json").JSONDecodeError,
-        ) as exc:
+            receipt, raw, mtime_ns = _read_rollup_receipt(path, feature)
+        except (ValueError, TypeError, OSError) as exc:
             invalid.append({"path": path.name, "reason": str(exc)[:240]})
             continue
         # Receipt producers historically used both ``verify_tests`` and
@@ -1992,7 +1988,7 @@ def rollup_receipts(root: Path, feature: str) -> dict:
         # stale spelling cannot hide the current result.
         stage = receipt.stage.replace("_", "-")
         key = (receipt.module, stage)
-        rank = (after.st_mtime_ns, path.name)
+        rank = (mtime_ns, path.name)
         row = {
             "module": receipt.module,
             "stage": stage,
@@ -2001,7 +1997,7 @@ def rollup_receipts(root: Path, feature: str) -> dict:
             "inputs": receipt.inputs,
             "outputs": receipt.outputs,
             "receipt_path": path.name,
-            "receipt_mtime_ns": after.st_mtime_ns,
+            "receipt_mtime_ns": mtime_ns,
             "run_id": receipt.run_id,
             "producer_version": receipt.producer_version,
             "receipt_sha256": hashlib.sha256(raw).hexdigest(),
