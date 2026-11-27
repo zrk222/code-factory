@@ -131,7 +131,9 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         for item in jobs["analyze"]["steps"]
         if item.get("name") == "Verify the reviewer runtime and model"
     )
-    assert "--max-time 180" in verify_artifacts and "--continue-at -" in verify_artifacts
+    assert (
+        "--max-time 180" in verify_artifacts and "--continue-at -" in verify_artifacts
+    )
     assert '"$attempt" -eq 4' in verify_artifacts
     assert verify_artifacts.count("sha256sum -c -") == 2
     paths = {path for row in plan["obligations"] for path in row["paths"]}
@@ -318,13 +320,21 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                     role = control["role"]
                     assert control["observed_challenge"] == observed[role]
                     assert control["fixture_path"] == controls[role]["fixture_path"]
+                    assert (
+                        control["expected_exit_code"]
+                        == controls[role]["expected_exit_code"]
+                    )
             assert (
                 "verified execution record covers all registered positive, negative and mutation controls."
                 in body["messages"][0]["content"]
             )
+            assert (
+                "A mutation that exits zero when zero is expected satisfies its control."
+                in body["messages"][0]["content"]
+            )
         else:
             assert all(
-                "observed_challenge" not in control
+                {"observed_challenge", "expected_exit_code"}.isdisjoint(control)
                 for obligation in payload["obligations"]
                 for control in obligation["controls"]
             )
