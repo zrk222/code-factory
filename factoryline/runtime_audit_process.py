@@ -86,7 +86,9 @@ def _compile_offline_go() -> None:
     os.environ.pop("GOFLAGS", None)
     with tempfile.TemporaryDirectory() as scratch:
         directory = Path(scratch)
-        modules = _GO_MODULES if _GO_MODULES.is_dir() else directory / "modules"
+        # Use the prefetched volume only when it holds modules; the image ships it empty.
+        prefetched = _GO_MODULES.is_dir() and any(_GO_MODULES.iterdir())
+        modules = _GO_MODULES if prefetched else directory / "modules"
         os.environ.update(GOPATH=str(directory / "gopath"), GOMODCACHE=str(modules))
         target = str(directory / "compiled.test")
         for root in _offline_go_roots(source):
