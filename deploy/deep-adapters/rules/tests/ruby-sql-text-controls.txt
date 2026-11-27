@@ -96,3 +96,43 @@ def render_trusted_literal(kind)
   when /^flag$/ then "B'#{bits}'"
   end
 end
+
+def review_recursive_identifier(attrs, default_name = table_name)
+  built = attrs.map do |name, value|
+    current_table = default_name
+    unless value.is_a?(Hash)
+      name = name.to_s
+      # ruleid: ruby.parameter-sql-text
+      if name.include?('.')
+        selected, name = name.split('.', 2)
+        selected = adapter.quote_table_name(selected)
+      else
+        selected = current_table
+      end
+      compare_column("#{selected}.#{adapter.quote_column_name(name)}", value)
+    else
+      review_recursive_identifier(value, adapter.quote_table_name(name.to_s))
+    end
+  end.join(' AND ')
+  finalize(built)
+end
+
+def guarded_recursive_identifier(attrs, default_name = table_name, top_level = true)
+  built = attrs.map do |name, value|
+    current_table = default_name
+    unless value.is_a?(Hash)
+      name = name.to_s
+      # ok: ruby.parameter-sql-text
+      if name.include?('.') && top_level
+        selected, name = name.split('.', 2)
+        selected = adapter.quote_table_name(selected)
+      else
+        selected = current_table
+      end
+      compare_column("#{selected}.#{adapter.quote_column_name(name)}", value)
+    else
+      guarded_recursive_identifier(value, adapter.quote_table_name(name.to_s), false)
+    end
+  end.join(' AND ')
+  finalize(built)
+end

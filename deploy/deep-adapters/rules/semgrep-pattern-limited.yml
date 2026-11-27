@@ -5029,11 +5029,34 @@ rules:
       cwe: ["CWE-89"]
       scope: Function parameters interpolated into template or concatenated SQL passed to a driver call in the same function.
   - id: ruby.parameter-sql-text
-    message: A value is interpolated into SQL text; pass it as a bound parameter or quote it with the adapter instead.
+    message: Review values interpolated into SQL and qualified keys reinterpreted inside nested conditions.
     severity: INFO
     languages: [ruby]
     patterns:
       - pattern-either:
+          # Bind nested condition keys to their caller and their SQL identifier.
+          - patterns:
+              - pattern-inside: |
+                  def $F($ATTRS, $DEFAULT = ...)
+                    ...
+                    $CONDITIONS = $ATTRS.map do |$ATTR, $VALUE|
+                      ...
+                      unless $VALUE.is_a?(Hash)
+                        $ATTR = $ATTR.to_s
+                        if $ATTR.include?('.')
+                          $TABLE, $ATTR = $ATTR.split('.', 2)
+                          $TABLE = $CONNECTION.quote_table_name($TABLE)
+                        else
+                          $TABLE = $DEFAULT_TABLE
+                        end
+                        $EMIT("#{$TABLE}.#{$CONNECTION.quote_column_name($ATTR)}",$VALUE)
+                      else
+                        $F($VALUE, $CONNECTION.quote_table_name($ATTR.to_s))
+                      end
+                    end.join(...)
+                    ...
+                  end
+              - pattern: $ATTR.include?('.')
           # SQL text in a double-quoted literal with an interpolation that is not adapter quoting
           # or a quoted identifier (`#{column}`, \"#{table}\").
           - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?(?<!`)(?<!\\")#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
