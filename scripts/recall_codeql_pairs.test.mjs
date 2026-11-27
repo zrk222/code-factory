@@ -16,7 +16,7 @@ const nativeFixtures = {
   RubyGems: ['sample.rb', 'rb/diagnostics/successfully-extracted-files'],
 };
 
-function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI') {
+function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI', trailingSource = '') {
   const root = mkdtempSync(join(tmpdir(), 'cf-codeql-pair-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (path, bytes) => {
@@ -30,7 +30,7 @@ function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI') {
   const manifest = json('manifest.json', { cases: [row], cases_sha256: caseDigest([row]) });
   const diff = write('diff.patch', `diff --git a/${sample} b/${sample}\n--- a/${sample}\n+++ b/${sample}\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n`);
   const changes = write('changes.z', `M\0${sample}\0`);
-  const source = { old: 'VALUE = 1\n', fixed: 'VALUE = 2\n' };
+  const source = { old: 'VALUE = 1\n' + trailingSource, fixed: 'VALUE = 2\n' + trailingSource };
   const revisions = { old: 'a'.repeat(40), fixed: row.fix };
   const source_packets = Object.fromEntries(Object.entries(source).map(([side, bytes]) => [
     side, [{ path: sample, bytes: bytes.length, sha256: sha256(bytes) }],
@@ -242,7 +242,9 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
   assert.equal(score(finding([anchor, sink]), [finding()]).cases[0].cross_file_trace_matches[0].fixed_sink_residual, true);
   for (const trace of [finding([anchor], [sink]), finding([sink, anchor]),
     finding([position('sample.py', 2), sink]), finding([anchor, position('missing.py'), sink])]) {
-    assert.equal(score(trace).cross_file_trace_hits, 0);
+    const invalid = score(trace);
+    assert.equal(invalid.cross_file_trace_hits, 0);
+    assert.equal(Object.hasOwn(invalid.cases[0], 'anchored_trace_matches'), false);
   }
 });
 
@@ -463,17 +465,24 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
 });
 
 test('native detector arms retain their own extraction and count one shared case', t => {
-  const { root, row, value, binding, json, write, run } = stagedPair(t);
+  const { root, row, value, binding, json, write, run } = stagedPair(t, 'src', 'PyPI', 'KEEP = 3\n');
   const single = value.cases[0];
   const read = pin => JSON.parse(readFileSync(join(root, pin.path), 'utf8'));
-  const arm = (name, { hit, parsed }) => {
+  const arm = (name, { hit, parsed, offHunk = false }) => {
     const id = 'test/' + name;
     const query = write(name + '.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
     const capture = side => {
       const prior = single[side];
       const report = read(prior.sarif), scan = report.runs[0];
       scan.tool.driver.rules[0].id = id;
-      if (side === 'old' && hit) scan.results[0].ruleId = id;
+      if (side === 'old' && offHunk) {
+        const position = line => ({ physicalLocation: {
+          artifactLocation: { uri: 'sample.py' }, region: { startLine: line },
+        } });
+        scan.results = [{ ruleId: id, locations: [position(2)], codeFlows: [{
+          threadFlows: [{ locations: [1, 2].map(line => ({ location: position(line) })) }],
+        }] }];
+      } else if (side === 'old' && hit) scan.results[0].ruleId = id;
       else scan.results = [];
       if (side === 'fixed' && !parsed) scan.invocations[0].toolExecutionNotifications = [];
       const sarif = json(name + '-' + side + '.sarif', report);
@@ -508,6 +517,14 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(twoHits.strict_hunk_hits, 1);
   assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
   assert.equal(twoHits.cases[0].arms.length, 2);
+  const anchored = evaluate([arm('off-hunk', { parsed: true, offHunk: true }), negative]);
+  assert.equal(anchored.strict_hunk_hits, 0);
+  assert.equal(anchored.cross_file_trace_hits, 0);
+  assert.equal(anchored.pattern_join.eligible_native_additions, 0);
+  assert.deepEqual(anchored.cases[0].anchored_trace_matches, [{
+    rule: 'test/off-hunk', sink: { path: 'sample.py', line: 2 }, anchor: { path: 'sample.py', line: 1 },
+    source_paths: ['sample.py'], fixed_sink_residual: false,
+  }]);
   const sameQuery = json('same-query.json', { ...read(complete), label: 'duplicate-query-attempt' });
   assert.throws(() => evaluate([complete, sameQuery]), /overlapping query IDs/);
 });

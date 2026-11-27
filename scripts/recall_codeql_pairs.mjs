@@ -466,9 +466,12 @@ function bindTraceSources(observations, bindings) {
       Object.assign(row.fingerprints[side], { trace_sources_sha256: caseDigest(sources), trace_source_states: states });
     }
     const oldSources = new Map(bindings[row.advisory + '/old'].map(source => [source.path, source.state]));
-    row.cross_file_trace_matches = row.cross_file_trace_matches.filter(match =>
-      oldSources.get(match.anchor.path) === 'packet_verified' && match.source_paths.every(path =>
-        ['packet_verified', 'archive_verified'].includes(oldSources.get(path))));
+    const verifiedTrace = match => oldSources.get(match.anchor.path) === 'packet_verified'
+      && match.source_paths.every(path => ['packet_verified', 'archive_verified'].includes(oldSources.get(path)));
+    const anchors = row.anchored_trace_matches?.filter(verifiedTrace);
+    if (anchors?.length) row.anchored_trace_matches = anchors;
+    else delete row.anchored_trace_matches;
+    row.cross_file_trace_matches = row.cross_file_trace_matches.filter(verifiedTrace);
   }
 }
 
@@ -540,7 +543,9 @@ function mergeVerifiedArms(observations) {
     requireProof(arms.every(arm => arm.input_sha256 === input_sha256 && arm.reference === reference)
       && queries.length === new Set(queries).size, 'Detector arms have different cases or overlapping query IDs');
     const hit = field => arms.some(arm => arm[field]);
+    const anchors = arms.flatMap(arm => arm.anchored_trace_matches ?? []);
     return { advisory, input_sha256, reference, arms, hunk_hit: hit('hunk_hit'),
+      ...(anchors.length ? { anchored_trace_matches: anchors } : {}),
       file_hit: hit('file_hit'), trace_hit: hit('trace_hit'), deleted_line_hit: hit('deleted_line_hit'),
       matched_hunk_families: [...new Set(arms.flatMap(arm => arm.matched_hunk_families))].sort(),
       cross_file_trace_matches: arms.flatMap(arm => arm.cross_file_trace_matches),
