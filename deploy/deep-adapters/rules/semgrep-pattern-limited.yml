@@ -4033,11 +4033,48 @@ rules:
       cwe: ["CWE-79"]
       scope: Typed servlet request values written to the response writer or stream.
   - id: python.parameter-shell-command
-    message: A function parameter is built into a shell command; pass an argv list without shell=True, or quote it with shlex.quote.
+    message: Caller-controlled values reach shell command text or a shallow command template guard. Prefer argv and validate nested template values.
     severity: INFO
     languages: [python]
     mode: taint
     pattern-sources:
+      # Bind the shallow context helper to the same dictionary, renderer and shell sink.
+      - label: SHALLOW_COMMAND_CONTEXT
+        exact: true
+        patterns:
+          - pattern-inside: |
+              def $SANITIZE($DICT):
+                ...
+                $RESULT = {}
+                for $K, $V in $DICT.items():
+                  if isinstance($V, str):
+                    ...
+                  else:
+                    $RESULT[$K] = $V
+                return $RESULT
+              ...
+              class $CLASS:
+                ...
+                def $RUN(..., $VALUES=None, ...):
+                  ...
+                  for $COMMAND in $COMMANDS:
+                    ...
+                    if $SHOULD_RENDER:
+                      $CLEANED = $SANITIZE($VALUES)
+                      $TEXT = chevron.render($COMMAND, $CLEANED)
+                    else:
+                      $TEXT = $COMMAND
+                    ...
+                    try:
+                      $RET = secure_popen($TEXT, ...)
+                    except $T as $ERR:
+                      ...
+                    else:
+                      ...
+                    ...
+                  ...
+                ...
+          - pattern: isinstance($V, str)
       - patterns:
           - pattern-inside: |
               def $F(..., $P, ...):
@@ -4050,6 +4087,8 @@ rules:
       - pattern: int(...)
       - pattern: str(int(...))
     pattern-sinks:
+      - requires: SHALLOW_COMMAND_CONTEXT
+        pattern: isinstance($V, str)
       - patterns:
           - pattern-either:
               - pattern: subprocess.$FN($CMD, ..., shell=True, ...)
@@ -4074,7 +4113,7 @@ rules:
       category: security
       confidence: LOW
       cwe: ["CWE-78"]
-      scope: Function parameters to shell-parsed command text in the same function; callers are not checked.
+      scope: Function parameters to shell-parsed command text, including templates that keep unvalidated nested values.
   - id: javascript.parameter-shell-command
     message: A function parameter is built into a shell command; use execFile or spawn with an argument array instead of shell text.
     severity: INFO
