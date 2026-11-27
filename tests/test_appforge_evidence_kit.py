@@ -255,3 +255,118 @@ def test_focused_status_shows_recorded_repair_guidance(
         )
         full = json.loads(capsys.readouterr().out)
         assert "findings" not in full["quality_audit"]["latest"]
+
+
+def _init_args(out_dir: str, *, commit: str | None = "c" * 40) -> list[str]:
+    args = [
+        "revenue",
+        "appforge-init",
+        "--root",
+        ".",
+        "--out-dir",
+        out_dir,
+        "--app-name",
+        "Calm Plan",
+        "--bundle-identifier",
+        "com.example.calm",
+        "--version",
+        "2.4.0",
+        "--build-number",
+        "42",
+        "--audience",
+        "Busy parents",
+        "--primary-job",
+        "Plan a calmer day",
+        "--desired-emotion",
+        "calm",
+        "--json",
+    ]
+    return args + (["--source-commit", commit] if commit else [])
+
+
+def test_every_command_in_next_md_runs_as_printed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import re
+    import shlex
+
+    monkeypatch.chdir(tmp_path)
+    assert main(_init_args(".factory/appforge/init-42")) == 0
+    capsys.readouterr()
+    text = (tmp_path / ".factory/appforge/init-42/NEXT.md").read_text(encoding="utf-8")
+    commands = re.findall(r"`factory (revenue [^`]+ --json)`", text)
+    assert len(commands) == 2
+    for command in commands:
+        assert main(shlex.split(command)) == 0, (command, capsys.readouterr())
+
+
+def test_doc_example_blocks_run_in_order(tmp_path: Path, monkeypatch, capsys) -> None:
+    import re
+    import shlex
+
+    doc = (
+        Path(__file__).resolve().parents[1] / "docs" / "APPFORGE_EVIDENCE_KIT.md"
+    ).read_text(encoding="utf-8")
+    blocks = re.findall(
+        r"```powershell\n(factory revenue (?:appforge-init|evidence-kit).*?)```",
+        doc,
+        flags=re.S,
+    )
+    assert len(blocks) >= 2
+    monkeypatch.chdir(tmp_path)
+    for block in blocks[:2]:
+        argv = shlex.split(
+            block.replace("`\n", " ").replace("<40-character-commit-sha>", "d" * 40)
+        )
+        assert main(argv[1:]) == 0, (block, capsys.readouterr())
+
+
+def test_bad_source_commit_is_rejected_before_anything_is_written(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(_init_args(".factory/appforge/init-1", commit="abc")) != 0
+    assert "APPFORGE_INIT_COMMIT_INVALID" in capsys.readouterr().err
+    assert not (tmp_path / ".factory/appforge/init-1").exists()
+    assert main(_init_args(".factory/appforge/init-1")) == 0
+
+
+def test_source_commit_defaults_to_head_of_a_clean_checkout(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import subprocess
+
+    from factoryline.appforge_evidence_kit import resolve_source_commit
+
+    with pytest.raises(RevenueForgeError) as missing:
+        resolve_source_commit(tmp_path, None)
+    assert missing.value.code == "APPFORGE_INIT_COMMIT_REQUIRED"
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@e",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@e",
+    }
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"]):
+        subprocess.run(
+            ["git", *args],
+            cwd=tmp_path,
+            check=True,
+            env={**__import__("os").environ, **env},
+        )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+    assert resolve_source_commit(tmp_path, None) == (head, True)
+    assert resolve_source_commit(tmp_path, head.upper()) == (head, False)
+    monkeypatch.chdir(tmp_path)
+    assert main(_init_args(".factory/appforge/init-7", commit=None)) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert (
+        receipt["candidate"]["source_commit"] == head
+        and receipt["source_commit_derived"] is True
+    )
+    (tmp_path / "dirty.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(RevenueForgeError) as dirty:
+        resolve_source_commit(tmp_path, None)
+    assert dirty.value.code == "APPFORGE_INIT_COMMIT_REQUIRED"
