@@ -2,6 +2,7 @@
  "schema": "factory.precision-tier-prereg.v1",
  "date": "2026-11-27",
  "status": "Pre-registered before any scoring of the 323-case reserve or the 10-case Q4 calendar cohort.",
+ "launch_readiness": "Draft. The packet, scoring and corroboration prototypes are archived. Primary endpoint execution requires a verified changed-file population, full alert spans, a sealed arm and tier key, and source-bound corroboration.",
  "tier_policy": {
   "finding": "alerts from rules whose metadata.confidence is HIGH or MEDIUM",
   "lead": "alerts from rules whose metadata.confidence is LOW (listed for review; nothing is suppressed)",

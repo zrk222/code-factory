@@ -177,6 +177,7 @@ export function replayRegisteredCaptures(candidate, captureRoot, manifest, rules
   if (pathPolicy?.proof !== candidate.scanner_path_policy) throw new Error('Replay scanner path policy differs from the engine');
   const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
   const invalid = [], unreproduced = [];
+  const sarifCache = new Map();
   let verified_capture_cases = 0;
   for (const row of cases) {
     const retained = {};
@@ -186,7 +187,8 @@ export function replayRegisteredCaptures(candidate, captureRoot, manifest, rules
     }
     if (row.source_packets?.old?.length || row.source_packets?.fixed?.length) verified_capture_cases++;
     try {
-      const replay = replayCaseScore(root, inputs.get(row.ghsa), row, retained, rules, candidate.scope, pathPolicy);
+      // Every capture has already been re-read and hashed. Resolve source paths per side.
+      const replay = replayCaseScore(root, inputs.get(row.ghsa), row, retained, rules, candidate.scope, pathPolicy, sarifCache);
       if (caseDigest([replay]) !== caseDigest([Object.fromEntries(Object.keys(replay).map(key => [key, row[key]]))])) {
         throw new Error('Case score differs from replay');
       }

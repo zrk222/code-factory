@@ -27,7 +27,7 @@
         "{scratch}/codeql-db",
         "/opt/codeql/codeql/qlpacks/codeql/python-queries/1.8.11/codeql-suites/python-security-extended.qls",
         "--threads=2",
-        "--ram=1400",
+        "--ram={ram_mib}",
         "--format=sarif-latest",
         "--output={report}"
       ],

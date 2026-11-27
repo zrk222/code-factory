@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 import json
 
@@ -16,6 +17,1188 @@ from factoryline.enterprise_receipts import (
     EnterpriseReceiptError,
 )
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
+
+
+def test_keyless_review_decodes_lossless_bounded_input():
+    import ast
+    from base64 import b64encode
+    import gzip
+    import lzma
+
+    import yaml
+
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/deep-audit-keyless-reviewer.yml"
+    )
+    flow = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    script = next(
+        step["run"]
+        for step in flow["jobs"]["analyze"]["steps"]
+        if "def decode_review_packet" in step.get("run", "")
+    )
+    source = script.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    tree = ast.parse(source)
+    tree.body = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef))
+    ]
+    scope = {}
+    exec(compile(tree, str(workflow), "exec"), scope)
+    decode = scope["decode_review_packet"]
+    raw = b'{"evidence":"example"}'
+    xz = lzma.compress(raw, preset=6)
+    assert decode(b64encode(xz)) == decode(b64encode(gzip.compress(raw))) == raw
+    for invalid in (xz[:-5], xz + xz):
+        with pytest.raises(ValueError, match="one complete XZ stream"):
+            decode(b64encode(invalid))
+    for compress in (gzip.compress, lzma.compress):
+        with pytest.raises(ValueError, match="exceeds the decoded size limit"):
+            decode(b64encode(compress(b"a" * 4_194_305)))
+
+
+def test_keyless_artifact_download_follows_producing_job_on_rerun():
+    import yaml
+
+    workflows = Path(__file__).resolve().parents[1] / ".github/workflows"
+
+    def load(role):
+        path = workflows / f"deep-audit-keyless-{role}.yml"
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    def artifact_step(job, action):
+        return next(
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith(f"actions/{action}-artifact@")
+        )
+
+    review = load("reviewer")
+    jobs = review["jobs"]
+    coordinator = load("coordinator")["jobs"]
+    for job, prefix in (
+        (jobs["assemble"], "keyless-review-model-output"),
+        (jobs["sign"], "keyless-specialty-review"),
+        (coordinator["authorize"], "keyless-audit-authorization"),
+        (coordinator["attest-invocation"], "keyless-review-invocation"),
+    ):
+        upload = artifact_step(job, "upload")
+        assert upload["with"]["name"] == prefix + "-${{ github.run_attempt }}"
+        assert upload["with"].get("overwrite", "false") == "false"
+
+    for producer, consumer, output in (
+        (jobs["assemble"], jobs["sign"], "${{ needs.assemble.outputs.artifact_id }}"),
+        (
+            jobs["sign"],
+            coordinator["attest-invocation"],
+            "${{ needs.reviewer.outputs.signed_review_artifact_id }}",
+        ),
+    ):
+        upload = artifact_step(producer, "upload")
+        assert producer["outputs"]["artifact_id"] == (
+            "${{ steps." + upload["id"] + ".outputs.artifact-id }}"
+        )
+        download = artifact_step(consumer, "download")
+        guard = consumer["steps"][consumer["steps"].index(download) - 1]
+        assert guard["env"]["ARTIFACT_ID"] == output
+        assert '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]' in guard["run"]
+        assert download["with"]["artifact-ids"] == output
+        assert "name" not in download["with"] and "pattern" not in download["with"]
+
+    assert (
+        review["on"]["workflow_call"]["outputs"]["signed_review_artifact_id"]["value"]
+        == "${{ jobs.sign.outputs.artifact_id }}"
+    )
+
+
+def _keyless_review_fixture():
+    from types import ModuleType
+
+    import yaml
+
+    repo = Path(__file__).resolve().parents[1]
+    workflow_path = repo / ".github/workflows/deep-audit-keyless-reviewer.yml"
+    flow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    step = next(
+        item
+        for item in flow["jobs"]["analyze"]["steps"]
+        if item.get("name") == "Run the read-only specialty inference"
+    )
+    source = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    review = ModuleType("family_review")
+    exec(compile(source, str(workflow_path), "exec"), review.__dict__)
+    plan_path = repo / "scripts/deep-audit-keyless-plan.json"
+    plan = json.loads(plan_path.read_bytes())
+    jobs = flow["jobs"]
+    families = set(jobs["analyze"]["strategy"]["matrix"]["family"])
+    assert families == {lane["family"] for lane in plan["lanes"]}
+    assert jobs["prepare"]["permissions"] == {}
+    assert jobs["prepare"]["if"] == jobs["analyze"]["if"]
+    assert jobs["prepare"]["runs-on"] == jobs["analyze"]["runs-on"] == "ubuntu-24.04"
+    assert jobs["analyze"]["needs"] == "prepare"
+    assert jobs["assemble"]["needs"] == ["prepare", "analyze"]
+    assert jobs["sign"]["needs"] == "assemble"
+    assert "id-token" not in jobs["assemble"]["permissions"]
+    build, upload = jobs["prepare"]["steps"]
+    pin = "REVIEW_CHALLENGE_SUMMARY_SHA256"
+    assert (
+        build["env"][pin] == "${{ vars.CODE_FACTORY_NATIVE_REVIEW_CHALLENGE_SHA256 }}"
+    )
+    assert jobs["prepare"]["outputs"]["challenge_summary_sha256"] == (
+        "${{ steps.build.outputs.challenge_summary_sha256 }}"
+    )
+    assert (
+        jobs["analyze"]["env"][pin]
+        == jobs["assemble"]["env"][pin]
+        == ("${{ needs.prepare.outputs.challenge_summary_sha256 }}")
+    )
+    assert "review_packet" not in build["run"] and "cmake --build" in build["run"]
+    assert "keyless-review-runtime-%s" in build["run"]
+    assert upload["with"]["path"] == "llama/build/bin/llama-server"
+    download = next(
+        item
+        for item in jobs["analyze"]["steps"]
+        if item.get("uses", "").startswith("actions/download-artifact@")
+    )
+    assert download["with"] == {
+        "name": "${{ needs.prepare.outputs.artifact_name }}",
+        "path": "reviewer-runtime",
+    }
+    verify_artifacts = next(
+        item["run"]
+        for item in jobs["analyze"]["steps"]
+        if item.get("name") == "Verify the reviewer runtime and model"
+    )
+    assert (
+        "--max-time 180" in verify_artifacts and "--continue-at -" in verify_artifacts
+    )
+    assert '"$attempt" -eq 4' in verify_artifacts
+    assert verify_artifacts.count("sha256sum -c -") == 2
+    paths = {path for row in plan["obligations"] for path in row["paths"]}
+    for row in plan["obligations"]:
+        for challenge in row["challenges"]:
+            paths.add(challenge["fixture_path"])
+            paths.update(challenge["fixture_manifest"])
+    assert len(paths) == 19
+    packet = {
+        "binding": {"candidate_sha256": plan["candidate_sha256"]},
+        "sources": {path: "synthetic test text" for path in paths},
+        "observations": [
+            {
+                "lane_id": lane["id"],
+                "engine": lane["engine"],
+                "state": "OBSERVED",
+                "gaps": [],
+                "findings": [],
+                "metrics": None,
+                "report_sha256": "1" * 64,
+                "coverage_sha256": "2" * 64,
+                "challenge_sha256": sha256_bytes(lane["id"].encode()),
+                "obligations": [
+                    item["id"]
+                    for item in plan["obligations"]
+                    if item["engine"] == lane["engine"]
+                ],
+            }
+            for lane in plan["lanes"]
+        ],
+    }
+    return review, plan_path, plan, families, paths, packet
+
+
+def _reject_invalid_family_input(review, plan, packet, mode):
+    if mode == "unbound_obligation":
+        packet["observations"][0]["obligations"] = []
+        with pytest.raises(ValueError, match="differ from the observed lanes"):
+            review.family_inputs(plan, packet)
+        return True
+    if mode in {"missing_receipt", "malformed_receipt"}:
+        packet["observations"][0]["challenge_sha256"] = (
+            None if mode == "missing_receipt" else "x" * 64
+        )
+        with pytest.raises(RuntimeAuditError, match="challenge_sha256"):
+            review.family_inputs(plan, packet)
+        return True
+    if mode in {"incomplete_observation", "lane_gap"}:
+        if mode == "incomplete_observation":
+            packet["observations"][0]["state"] = "INCOMPLETE"
+        else:
+            packet["observations"][0]["gaps"] = ["missing report"]
+        with pytest.raises(ValueError, match="incomplete analyzer lane"):
+            review.family_inputs(plan, packet)
+        return True
+    return False
+
+
+def _configure_challenge_receipts(review, plan, packet, mode):
+    expected_errors = {
+        "wrong_challenge_digest": "differs from the registered receipt",
+        "wrong_challenge_run": "different analyzer evidence",
+        "wrong_challenge_lane": "lane digest differs",
+        "missing_challenge": "outcomes differ from registered controls",
+        "duplicate_challenge": "duplicate recorded challenge",
+    }
+    if mode == "challenge_receipts" or mode in expected_errors:
+        packet["binding"].update(run_id="archived-synthetic", evidence_sha256="6" * 64)
+        receipts = {
+            "schema": "factory.keyless-challenge-summary.v1",
+            "run_id": "archived-synthetic",
+            "evidence_sha256": "6" * 64,
+            "lanes": {
+                lane["lane_id"]: {
+                    "challenge_sha256": lane["challenge_sha256"],
+                    "observations": [
+                        {
+                            "obligation_id": row["id"],
+                            "role": item["kind"],
+                            "exit_code": item["expected_exit_code"],
+                            "fixture_sha256": item["fixture_sha256"],
+                            "report_sha256": item["expected_report_sha256"],
+                            "observation_sha256": "8" * 64,
+                            "detector_configuration_changed": item["kind"]
+                            == "mutation",
+                        }
+                        for row in plan["obligations"]
+                        for item in row["challenges"]
+                        if row["engine"] == lane["engine"]
+                    ],
+                }
+                for lane in packet["observations"]
+            },
+        }
+        packet["challenge_receipts"] = receipts
+        initial_receipt_sha256 = digest(receipts)
+        first_rows = receipts["lanes"]["codeql"]["observations"]
+        if mode == "wrong_challenge_digest":
+            first_rows[0]["exit_code"] += 1
+        elif mode == "wrong_challenge_run":
+            receipts["run_id"] = "unrelated-run"
+        elif mode == "wrong_challenge_lane":
+            receipts["lanes"]["codeql"]["challenge_sha256"] = receipts["lanes"]["osv"][
+                "challenge_sha256"
+            ]
+        elif mode == "missing_challenge":
+            first_rows.pop()
+        elif mode == "duplicate_challenge":
+            first_rows.append(first_rows[0])
+        review.CHALLENGE_SUMMARY_SHA256 = (
+            initial_receipt_sha256
+            if mode == "wrong_challenge_digest"
+            else digest(receipts)
+        )
+        if mode in expected_errors:
+            with pytest.raises(ValueError, match=expected_errors[mode]):
+                review.family_inputs(plan, packet)
+            return True
+    return False
+
+
+def test_keyless_review_requires_the_independently_registered_control_summary(
+    monkeypatch,
+):
+    review, _plan_path, plan, _families, _paths, packet = _keyless_review_fixture()
+    historical = review.CHALLENGE_SUMMARY_SHA256
+    _configure_challenge_receipts(review, plan, packet, "challenge_receipts")
+    summary = packet["challenge_receipts"]
+    current = digest(summary)
+    assert current != historical
+    review.CHALLENGE_SUMMARY_SHA256 = historical
+    monkeypatch.setenv("REVIEW_CHALLENGE_SUMMARY_SHA256", current)
+
+    families = review.family_inputs(plan, packet)
+    assert sum(len(row["sources"]) for row in families) == 58
+    assert (
+        sum(
+            "observed_challenge" in control
+            for row in families
+            for obligation in row["obligations"]
+            for control in obligation["controls"]
+        )
+        == 27
+    )
+
+    packet["binding"]["run_id"] = "wrong-run"
+    with pytest.raises(ValueError, match="different analyzer evidence"):
+        review.family_inputs(plan, packet)
+    packet["binding"]["run_id"] = summary["run_id"]
+    monkeypatch.setenv("REVIEW_CHALLENGE_SUMMARY_SHA256", "0" * 64)
+    with pytest.raises(ValueError, match="registered receipt"):
+        review.family_inputs(plan, packet)
+    monkeypatch.setenv("REVIEW_CHALLENGE_SUMMARY_SHA256", current)
+    del packet["challenge_receipts"]
+    with pytest.raises(ValueError, match="registered challenge summary is missing"):
+        review.family_inputs(plan, packet)
+
+
+def _stage_family_review(tmp_path, monkeypatch, plan_path, packet):
+    monkeypatch.chdir(tmp_path)
+    staged_plan = tmp_path / "scripts" / plan_path.name
+    staged_plan.parent.mkdir()
+    staged_plan.write_bytes(plan_path.read_bytes())
+    (tmp_path / "review-model-input.json").write_text(
+        json.dumps(packet), encoding="utf-8"
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture-only")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("REVIEW_RUNTIME_SHA256", "4" * 64)
+    summary_path = tmp_path / "step-summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
+    return summary_path
+
+
+def _rationale_reply(body, payload, assigned, mode):
+    selected = payload["rationale_paths"]
+    assert payload["family"] == "dependencies" and selected == assigned[:2]
+    assert sorted(body["response_format"]["schema"]["required"]) == selected
+    assert body["max_tokens"] < 2600
+    recovered = {
+        path: {
+            "state": "REVIEWED",
+            "reason": "REVIEWED"
+            if mode == "status_only_rationale"
+            else "Checked the bound dependency control outcome",
+        }
+        for path in selected
+    }
+    return BytesIO(
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {"content": json.dumps(recovered)},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        ).encode()
+    )
+
+
+def _assert_unbound_family_prompt(payload, body, review, lane_ids, mode):
+    assert {
+        control["role"] for row in payload["obligations"] for control in row["controls"]
+    } == {
+        "positive",
+        "negative",
+        "mutation",
+    }
+    for row in payload["obligations"]:
+        controls = {item["role"]: item["fixture_path"] for item in row["controls"]}
+        assert controls["positive"] == controls["mutation"] != controls["negative"]
+    assert all(
+        lane["receipts"]
+        == {
+            "report_sha256": "1" * 64,
+            "coverage_sha256": "2" * 64,
+            "challenge_sha256": sha256_bytes(lane_ids[lane["engine"]].encode()),
+        }
+        for lane in payload["observations"]
+    )
+    if payload["family"] == "dependencies":
+        inventory = next(
+            lane for lane in payload["observations"] if lane["engine"] == "syft"
+        )
+        assert inventory["artifact_roles"] == ["sbom_json"]
+        assert inventory["findings"] == []
+    assert mode != "challenge_receipts"
+    assert all(
+        {"observed_challenge", "expected_exit_code"}.isdisjoint(control)
+        for obligation in payload["obligations"]
+        for control in obligation["controls"]
+    )
+    assert body["messages"][0]["content"] == review.INSTRUCTIONS
+
+
+def _family_reply(payload, assigned, mode):
+    result = {
+        "decision": "ACCEPT",
+        "findings": [],
+        "coverage_gaps": [],
+        "path_assessments": {
+            path: {"state": "REVIEWED", "reason": "Synthetic evidence reviewed"}
+            for path in assigned
+        },
+    }
+    if mode == "unresolved" and payload["family"] == "dependencies":
+        result["path_assessments"][assigned[0]] = {
+            "state": "UNRESOLVED",
+            "reason": "Manifest has insufficient evidence",
+        }
+        result["findings"] = [
+            {
+                "id": "fixture-finding",
+                "severity": "low",
+                "path": assigned[-1],
+                "evidence": "Synthetic evidence disposition",
+                "remediation": "Review the fixture evidence",
+            }
+        ]
+    if (
+        mode in {"no_indicator", "conflicting_assessment"}
+        and payload["family"] == "secrets"
+    ):
+        result["path_assessments"][assigned[0]] = {
+            "state": "REVIEWED_NO_INDICATOR",
+            "reason": "Inspected the assigned text for secret indicators",
+        }
+        if mode == "conflicting_assessment":
+            result["findings"] = [
+                {
+                    "id": "conflicting-finding",
+                    "severity": "low",
+                    "path": assigned[0],
+                    "evidence": "Synthetic indicator claim",
+                    "remediation": "Inspect the recorded indicator",
+                }
+            ]
+    if (
+        mode
+        in {
+            "status_only_rationale",
+            "rationale_recovered",
+            "rationale_retry_tamper",
+        }
+        and payload["family"] == "dependencies"
+    ):
+        result["path_assessments"][assigned[0]]["reason"] = "REVIEWED"
+        result["path_assessments"][assigned[1]] = {
+            "state": "REVIEWED_NO_INDICATOR",
+            "reason": "  reviewed_no_indicator  ",
+        }
+        if mode == "rationale_recovered":
+            result["findings"] = [
+                {
+                    "id": "retained-first-pass-finding",
+                    "path": assigned[2],
+                    "severity": "low",
+                    "evidence": "Synthetic finding recorded in the first response",
+                    "remediation": "Review this synthetic observation",
+                }
+            ]
+    if mode == "obligation_gap" and payload["family"] == "dependencies":
+        result["coverage_gaps"] = [
+            "The ledger lacks evidence for a declared dependency obligation"
+        ]
+    if mode == "omitted":
+        del result["path_assessments"][assigned[0]]
+    if mode == "out_of_scope":
+        result["path_assessments"]["outside.txt"] = result["path_assessments"][
+            assigned[0]
+        ]
+    finish = "length" if mode == "truncated" else "stop"
+    return BytesIO(
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {"content": json.dumps(result)},
+                        "finish_reason": finish,
+                    }
+                ]
+            }
+        ).encode()
+    )
+
+
+def _grounded_rationale_reply(body, payload, sources):
+    selected = sorted(path for path in sources if path.endswith("requirements.txt"))[:2]
+    schema = body["response_format"]["schema"]
+    assert sorted(payload["sources"]) == selected == schema["required"]
+    assert set(payload["path_evidence"]) == set(selected)
+    assert body["max_tokens"] == 128 * len(selected)
+    recovered = {
+        path: {
+            "state": "REVIEWED",
+            "source_fact": "The synthetic test text states the scope of the fixture.",
+            "source_excerpt": "synthetic test text",
+            "source_line": 1,
+        }
+        for path in selected
+    }
+    choice = {"message": {"content": json.dumps(recovered)}, "finish_reason": "stop"}
+    return BytesIO(json.dumps({"choices": [choice]}).encode())
+
+
+class _KeylessReviewResponder:
+    def __init__(self, review, plan, packet, mode):
+        self.review = review
+        self.plan = plan
+        self.packet = packet
+        self.mode = mode
+        self.lane_ids = {row["engine"]: row["id"] for row in plan["lanes"]}
+        self.expected_coverage = set()
+
+    def __call__(self, request, timeout):
+        review = self.review
+        if isinstance(request, str):
+            assert request == review.LOOPBACK + "/health"
+            health = BytesIO()
+            health.status = 200
+            return health
+        assert request.full_url == review.LOOPBACK + "/v1/chat/completions"
+        assert 0 < timeout <= 1200
+        body = json.loads(request.data)
+        payload = json.loads(body["messages"][1]["content"])
+        assigned = sorted(payload["sources"])
+        if payload.get("rationale_paths"):
+            return _rationale_reply(body, payload, assigned, self.mode)
+        if "earlier citations" in body["messages"][0]["content"]:
+            assert (
+                self.mode == "challenge_receipts"
+                and payload["family"] == "dependencies"
+            )
+            return _grounded_rationale_reply(body, payload, self.packet["sources"])
+        schema = body["response_format"]["schema"]["properties"]["path_assessments"]
+        assert (
+            schema["required"] == assigned and schema["additionalProperties"] is False
+        )
+        if "path_evidence" in payload:
+            return self.challenge_reply(body, payload, assigned, schema)
+        _assert_unbound_family_prompt(payload, body, review, self.lane_ids, self.mode)
+        self.expected_coverage.update(assigned)
+        return _family_reply(payload, assigned, self.mode)
+
+    def challenge_reply(self, body, payload, assigned, schema):
+        review, plan, packet = self.review, self.plan, self.packet
+        mode, lane_ids = self.mode, self.lane_ids
+        receipts = packet["challenge_receipts"]
+        assert mode == "challenge_receipts"
+        assert set(payload["path_evidence"]) == set(assigned)
+        family_obligations = [
+            row for row in plan["obligations"] if row["family"] == payload["family"]
+        ]
+        family_obligation = family_obligations[0]
+        observed = receipts["lanes"][lane_ids[family_obligation["engine"]]][
+            "observations"
+        ]
+        for path in assigned:
+            source = packet["sources"][path]
+            assert payload["sources"][path] == list(
+                map(list, enumerate(source.splitlines(), 1))
+            )
+            path_evidence = payload["path_evidence"][path]
+            assert path_evidence["source_sha256"] == sha256_bytes(source.encode())
+            assert path_evidence.get("requirements", []) == [
+                row["id"] for row in family_obligations if path in row["requirements"]
+            ]
+            controls = {
+                (row["id"], control["kind"]): (row, control)
+                for row in family_obligations
+                for control in row["challenges"]
+                if control["fixture_path"] == path
+            }
+            supplied = {
+                (control["obligation"], control["role"]): control
+                for control in path_evidence.get("entrypoint_controls", [])
+            }
+            assert set(supplied) == set(controls)
+            for (identity, role), control in supplied.items():
+                obligation, registered = controls[(identity, role)]
+                lane_receipts = receipts["lanes"][lane_ids[obligation["engine"]]][
+                    "observations"
+                ]
+                receipt = next(
+                    row
+                    for row in lane_receipts
+                    if row["role"] == role and row["obligation_id"] == identity
+                )
+                assert (
+                    control["exit_code"]
+                    == registered["expected_exit_code"]
+                    == receipt["exit_code"]
+                )
+                assert control["observation_sha256"] == receipt["observation_sha256"]
+            assert path_evidence.get("supporting_controls", []) == [
+                [row["id"], control["kind"]]
+                for row in family_obligations
+                for control in row["challenges"]
+                if path in control["fixture_manifest"]
+                and path != control["fixture_path"]
+            ]
+        assert "They do not establish execution" in body["messages"][0]["content"]
+        assert "obligations" not in payload and "observations" not in payload
+        family_input = next(
+            item
+            for item in review.family_inputs(plan, packet)
+            if item["family"] == payload["family"]
+        )
+        retry = json.loads(
+            review.rationale_messages(family_input, assigned[:1])[1]["content"]
+        )
+        assert retry["sources"] == {assigned[0]: payload["sources"][assigned[0]]}
+        assert retry["path_evidence"] == {
+            assigned[0]: payload["path_evidence"][assigned[0]]
+        }
+        self.expected_coverage.update(assigned)
+        assert {"decision", "coverage_gaps"}.isdisjoint(
+            body["response_format"]["schema"]["properties"]
+        )
+        positive = next(
+            item
+            for item in family_obligation["challenges"]
+            if item["kind"] == "positive"
+        )
+        positive_path = positive["fixture_path"]
+        positive_receipt = next(
+            item
+            for item in observed
+            if item["role"] == "positive"
+            and item["obligation_id"] == family_obligation["id"]
+        )
+        claim = {
+            "kind": "exit_mismatch",
+            "obligation": family_obligation["id"],
+            "path": positive_path,
+            "role": "positive",
+            "observation_sha256": positive_receipt["observation_sha256"],
+            "reason": "The positive exit was incorrectly reported as a defect.",
+        }
+        source = packet["sources"][positive_path].splitlines()[0]
+        finding = {
+            "id": "REVIEWED",
+            "severity": "low",
+            "path": positive_path,
+            "evidence": "A routine source observation.",
+            "remediation": "Inspect the source.",
+            "source_line": 1,
+            "source_excerpt": source,
+        }
+        result = {
+            "findings": [finding],
+            "control_claims": [
+                claim,
+                {**claim, "kind": "missing_observation", "observation_sha256": ""},
+            ],
+            "path_assessments": {
+                path: {
+                    "state": "REVIEWED",
+                    "source_fact": "Inspected the synthetic test text for the control.",
+                    "source_line": 1,
+                    "source_excerpt": "synthetic test text",
+                }
+                for path in assigned
+            },
+        }
+        grounded, rejected = review.ground_observed_response(result, family_input)
+        assert len(rejected) == 3 and grounded["decision"] == "ACCEPT"
+        assert not grounded["coverage_gaps"] and not grounded["findings"]
+        genuine = {**finding, "id": "fixture-source-defect"}
+        grounded, _ = review.ground_observed_response(
+            {**result, "findings": [genuine]}, family_input
+        )
+        assert grounded["findings"][0]["id"] == genuine["id"]
+        native = {
+            **family_input,
+            "observations": [
+                {
+                    "engine": "fixture",
+                    "findings": [
+                        {
+                            "path": positive_path,
+                            "line": 1,
+                            "rule_id": "native-rule",
+                            "suppressed": False,
+                        }
+                    ],
+                }
+            ],
+        }
+        for identity in (
+            "native-rule",
+            "fixture:native-rule",
+            "fixture-native-rule",
+        ):
+            grounded, rejected = review.ground_observed_response(
+                {**result, "findings": [{**genuine, "id": identity}, genuine]},
+                native,
+            )
+            assert [row["id"] for row in grounded["findings"]] == [genuine["id"]]
+            assert rejected[0]["kind"] == "existing_native_finding"
+            assert rejected[0]["native"]["line"] == 1
+        different_line = {**genuine, "id": "native-rule", "source_line": 2}
+        native["sources"] = {
+            **native["sources"],
+            positive_path: f"{source}\n{source}",
+        }
+        grounded, _ = review.ground_observed_response(
+            {**result, "findings": [different_line]}, native
+        )
+        assert [row["id"] for row in grounded["findings"]] == ["native-rule"]
+        unresolved = {
+            **result,
+            "path_assessments": {
+                **result["path_assessments"],
+                positive_path: {
+                    **result["path_assessments"][positive_path],
+                    "state": "UNRESOLVED",
+                    "source_fact": "Specific source evidence missing",
+                },
+            },
+        }
+        raw = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {"content": json.dumps(unresolved)},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+        recorded = review.recorded_response(raw.encode(), family_input)
+        disposition = review.disposition(
+            [
+                {
+                    "family": payload["family"],
+                    "result": recorded,
+                    "assigned_paths": assigned,
+                }
+            ]
+        )
+        assert disposition["decision"] == "INCOMPLETE"
+        assert disposition["coverage_gaps"] == [
+            f"{payload['family']}: unresolved review for {positive_path}: Specific source evidence missing"
+        ]
+        with pytest.raises(ValueError, match="invalid grounded review response"):
+            review.ground_observed_response(
+                {**result, "coverage_gaps": []}, family_input
+            )
+        for echo in ("", "\t\n", "a" * 161, f"{source}\nseparate line"):
+            grounded, _ = review.ground_observed_response(
+                {**result, "findings": [{**genuine, "source_excerpt": echo}]},
+                family_input,
+            )
+            assert grounded["decision"] == "INCOMPLETE" and not grounded["findings"]
+            assert grounded["coverage_gaps"] == [
+                f"{positive_path}: source finding lacks its exact quoted line"
+            ]
+        quoted = {
+            **family_input,
+            "sources": {
+                **family_input["sources"],
+                positive_path: "source\tvalue\n",
+            },
+        }
+        grounded, _ = review.ground_observed_response(
+            {
+                **result,
+                "findings": [{**genuine, "source_excerpt": "source\tvalue\n"}],
+            },
+            quoted,
+        )
+        assert grounded["findings"][0]["id"] == genuine["id"]
+        unbound = {**claim, "observation_sha256": "f" * 64}
+        grounded, rejected = review.ground_observed_response(
+            {
+                **result,
+                "control_claims": [unbound],
+                "findings": [{**genuine, "source_line": 999_999}],
+            },
+            family_input,
+        )
+        assert (
+            grounded["decision"] == "INCOMPLETE" and len(grounded["coverage_gaps"]) == 1
+        )
+        assert rejected[0]["kind"] == "contradicted_control_claim"
+        assert rejected[0]["reference_matches"] is False
+        assert not grounded["findings"]
+        assert schema["properties"][positive_path]["properties"]["source_fact"][
+            "minLength"
+        ] > len("REVIEWED_NO_INDICATOR")
+        proven = result["path_assessments"]
+        assert (
+            review.reviewed_paths(
+                review.grounded_assessments(proven, family_input["sources"])
+            )
+            == assigned
+        )
+        paraphrased = {
+            path: {
+                **row,
+                "source_fact": "The synthetic input describes the scope of the fixture.",
+            }
+            for path, row in proven.items()
+        }
+        assert (
+            review.reviewed_paths(
+                review.grounded_assessments(paraphrased, family_input["sources"])
+            )
+            == assigned
+        )
+        cited = {"source_line": 1, "source_excerpt": "def test_owned_control():"}
+        assert review.source_supports_fact(
+            cited,
+            "def test_owned_control():\n    pass",
+            "This function tests the owned control outcome.",
+        )
+        for unsupported in (
+            {"source_fact": "REVIEWED"},
+            {"source_fact": "This file only lists pinned package versions."},
+            {"source_line": 2},
+            {
+                "source_excerpt": "pinned package versions",
+                "source_fact": "This file only lists pinned package versions.",
+            },
+        ):
+            followup = {path: {**row, **unsupported} for path, row in proven.items()}
+            assert not review.reviewed_paths(
+                review.grounded_assessments(followup, family_input["sources"])
+            )
+        observed_control = next(
+            item
+            for obligation in family_input["obligations"]
+            if obligation["id"] == claim["obligation"]
+            for item in obligation["controls"]
+            if item["role"] == "positive"
+        )
+        observation = observed_control.pop("observed_challenge")
+        try:
+            grounded, _ = review.ground_observed_response(
+                {**result, "control_claims": [claim]}, family_input
+            )
+            assert grounded["decision"] == "INCOMPLETE"
+            assert "unverified control claim" in grounded["coverage_gaps"][0]
+        finally:
+            observed_control["observed_challenge"] = observation
+        invalid = {**result, "findings": [{**genuine, "remediation": ""}]}
+        malformed = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {"content": json.dumps(invalid)},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+        recorded = review.recorded_response(malformed.encode(), family_input)
+        assert recorded["decision"] == "INCOMPLETE" and not recorded["findings"]
+        assert set(recorded["path_assessments"]) == set(assigned)
+        assert all(
+            row["state"] == "UNRESOLVED"
+            for row in recorded["path_assessments"].values()
+        )
+        disposition = review.disposition(
+            [
+                {
+                    "family": payload["family"],
+                    "result": recorded,
+                    "assigned_paths": assigned,
+                }
+            ]
+        )
+        assert disposition["decision"] == "INCOMPLETE"
+        assert len(disposition["coverage_gaps"]) == len(assigned)
+        if payload["family"] == "dependencies":
+            result["path_assessments"][assigned[0]]["source_line"] = 2
+            result["path_assessments"][assigned[1]]["source_fact"] = (
+                "This file only lists pinned package versions."
+            )
+        return BytesIO(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": json.dumps(result)},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+        )
+
+
+def _write_family_outputs(review, tmp_path, monkeypatch, mode, families, outputs):
+    for family in sorted(families, reverse=True):
+        if mode == "missing" and family == "dependencies":
+            continue
+        monkeypatch.setenv("REVIEW_FAMILY", family)
+        review.main()
+        output = outputs / f"keyless-review-family-1-{family}"
+        output.mkdir()
+        (tmp_path / "review-family.json").replace(output / "review-family.json")
+    monkeypatch.delenv("REVIEW_FAMILY")
+
+
+def _reject_invalid_assembly(review, tmp_path, monkeypatch, mode, outputs):
+    if mode == "rationale_retry_tamper":
+        path = outputs / "keyless-review-family-1-dependencies/review-family.json"
+        part = json.loads(path.read_bytes())
+        part["rationale_recovery"]["raw_response"] += " "
+        path.write_text(json.dumps(part), encoding="utf-8")
+        with pytest.raises(ValueError, match="rationale recovery response fingerprint"):
+            review.main()
+        assert not (tmp_path / "review.json").exists()
+        return True
+    if mode in {"missing", "wrong_attempt", "wrong_runtime", "modified_response"}:
+        if mode == "wrong_attempt":
+            monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+        if mode in {"wrong_runtime", "modified_response"}:
+            path = outputs / "keyless-review-family-1-dependencies/review-family.json"
+            part = json.loads(path.read_bytes())
+            if mode == "wrong_runtime":
+                part["identity"]["runtime_sha256"] = "5" * 64
+            else:
+                part["raw_response"] += " "
+            path.write_text(json.dumps(part), encoding="utf-8")
+        with pytest.raises(ValueError):
+            review.main()
+        assert not (tmp_path / "review.json").exists()
+        return True
+    return False
+
+
+def _assert_family_output(tmp_path, summary_path, expected_coverage, paths):
+    result = json.loads((tmp_path / "review.json").read_bytes())
+    coverage = json.loads((tmp_path / "review-coverage.json").read_bytes())
+    assert expected_coverage == paths
+    assert len({row["family"] for row in coverage}) == 6
+    assert {row["runtime_sha256"] for row in coverage} == {"4" * 64}
+    for row in coverage:
+        assert row["response_sha256"] == sha256_bytes(row["raw_response"].encode())
+        if recovery := row.get("rationale_recovery"):
+            assert recovery["response_sha256"] == sha256_bytes(
+                recovery["raw_response"].encode()
+            )
+    for field in ("prompt_sha256", "response_sha256"):
+        assert result[field] == digest(
+            [
+                digest([row[field], row["rationale_recovery"][field]])
+                if row.get("rationale_recovery")
+                else row[field]
+                for row in coverage
+            ]
+        )
+    assert result["authority"] == "none"
+    summary = summary_path.read_text(encoding="utf-8")
+    assert f"Six-family review · {result['decision']}" in summary
+    assert "Analyzer alerts | Review findings" in summary
+    return result, coverage, summary
+
+
+def _assert_family_decision(mode, result, coverage, summary):
+    if mode == "unresolved":
+        assert result["decision"] == "INCOMPLETE"
+        assert len(result["coverage_gaps"]) == 1
+        assert result["coverage_gaps"][0].startswith(
+            "dependencies: unresolved review for "
+        )
+        assert result["coverage_gaps"][0].endswith("Manifest has insufficient evidence")
+        assert [finding["id"] for finding in result["findings"]] == ["fixture-finding"]
+        assert "| dependencies | 3 | 2 | 1 | 0 | 1 |" in summary
+    elif mode == "rationale_recovered":
+        assert result["decision"] == "FINDINGS" and result["coverage_gaps"] == []
+        assert [f["id"] for f in result["findings"]] == ["retained-first-pass-finding"]
+        row = next(x for x in coverage if x["family"] == "dependencies")
+        assert row["assigned_paths"] == row["result"]["reviewed_paths"]
+        assert len(row["rationale_recovery"]["paths"]) == 2
+    elif mode == "status_only_rationale":
+        assert result["decision"] == "INCOMPLETE"
+        assert len(result["coverage_gaps"]) == 2
+        assert all(
+            gap.endswith("missing rationale beyond the assessment status")
+            for gap in result["coverage_gaps"]
+        )
+        dependencies = next(row for row in coverage if row["family"] == "dependencies")
+        assert len(dependencies["result"]["reviewed_paths"]) == 1
+        assert "REVIEWED" in dependencies["raw_response"]
+    elif mode == "conflicting_assessment":
+        assert result["decision"] == "INCOMPLETE"
+        assert len(result["coverage_gaps"]) == 1
+        assert result["coverage_gaps"][0].startswith(
+            "secrets: finding conflicts with no-indicator assessment for "
+        )
+        assert [finding["id"] for finding in result["findings"]] == [
+            "conflicting-finding"
+        ]
+    elif mode == "no_indicator":
+        assert result["decision"] == "ACCEPT" and result["coverage_gaps"] == []
+        secrets = next(row for row in coverage if row["family"] == "secrets")
+        assert secrets["result"]["reviewed_paths"] == secrets["assigned_paths"]
+    elif mode == "challenge_receipts":
+        assert result["decision"] == "ACCEPT" and not result["findings"]
+        assert not result["coverage_gaps"]
+        recovered = [row for row in coverage if "rationale_recovery" in row]
+        assert [row["family"] for row in recovered] == ["dependencies"]
+        assert (
+            recovered[0]["result"]["reviewed_paths"] == recovered[0]["assigned_paths"]
+        )
+        for row in coverage:
+            if row["family"] in {"runtime", "fuzz"}:
+                assert [
+                    claim["kind"] for claim in row["result"]["rejected_claims"]
+                ] == [
+                    "assessment_status_as_finding",
+                    "contradicted_control_claim",
+                    "contradicted_control_claim",
+                ]
+                assert len(row["result"]["reviewed_paths"]) == len(
+                    row["assigned_paths"]
+                )
+                assert "incorrectly reported as a defect" in row["raw_response"]
+    elif mode == "obligation_gap":
+        assert result["decision"] == "INCOMPLETE"
+        assert result["coverage_gaps"] == [
+            "The ledger lacks evidence for a declared dependency obligation"
+        ]
+    else:
+        assert result["decision"] == "ACCEPT" and result["coverage_gaps"] == []
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "complete",
+        "unresolved",
+        "obligation_gap",
+        "no_indicator",
+        "conflicting_assessment",
+        "status_only_rationale",
+        "rationale_recovered",
+        "rationale_retry_tamper",
+        "omitted",
+        "out_of_scope",
+        "truncated",
+        "missing",
+        "wrong_attempt",
+        "wrong_runtime",
+        "modified_response",
+        "unbound_obligation",
+        "missing_receipt",
+        "malformed_receipt",
+        "incomplete_observation",
+        "lane_gap",
+        "challenge_receipts",
+        "wrong_challenge_digest",
+        "wrong_challenge_run",
+        "wrong_challenge_lane",
+        "missing_challenge",
+        "duplicate_challenge",
+    ],
+)
+def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mode):
+    review, plan_path, plan, families, paths, packet = _keyless_review_fixture()
+    if _reject_invalid_family_input(review, plan, packet, mode):
+        return
+    if _configure_challenge_receipts(review, plan, packet, mode):
+        return
+    summary_path = _stage_family_review(tmp_path, monkeypatch, plan_path, packet)
+    responder = _KeylessReviewResponder(review, plan, packet, mode)
+    monkeypatch.setattr(review, "urlopen", responder)
+    outputs = tmp_path / "family-outputs"
+    outputs.mkdir()
+    family = sorted(families)[0]
+    monkeypatch.setenv("REVIEW_FAMILY", family)
+    if mode in {"omitted", "out_of_scope", "truncated"}:
+        with pytest.raises(ValueError):
+            review.main()
+        assert not (tmp_path / "review.json").exists()
+        return
+    _write_family_outputs(review, tmp_path, monkeypatch, mode, families, outputs)
+    if _reject_invalid_assembly(review, tmp_path, monkeypatch, mode, outputs):
+        return
+    review.main()
+    result, coverage, summary = _assert_family_output(
+        tmp_path, summary_path, responder.expected_coverage, paths
+    )
+    _assert_family_decision(mode, result, coverage, summary)
+
+
+def _keyless_authorization_fixture(tmp_path):
+    from factoryline.deep_audit_io import digest, sha256_bytes
+
+    identities = {
+        role: f"https://github.com/example/repo/.github/workflows/{role}.yml@refs/heads/main"
+        for role in ("implementer", "reviewer", "coordinator")
+    }
+    roles = {
+        role: {"identity": identity, "keyid": role, "workflow_digest": "a" * 40}
+        for role, identity in identities.items()
+    }
+    trust = tmp_path / "trust.json"
+    trust.write_text(
+        json.dumps({"schema": "factory.deep-audit-sigstore-trust.v1", "roles": roles}),
+        encoding="utf-8",
+    )
+    plan = {
+        "implementer_id": identities["implementer"],
+        "reviewer_identity": identities["reviewer"],
+        "coordinator_identity": identities["coordinator"],
+        **{f"{role}_keyid": role for role in roles},
+        "trust_root_sha256": sha256_bytes(trust.read_bytes()),
+        "candidate_sha256": "b" * 64,
+        "lanes": [{"id": "osv", "image": "sha256:" + "c" * 64}],
+    }
+    pin = "d" * 64
+    now = datetime.now(timezone.utc)
+    payload = {
+        "schema": "factory.deep-execution-authorization.v1",
+        "manifest_sha256": pin,
+        "manifest_content_sha256": digest(plan),
+        "candidate_sha256": plan["candidate_sha256"],
+        "adapter_images": {"osv": plan["lanes"][0]["image"]},
+        "authority": "none",
+        "issued_at": (now - timedelta(seconds=10)).isoformat(),
+        "expires_at": (now + timedelta(minutes=10)).isoformat(),
+    }
+    return roles, trust, plan, pin, payload
+
+
+def test_keyless_authorization_verifies_pinned_bytes_and_native_bindings(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_attestation as module
+    from factoryline.deep_audit_io import canonical_bytes, digest
+
+    roles, trust, plan, pin, payload = _keyless_authorization_fixture(tmp_path)
+    envelope = {"schema": module._KEYLESS_ENVELOPE, "payload": payload, "bundle": {}}
+    authorization = tmp_path / "authorization.json"
+    authorization.write_bytes(canonical_bytes(envelope))
+    observed = []
+    monkeypatch.setattr(
+        module, "_verify_keyless_artifact", lambda *args: observed.append(args)
+    )
+    assert module.verify_execution_authorization(
+        plan,
+        pin,
+        authorization,
+        trust,
+        plan["trust_root_sha256"],
+        return_envelope_sha256=True,
+    ) == (payload, digest(envelope))
+    assert observed == [(canonical_bytes(payload), {}, roles["coordinator"])]
+    payload["adapter_images"] = {}
+    authorization.write_bytes(canonical_bytes(envelope))
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_AUTHORIZATION"):
+        module.verify_execution_authorization(
+            plan, pin, authorization, trust, plan["trust_root_sha256"]
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["shared", "same_workflow_other_ref", "different_manifest_role", "bad_commit"],
+)
+def test_keyless_roles_reject_shared_or_drifted_identity(tmp_path, change):
+    from factoryline import deep_audit_attestation as module
+
+    roles, trust, plan, _, _ = _keyless_authorization_fixture(tmp_path)
+    if change == "shared":
+        roles["reviewer"]["identity"] = roles["coordinator"]["identity"]
+    elif change == "same_workflow_other_ref":
+        roles["reviewer"]["identity"] = roles["coordinator"]["identity"].replace(
+            "refs/heads/main", "refs/tags/v1"
+        )
+    elif change == "different_manifest_role":
+        plan["reviewer_keyid"] = "coordinator"
+    else:
+        roles["reviewer"]["workflow_digest"] = "refs/heads/main"
+    trust.write_text(
+        json.dumps({"schema": module._KEYLESS_TRUST, "roles": roles}), encoding="utf-8"
+    )
+    with pytest.raises(RuntimeAuditError, match="E_REVIEW_TRUST|E_REVIEW_IDENTITY"):
+        module._execution_keys(plan, trust)
 
 
 def _coordinator_test_request(root, operation="status"):
@@ -51,6 +1234,38 @@ def _coordinator_cli_argv(root, *extra):
         "a" * 32,
         *extra,
     ]
+
+
+def test_coordinator_windows_venv_launch_retains_worker_pid(tmp_path):
+    import os
+    import subprocess
+    import venv
+
+    if os.name != "nt":
+        pytest.skip("Windows venv redirector behavior")
+    from factoryline import cli_deep_audit
+
+    env_root = tmp_path / "worker-venv"
+    venv.EnvBuilder(with_pip=False).create(env_root)
+    package = str(Path(cli_deep_audit.__file__).resolve().parent.parent)
+    bootstrap = """
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+from factoryline.cli_deep_audit import _coordinator_worker_launch
+executable, env = _coordinator_worker_launch()
+assert executable == sys._base_executable and executable != sys.executable
+source = "import json, os, sys; print(json.dumps([os.getpid(), sys.prefix, sys.executable]))"
+with subprocess.Popen([executable, "-I", "-c", source], env=env, stdout=subprocess.PIPE, text=True) as worker:
+    raw, _ = worker.communicate(timeout=25)
+    assert worker.returncode == 0
+    pid, prefix, interpreter = json.loads(raw)
+    assert pid == worker.pid and prefix == sys.prefix and interpreter == sys.executable
+"""
+    subprocess.run(
+        [str(env_root / "Scripts" / "python.exe"), "-I", "-c", bootstrap, package],
+        check=True,
+        timeout=40,
+    )
 
 
 def test_coordinator_public_cli_status_stop_ndjson(tmp_path):
@@ -191,11 +1406,29 @@ def test_coordinator_public_cli_signed_child_owned_stop(tmp_path):
             child.communicate(timeout=10)
 
 
+def _coordinator_transport_path(tmp_path):
+    import os
+    import shutil
+    import sys
+
+    git = shutil.which("git")
+    assert git is not None
+    git_directory = Path(git).parent
+    if sys.platform == "linux":
+        # A shared executable directory can contain both Git and Docker.
+        git_directory = tmp_path / "git-only"
+        git_directory.mkdir()
+        shutil.copy2(git, git_directory / "git")
+    test_path = os.pathsep.join([str(git_directory), str(Path(sys.executable).parent)])
+    assert shutil.which("git", path=test_path)
+    assert shutil.which("docker", path=test_path) is None
+    return test_path
+
+
 def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
     import subprocess
     import time
     import os
-    import shutil
     import sys
     from factoryline.agentic_control import CoordinatorRequestStore
     from factoryline.deep_audit import deep_run_status
@@ -206,24 +1439,12 @@ def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
         )
     root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
     context["store"].release(owner)
-    # This is terminal-history transport acceptance, not analyzer qualification.
-    # Retain real Git inventory and a signed fresh child, but deliberately omit
-    # Docker so placeholder lanes fail closed without host-dependent daemon waits.
-    git_directory = Path(shutil.which("git")).parent
-    if sys.platform == "linux":
-        # /usr/bin commonly contains both Git and Docker on hosted runners.
-        git_directory = tmp_path / "git-only"
-        git_directory.mkdir()
-        shutil.copy2(shutil.which("git"), git_directory / "git")
-    test_path = os.pathsep.join([str(git_directory), str(Path(sys.executable).parent)])
-    assert shutil.which("git", path=test_path)
-    assert shutil.which("docker", path=test_path) is None
     child = subprocess.Popen(
         _coordinator_cli_argv(root, "--lease-seconds", "120"),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**os.environ, "PATH": test_path},
+        env={**os.environ, "PATH": _coordinator_transport_path(tmp_path)},
     )
     try:
         child.stdin.write((json.dumps(request) + "\n").encode())
@@ -1523,7 +2744,9 @@ def _coordinator_signed_fixture(tmp_path):
 
 
 @pytest.mark.parametrize("stop_child", [False, True])
-def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_child):
+def test_coordinator_native_signed_child_handshake_and_cleanup(
+    tmp_path, monkeypatch, stop_child
+):
     import os
     import sys
     import time
@@ -1537,6 +2760,8 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
             pytest.fail("selected CI host does not support native process identity")
         pytest.skip("native process creation identity unsupported")
     root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
+    # Run the signed transport against explicit unavailable-engine evidence.
+    monkeypatch.setenv("PATH", _coordinator_transport_path(tmp_path))
     observed_handshakes = []
     try:
         admitted = module.dispatch_deep_audit_request(root, request, owner, context)
@@ -5108,3 +6333,54 @@ def test_coordinator_renewal_contention_retries_and_direct_api_never_renews():
     direct = dict(store=_RenewStore(), stop=False, expires_at=expires, job=None)
     module._coordinator_renew(direct, activity=True)
     assert direct["store"].calls == []
+
+
+@pytest.mark.parametrize(
+    "memory_mib, ram_mib", [(1024, 768), (2048, 1536), (4096, 3072), (8192, 7168)]
+)
+def test_codeql_ram_follows_signed_lane_memory(memory_mib, ram_mib):
+    import sys
+
+    from factoryline.deep_audit_contract import _codeql_ram_mib, _native_argv
+
+    lane = {"memory_mib": memory_mib}
+    assert _codeql_ram_mib(lane) == ram_mib
+    command = {"argv": [sys.executable, "--ram={ram_mib}"], "accepted_exit_codes": [0]}
+    assert _native_argv([command], {}, lane)[0]["argv"][1] == f"--ram={ram_mib}"
+    with pytest.raises(RuntimeAuditError, match="lane memory binding required"):
+        _native_argv([command], {})
+
+
+@pytest.mark.parametrize("codeql", [False, True])
+def test_native_ram_binding_preserves_literal_report_path(codeql):
+    from factoryline.deep_audit_contract import _native_argv
+
+    report = "/out/report-{ram_mib}.json"
+    import sys
+
+    argv = [sys.executable, "--output={report}"]
+    expected = [sys.executable, f"--output={report}"]
+    lane = {"engine": "semgrep"}
+    if codeql:
+        argv.append("--ram={ram_mib}")
+        expected.append("--ram=1536")
+        lane = {"engine": "codeql", "memory_mib": 2048}
+    result = _native_argv(
+        [{"argv": argv, "accepted_exit_codes": [0]}], {"report": report}, lane
+    )
+    assert result[0]["argv"] == expected
+
+
+@pytest.mark.parametrize(
+    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go"]
+)
+def test_shipped_codeql_profiles_bind_ram_to_lane(language):
+    profile = json.loads(
+        (
+            Path(__file__).parents[1]
+            / f"deploy/deep-adapters/profiles/codeql-{language}-full.json"
+        ).read_text()
+    )
+    analyze = profile["commands"][1]["argv"]
+    assert analyze[1:3] == ["database", "analyze"]
+    assert [a for a in analyze if a.startswith("--ram=")] == ["--ram={ram_mib}"]

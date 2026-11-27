@@ -226,7 +226,17 @@ def _capture_scope_gap_control(
 
 
 @pytest.mark.parametrize(
-    "language", ["python", "javascript", "typescript", "ruby", "go"]
+    "language",
+    [
+        "python",
+        "javascript",
+        "typescript",
+        "ruby",
+        "java",
+        "csharp",
+        "go",
+        "php",
+    ],
 )
 def test_uncovered_static_source_names_supported_profiles_only(language):
     import re
@@ -245,18 +255,30 @@ def test_uncovered_static_source_names_supported_profiles_only(language):
     named = re.findall(r"[\w-]+\.json", static["action"])
     assert named and all(name in supported for name in named)
     assert all((profiles_dir / name).is_file() for name in named)
-    assert ("codeql-" in static["action"]) is (language != "go")
+    assert ("codeql-" in static["action"]) is (language != "php")
     assert static["code"] == "UNCOVERED_SOURCE"
-    assert static["action"].endswith(
-        "naming a profile does not install, run or complete its worker."
-    )
-    assert not re.search(
-        r"\b(installed|available|completed?|covered|passed)\b",
-        static["action"].split(";")[0],
-    )
     assert all(
         "Supported profiles" not in gap["action"] for gap in gaps if gap is not static
     )
+
+
+@pytest.mark.parametrize(
+    "path,language,guidance",
+    [
+        ("Main.kt", "kotlin", "supports kotlin extraction"),
+        ("views/Sample.blade.php", "php", "factory deep-audit blade-structure"),
+    ],
+)
+def test_uncovered_static_source_gives_language_specific_guidance(
+    path, language, guidance
+):
+    from factoryline.deep_audit import _source_gaps
+
+    gaps = _source_gaps({path: {"language": language}}, {}, [])
+    [static] = [gap for gap in gaps if gap["action"].startswith("Add a static ")]
+    assert static["code"] == "UNCOVERED_SOURCE"
+    assert guidance in static["action"]
+    assert ".json" not in static["action"]
 
 
 @pytest.mark.parametrize("code", ["UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"])
@@ -1101,6 +1123,141 @@ def test_semgrep_challenge_rejects_weakened_profile(option):
     profile["commands"][0]["argv"].remove(option)
     with pytest.raises(RuntimeAuditError, match="E_SEMGREP_PROFILE"):
         _semgrep_challenge_command(profile)
+
+
+def test_php_interfile_profile_keeps_bounded_flags_in_challenge_and_rule_execution():
+    from factoryline.deep_audit_attestation import _semgrep_rule_prefix
+    from factoryline.deep_audit_io import _semgrep_challenge_command
+
+    profiles = Path("deploy/deep-adapters/profiles")
+    profile = json.loads((profiles / "semgrep-php-interfile.json").read_text())
+    baseline = json.loads((profiles / "semgrep-pattern-limited.json").read_text())
+    assert "--enable-interfile" not in _semgrep_challenge_command(baseline)["argv"]
+    challenge = _semgrep_challenge_command(profile)["argv"]
+    per_rule = _semgrep_rule_prefix(profile["tool_version"])
+    for flag in (
+        "--enable-interfile",
+        "--interfile-depth=3",
+        "--interfile-timeout=30",
+        "--max-memory=512",
+        "--jobs=1",
+        "--exclude=*.blade.php",
+    ):
+        assert flag in challenge and flag in per_rule
+    profile["commands"][0]["argv"].remove("--enable-interfile")
+    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_PROFILE"):
+        _semgrep_challenge_command(profile)
+
+
+def test_blade_structure_rejects_unpinned_grammar_before_launch(tmp_path, monkeypatch):
+    import importlib.metadata
+    import platform
+    import sys
+
+    from factoryline import deep_audit_contract, runtime_audit_process
+
+    source = tmp_path / "label.blade.php"
+    source.write_bytes(b"<p>{{ $label }}</p>")
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.27.0")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        deep_audit_contract,
+        "_BLADE_GRAMMARS",
+        {
+            sys.platform: ("{}.bin", {"blade": "a" * 64, "php": "b" * 64}),
+        },
+    )
+    (tmp_path / "blade.bin").write_bytes(b"untrusted bytes")
+
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail("An unpinned parser must never launch")
+
+    monkeypatch.setattr(runtime_audit_process, "run_bounded_command", unexpected_launch)
+    with pytest.raises(RuntimeAuditError, match="E_BLADE_GRAMMAR"):
+        deep_audit_contract.blade_structure(source, tmp_path)
+
+
+def test_blade_structure_explains_invalid_utf8_before_staging(tmp_path, monkeypatch):
+    from factoryline import deep_audit_contract
+
+    source = tmp_path / "label.blade.php"
+    source.write_bytes(b"<p>\xff</p>")
+    monkeypatch.setattr(deep_audit_contract, "_blade_runtime", lambda: "0.27.0")
+
+    with pytest.raises(RuntimeAuditError, match="E_BLADE_ENCODING.*offset 3"):
+        deep_audit_contract.blade_structure(source, tmp_path / "missing-grammars")
+
+
+def test_blade_structure_pinned_grammar_source_binding(tmp_path):
+    from hashlib import sha256
+    from os import environ
+
+    grammar_dir = environ.get("BLADE_GRAMMAR_DIR")
+    if not grammar_dir:
+        pytest.skip("This acceptance fixture needs the pinned Blade and PHP grammars")
+
+    source = tmp_path / "fixture.blade.php"
+
+    def scan(template, expected_exit):
+        source.write_bytes(template)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "factoryline.cli",
+                "deep-audit",
+                "blade-structure",
+                str(source),
+                "--grammar-dir",
+                grammar_dir,
+                "--json",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == expected_exit, (result.stdout, result.stderr)
+        report = json.loads(result.stderr if expected_exit == 2 else result.stdout)
+        assert report["schema"] == "factory.blade-structure.v1"
+        assert report["source_sha256"] == sha256(template).hexdigest()
+        assert (
+            report["authority"] == "none" and report["tree_sitter_version"] == "0.27.0"
+        )
+        return report
+
+    template = (
+        "<p>Café</p>\n"
+        "{{-- {{ 'comment' }} --}}\n"
+        "@verbatim{{ 'literal' }}@endverbatim\n"
+        "{{ 'hello' }}\n"
+        "{!! str_repeat('a', 2) !!}\n"
+    ).encode("utf-8")
+    valid = scan(template, 0)
+    assert valid["state"] == "STRUCTURE_OBSERVED" and valid["issues"] == []
+    expected = []
+    for mode, expression, line in (
+        ("escaped", b"'hello'", 4),
+        ("raw", b"str_repeat('a', 2)", 5),
+    ):
+        start = template.index(expression)
+        expected.append(
+            {
+                "mode": mode,
+                "start_byte": start,
+                "end_byte": start + len(expression),
+                "line": line,
+                "expression_sha256": sha256(expression).hexdigest(),
+            }
+        )
+    assert valid["echoes"] == expected
+
+    malformed = scan(b"{{ 1 + }}\n", 2)
+    assert malformed["state"] == "INCOMPLETE" and malformed["echoes"] == []
+    assert malformed["issues"] and all(
+        issue["reason"] in {"BLADE_PARSE_ERROR", "PHP_EXPRESSION_ERROR"}
+        for issue in malformed["issues"]
+    )
+    print(json.dumps({"valid": valid, "malformed": malformed}, sort_keys=True))
 
 
 def adapter_inputs(tmp_path):
@@ -2803,16 +2960,32 @@ def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_p
         "/usr/local/lib/python3.11/site-packages/factoryline/",
         tmp_path / "worker-sdk",
     )
-    sdk_stage, semgrep_stage = dockerfile.split("FROM sdk AS semgrep-worker", 1)
-    semgrep_stage = semgrep_stage.split("FROM sdk AS codeql-bundle", 1)[0]
+    sdk_stage, remaining = dockerfile.split("FROM sdk AS sdk-yaml", 1)
+    shared, remaining = remaining.split("FROM sdk-yaml AS semgrep-worker", 1)
+    semgrep_stage, remaining = remaining.split(
+        "FROM sdk-yaml AS php-interfile-worker", 1
+    )
+    php_stage = remaining.split("FROM sdk AS codeql-bundle", 1)[0]
     assert "USER 1000:1000" in sdk_stage
     assert 'ENTRYPOINT ["/opt/factory/bin/audit-adapter"]' in sdk_stage
     assert "USER 1000:1000" in semgrep_stage
+    assert "USER 1000:1000" in php_stage
     assert (
         'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
-        in semgrep_stage
+        in shared
     )
     _assert_missing_worker_module_fails(tmp_path)
+
+
+def test_php_worker_ruleset_matches_current_shared_rules(tmp_path):
+    from factoryline.deep_audit_attestation import _build_php_interfile_rules
+
+    worker = Path("deploy/deep-adapters")
+    profile_path = worker / "profiles/semgrep-php-interfile.json"
+    baseline = worker / "rules/semgrep-pattern-limited.yml"
+    output = tmp_path / "php-rules.json"
+    _build_php_interfile_rules(baseline, profile_path, output)
+    assert len(json.loads(output.read_bytes())["rules"]) == 5
 
 
 def test_codeql_worker_builds_compile_only_the_python_suite():
@@ -2825,6 +2998,7 @@ def test_codeql_worker_builds_compile_only_the_python_suite():
     }
     parent, bundle = stages["codeql-bundle"]
     assert parent == "sdk"
+    assert "ENV LANG=C.UTF-8 LC_ALL=C.UTF-8" in stages["sdk"][1]
     assert "ADD --checksum=sha256:" in bundle
     assert (
         'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
@@ -2847,6 +3021,12 @@ def test_codeql_worker_builds_compile_only_the_python_suite():
             assert "resolve queries" in instructions
             assert f"{language}-security-extended.qls" in instructions
             assert 'with_suffix(".qlx").is_file()' in instructions
+    for language in ("java", "csharp", "go"):
+        parent, instructions = stages[f"codeql-{language}-worker"]
+        assert parent == "codeql-bundle"
+        assert "query compile" not in instructions
+        assert f"codeql-check-suite {language} " in instructions
+        assert "USER 1000:1000" in instructions
 
 
 def _osv_package_accounting_fixture(
@@ -4263,6 +4443,99 @@ def test_docker_preflight_missing_local_image_never_pulls(monkeypatch):
     assert [args[0] for args in calls] == ["info", "image"]
 
 
+@pytest.mark.parametrize("failed_command", ["info", "image"])
+def test_docker_preflight_distinguishes_engine_from_image_timeout(
+    monkeypatch, failed_command
+):
+    import factoryline.deep_audit as module
+
+    def control(base, args):
+        if args[0] == failed_command:
+            raise RuntimeAuditError("E_DOCKER_CONTROL", "timed out")
+        return {"exit_code": 0}, b'"linux"'
+
+    monkeypatch.setattr(module, "_docker_control", control)
+    with pytest.raises(RuntimeAuditError, match="E_DOCKER_CONTROL") as caught:
+        module._docker_preflight(["docker"], {"image": "sha256:" + "a" * 64})
+    assert isinstance(caught.value, module._DockerEngineUnavailable) == (
+        failed_command == "info"
+    )
+
+
+@pytest.mark.parametrize("common_endpoint_failure", [True, False])
+def test_unavailable_docker_engine_does_not_repeat_shared_timeout(
+    tmp_path, monkeypatch, common_endpoint_failure
+):
+    import factoryline.deep_audit as module
+
+    lanes = [
+        {"id": "first", "engine": "codeql", "family": "static"},
+        {"id": "second", "engine": "trivy", "family": "configuration"},
+        {
+            "id": "local",
+            "engine": "osv",
+            "family": "dependencies",
+            "runner_binding": {},
+        },
+    ]
+    actions = [{"lane_id": lane["id"], "action_id": lane["id"]} for lane in lanes]
+    monkeypatch.setattr(module, "_action_enrollment", lambda *_: {"actions": actions})
+    events, calls, authorizations = [], [], []
+    monkeypatch.setattr(
+        module, "_event", lambda _, state, name, row, emit: events.append(name)
+    )
+    monkeypatch.setattr(module, "_record_failures", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module, "_action_terminal", lambda result: {"state": result["state"]}
+    )
+
+    def execute(root, directory, state, snapshot, lane, inventory, plan, emit):
+        calls.append(lane["id"])
+        if lane["id"] == "first":
+            error = (
+                module._DockerEngineUnavailable
+                if common_endpoint_failure
+                else RuntimeAuditError
+            )
+            raise error("E_DOCKER_CONTROL", "timed out")
+        return {"lane_id": lane["id"], "state": "OBSERVED", "findings": [], "gaps": []}
+
+    monkeypatch.setattr(module, "_execute_lane", execute)
+    plan = {"lanes": lanes}
+    for _ in range(2):
+        state = {"lanes": [], "gaps": []}
+        module._run_lanes(
+            tmp_path,
+            tmp_path,
+            state,
+            tmp_path,
+            {},
+            plan,
+            None,
+            lambda: authorizations.append(state["active_lane"]),
+        )
+        assert [lane["state"] for lane in state["lanes"]] == [
+            "INCOMPLETE",
+            "INCOMPLETE" if common_endpoint_failure else "OBSERVED",
+            "OBSERVED",
+        ]
+        assert state["lanes"][0]["gaps"] == ["E_DOCKER_CONTROL"]
+        assert state["lanes"][1]["gaps"] == (
+            ["E_DOCKER_CONTROL"] if common_endpoint_failure else []
+        )
+    assert (
+        calls
+        == (
+            ["first", "local"]
+            if common_endpoint_failure
+            else ["first", "second", "local"]
+        )
+        * 2
+    )
+    assert authorizations == ["first", "second", "local"] * 2
+    assert events == ["lane_started", "lane_completed"] * 6
+
+
 def test_missing_nested_source_has_typed_error(tmp_path: Path) -> None:
     from factoryline.deep_audit_io import local_file
 
@@ -4732,6 +5005,22 @@ def test_syft_native_metadata_source_is_exactly_bound(target):
                 report, {"tool_version": "1.33.0"}, {"requirements.txt": "a" * 64}
             )
             == []
+        )
+
+
+def test_syft_native_accounting_rejects_an_unmeasured_manifest():
+    from factoryline.deep_audit_sarif import _native_syft_accounting
+
+    observed = {"artifacts": [{"locations": [{"path": "/src/requirements.txt"}]}]}
+    assert _native_syft_accounting(observed, {"requirements.txt": "a" * 64}) == {
+        "state": "COMPLETE",
+        "required_paths": ["requirements.txt"],
+        "measured_paths": ["requirements.txt"],
+        "missing_paths": [],
+    }
+    with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
+        _native_syft_accounting(
+            observed, {"requirements.txt": "a" * 64, "extra/requirements.txt": "b" * 64}
         )
 
 
@@ -6097,6 +6386,9 @@ def test_codeql_archived_sources_bounds_archive_read(tmp_path, monkeypatch):
         ("python", "python", "Module"),
         ("ruby", "ruby", "AstNode"),
         ("actions", "actions", "YamlDocument"),
+        ("java", "java", "CompilationUnit"),
+        ("csharp", "csharp", "ExtractorError"),
+        ("go", "go", "FactoryGoDiagnostic"),
     ],
 )
 def test_codeql_source_query_maps_supported_languages(
@@ -6120,11 +6412,38 @@ def test_codeql_source_query_rejects_unsupported_language():
 
     profile = _codeql_test_profile(Path("suite.qls"))
     profile["commands"][0]["argv"] = [
-        arg if not arg.startswith("--language=") else "--language=go"
+        arg if not arg.startswith("--language=") else "--language=php"
         for arg in profile["commands"][0]["argv"]
     ]
     with pytest.raises(RuntimeAuditError, match="E_CODEQL_SOURCE"):
         _codeql_source_query(profile)
+
+
+@pytest.mark.parametrize("vendor", [False, True])
+def test_offline_go_replacement_stays_inside_source(tmp_path, monkeypatch, vendor):
+    import json
+
+    from factoryline import runtime_audit_process
+
+    source = tmp_path / "source"
+    module = source / "nested"
+    sibling = source / "dependency"
+    sibling.mkdir(parents=True)
+    module.mkdir()
+    if vendor:
+        (module / "vendor").mkdir()
+        (module / "vendor/modules.txt").write_text("", encoding="utf-8")
+    metadata = {"Replace": [{"New": {"Path": "../dependency"}}]}
+    monkeypatch.setattr(
+        runtime_audit_process.subprocess,
+        "check_output",
+        lambda *_, **__: json.dumps(metadata),
+    )
+    helper = runtime_audit_process._offline_go_module_option
+    assert helper(module, source) == ("-mod=vendor" if vendor else "-mod=readonly")
+    metadata["Replace"][0]["New"]["Path"] = str(tmp_path)
+    with pytest.raises(SystemExit, match="replacement is missing or leaves"):
+        helper(module, source)
 
 
 def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
@@ -6155,7 +6474,7 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     inventory = {
         "files": [{"path": "src/a.js", "language": "javascript", "sha256": source_sha}]
     }
-    lane = {"languages": ["javascript"], "engine": "codeql"}
+    lane = {"languages": ["javascript"], "engine": "codeql", "memory_mib": 2048}
     decoded = json.dumps(
         {
             "#select": {
@@ -7705,6 +8024,104 @@ def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
         )
 
 
+@pytest.fixture
+def codeql_extracted_file_rows():
+    from factoryline.deep_audit_loop import (
+        _CODEQL_EXTRACTED_FILES_COLUMNS,
+        _CODEQL_EXTRACTED_FILES_QUERY,
+    )
+
+    def row(index, path):
+        return [
+            {
+                "id": index,
+                "label": path,
+                "url": {
+                    "uri": f"file:///src/{path}",
+                    "startLine": 0,
+                    "startColumn": 0,
+                    "endLine": 0,
+                    "endColumn": 0,
+                },
+            },
+            "fixture",
+        ]
+
+    paths = ("a.py", "b.py")
+    record = dict(
+        zip(("rule_id", "query_path", "query_sha256"), _CODEQL_EXTRACTED_FILES_QUERY)
+    )
+    decoded = {
+        "#select": {
+            "columns": deepcopy(_CODEQL_EXTRACTED_FILES_COLUMNS),
+            "tuples": [row(index, path) for index, path in enumerate(paths)],
+        }
+    }
+    return record, decoded, {"sources": dict.fromkeys(paths, "a" * 64)}
+
+
+def test_codeql_extracted_files_replay_has_stable_digest_across_ids(
+    codeql_extracted_file_rows,
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    rows = fresh["#select"]["tuples"]
+    rows.reverse()
+    rows[0][0]["id"] = 50
+    rows[1][0]["id"] = 51
+    expected = _codeql_replay_query_digest(record, record, worker, worker, coverage)
+    assert (
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage) == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (("tuples", 0, 0, "id"), 1),
+        (("tuples", 0, 0, "id"), True),
+        (("tuples", 0, 0, "id"), -1),
+        (("tuples", 0, 0, "label"), "other"),
+        (("tuples", 0, 0, "url", "uri"), "file:///src/b.py"),
+        (("tuples", 0, 0, "url", "uri"), "file:///other/a.py"),
+        (("tuples", 0, 0, "url", "startLine"), 1),
+        (("tuples", 0, 1), "other"),
+        (("columns", 0, "name"), "other"),
+    ],
+)
+def test_codeql_extracted_files_replay_rejects_difference(
+    codeql_extracted_file_rows, path, replacement
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    element = fresh["#select"]
+    for key in path[:-1]:
+        element = element[key]
+    element[path[-1]] = replacement
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage)
+
+
+def test_codeql_extracted_files_replay_rejects_unpinned_query_or_inventory(
+    codeql_extracted_file_rows,
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    fresh["#select"]["tuples"][0][0]["id"] = 8
+    other = {**record, "query_sha256": "b" * 64}
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, other, worker, fresh, coverage)
+    coverage["sources"]["c.py"] = "c" * 64
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage)
+
+
 def test_codeql_steps_runner_defaults_to_three_steps_and_rejects_two(
     tmp_path, monkeypatch
 ):
@@ -8004,6 +8421,58 @@ def test_osv_replay_receipt_accepts_source_database_and_all_control_bindings():
         for kind in ("mutation", "negative", "positive")
     ]
     assert expected["source_paths"] == ["requirements.txt"]
+
+
+@pytest.mark.parametrize("changed", [None, "database", "controls", "cleanup"])
+def test_retained_osv_replay_revalidates_before_closing_review_gap(changed):
+    from factoryline.deep_audit import apply_retained_native_completion
+
+    _, facts, request, receipt = _osv_replay_receipt_inputs()
+    lane = request["lane"]
+    replay = {
+        **receipt,
+        "execution": facts,
+        "image": lane["image"],
+        "cleanup_confirmed": True,
+        "runtime_sha256": "a" * 64,
+        "command_sha256": "b" * 64,
+    }
+    artifacts = {
+        lane[field]: request[key]
+        for field, key in (
+            ("coverage", "coverage"),
+            ("report", "report"),
+            ("challenge_report", "challenges"),
+        )
+    }
+    result = {
+        "state": "INCOMPLETE",
+        "gaps": ["OSV_NATIVE_REPLAY_REQUIRED", "OTHER_GAP"],
+    }
+    if changed is not None:
+        replay.update(
+            {
+                "database": {"database_sha256": "0" * 64},
+                "controls": {"controls": []},
+                "cleanup": {"cleanup_confirmed": False},
+            }[changed]
+        )
+    args = (
+        result,
+        {"osv_replay": replay},
+        lane,
+        {"artifacts": artifacts},
+        request["inventory"],
+        request["obligations"],
+        "run-id",
+    )
+    if changed:
+        with pytest.raises(RuntimeAuditError):
+            apply_retained_native_completion(*args)
+        assert result["gaps"] == ["OSV_NATIVE_REPLAY_REQUIRED", "OTHER_GAP"]
+    else:
+        apply_retained_native_completion(*args)
+        assert result == {"state": "INCOMPLETE", "gaps": ["OTHER_GAP"]}
 
 
 @pytest.mark.parametrize(

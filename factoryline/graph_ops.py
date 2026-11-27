@@ -56,8 +56,8 @@ from .operations_control import operations_control_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .deep_audit_loop import deep_audit_lineage
-from .deep_audit_loop import deep_scan_projection, read_junit_report
-from .runtime_coverage import read_runtime_coverage_report
+from .deep_audit_loop import deep_scan_projection
+from .runtime_coverage import read_junit_report, read_runtime_coverage_report
 from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
 from .continuous_controls import continuous_controls_projection, build_control_graph

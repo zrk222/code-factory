@@ -21,6 +21,21 @@ test('readRuleMetadata reads byte-pinned YAML and rejects duplicate rule IDs', (
   assert.equal(readRuleMetadata('rules:\n' + rule + rule), null);
 });
 
+test('insertion and deletion hunks keep a zero-length side empty', () => {
+  const headers = '--- a/source.py\n+++ b/source.py\n';
+  const insert = parseHunks(headers + '@@ -8,0 +9 @@\n+value = 1\n', ['py']);
+  const remove = parseHunks(headers + '@@ -8 +7,0 @@\n-value = 1\n', ['py']);
+  assert.deepEqual(insert['source.py'], { old: [], new: [9], new_path: 'source.py' });
+  assert.deepEqual(remove['source.py'], { old: [8], new: [], new_path: 'source.py' });
+  const finding = (line) => ({ rule: 'python.fixture', path: 'source.py', line });
+  const common = { families: ['xss'], rules: { 'python.fixture': ['xss'] } };
+  const addition = scoreCase({ ...common, hunks: insert, oldFindings: [finding(8)], newFindings: [finding(9)] });
+  const deletion = scoreCase({ ...common, hunks: remove, oldFindings: [finding(8)], newFindings: [finding(7)] });
+  assert.equal(addition.hunk_hit, false);
+  assert.equal(deletion.hunk_hit, true);
+  assert.deepEqual(deletion.fix_side_residual, []);
+});
+
 test('completeFixedCoverage requires unique reports of the exact scanned packets', () => {
   const packet = { path: 'file.js', bytes: 5, sha256: sha256('value') };
   const report = { ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' };

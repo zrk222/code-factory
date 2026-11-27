@@ -1,0 +1,1414 @@
+{
+  "candidate_sha256": "b0f44e6fb579fe5cb9fb44599b0f6a56fd56c61b5a26da01ae2793845b6bd6cc",
+  "lanes": [
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
+        "codeql",
+        "--mode",
+        "interprocedural-full"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "codeql",
+      "family": "static",
+      "id": "codeql",
+      "image": "sha256:11f090a4d4b77c79acb1ec548920c840422f05ef49a8bde4b5051a7068b490a2",
+      "languages": [
+        "python"
+      ],
+      "memory_mib": 3072,
+      "mode": "interprocedural-full",
+      "mutation_config_sha256": {
+        "py/bad-tag-filter": "a62f45be7b4fef20a68f4578c2e5027ec939891611bdebbefa8c2bea0d4c7107",
+        "py/bind-socket-all-network-interfaces": "c5414f5a156cbe2b075130d8e81b158023f024ecb2d607dbf4c086618fa0151b",
+        "py/clear-text-logging-sensitive-data": "5840e2e38a74681f026b770950e99d3a06e0d221b89912e6cab4758f2f146e0a",
+        "py/clear-text-storage-sensitive-data": "3bfd7668049563ead34705fd0ce4f65d86a84814bc7d5a84f96df05e546ac1f0",
+        "py/client-exposed-cookie": "dbe5ae65e4f65d90cdf21728a33efea658223511ce1c3d6327365cc43511f80f",
+        "py/code-injection": "2f61f6eba26376df7753b038762b27a95851fde3256b3f34836b148abf751f03",
+        "py/command-line-injection": "e1510fbd984f8970dd8095e4238d1054052192a9b3596897df7abf9af1af3173",
+        "py/cookie-injection": "925f8021a9ba7b3134c9ed40b631d206cab3032de7426c0a870781af49f18008",
+        "py/csrf-protection-disabled": "06eff375ef5e7be83ec70d9221fec2a6aa4fe539118ac8afa406f469152b1f6f",
+        "py/diagnostics/extraction-warnings": "fbe50fcc3dfbb5a1547287d5f5807dee5910941c926f822a5ef8f8393dbf855f",
+        "py/diagnostics/successfully-extracted-files": "11f7f9e6d440f9728953050c399c68679d973efc079936326f491545442b58fb",
+        "py/flask-debug": "7040d32be3264ce23c6734910f3197a7213f2bd8e195e474425a1769e38a8874",
+        "py/full-ssrf": "f190da5e5c15e4531df84cd3677c54ac1f54716743c9be6665723252cf3ce4ec",
+        "py/http-response-splitting": "ff1d1245ed2b614df3d6b99ef9f4605d0f8be287915df075c025cf1d015af8f6",
+        "py/incomplete-hostname-regexp": "70f738eb3b1c998039eceade7740ede889e97f1b9b358d9bf8cd9a47aeb64d6e",
+        "py/incomplete-url-substring-sanitization": "16581013c3cb111fe9e1fb79f14910e3d90d77c42737c4887d4bbe91061ccc81",
+        "py/insecure-cookie": "57d9427f30311e6d3e0ccd3a59b60c83709cb4e4b653eb66e8f3410b559b7a33",
+        "py/insecure-default-protocol": "b1398d770aba57ecf3784c38d851627a88b5f3f3457b84714b77db9374acef16",
+        "py/insecure-protocol": "b7f442bffc17ec65fd0bb114e4e7ffd7f83331fb47f7d551a4e769818e4c18be",
+        "py/insecure-temporary-file": "0933b6ae43f18f1519657163981c2c01b0a23e1f3032bcbe27a84db7bb1fd2a4",
+        "py/jinja2/autoescape-false": "a750f574a5e6fa0d902619d44bbc1968405f8f18d8c0ad553f78185511548cfe",
+        "py/ldap-injection": "a0cd94b1ebfff1fd24e17222475820bc5a7f00b46d4a8e67e68b660f7e6aedd9",
+        "py/log-injection": "d002ab7a7f61908ca17564ee834bcee4567521f5d72e2932a56f74600619d5f0",
+        "py/nosql-injection": "33f6db1fa5430b44775773a30a90b4e54c041de7015e80e49e32475a0ddc094b",
+        "py/overly-large-range": "db7d32710712b2491ce5c6c54a830eb3a15eb6c3412dbe49cbe321b4f6d7ffff",
+        "py/overly-permissive-file": "3ca18e6fce5c984870d6caed2fd71cd7e3d21bf3ccd21ef34c81843e4d715d55",
+        "py/pam-auth-bypass": "da65031f614d1b5ccbe86b08442b42780de98042db7b687dca1fe878078c2ece",
+        "py/paramiko-missing-host-key-validation": "8fa37c4933ac423fe5b0f93b4081aad506bde52bcd39e14c3e150cd1869eefca",
+        "py/partial-ssrf": "71b0681b92565694ebd6519fe390a4c3b6289988ffcd2a3724124b0e8b181572",
+        "py/path-injection": "3cbd1faed70a859cb15b4495c669e6a92db9edee91b2c04cff93d40ae9cb5151",
+        "py/polynomial-redos": "935ddcd999da9aa5c2d36c35fd67cb9ee4aa1a8e1c55115a7bb7f2fe856ac361",
+        "py/redos": "9043cad4be46edf55420920a66d740b2374dea408eaffb5d41873ce1b2339658",
+        "py/reflective-xss": "463ff6a5154f05b95a7159bb5d8639c640d3b8e7a5be17f1263410e7c0c71a91",
+        "py/regex-injection": "98b70de90f3edbe839b2612cd070d2b36c8d8484cbed0d4eb4c9e29fb52de3ab",
+        "py/request-without-cert-validation": "7ebf624974abe25a7dc37a52ce5d8d3c9427ebf0cda3c46adf67114e69fdc621",
+        "py/samesite-none-cookie": "6af2462c09ae48b82521c7fd1632ffabd0c6005e67c2cd8bfed54bcd06b939fd",
+        "py/shell-command-constructed-from-input": "0ba3f91c5003b73a28b87f8e45a2c59acf79638cfc3408487c27d0d3976e752a",
+        "py/sql-injection": "01d3df767af0e9368fe6f9bf021175633ecb4bff8caa0473065ac8d01d2354a3",
+        "py/stack-trace-exposure": "02392b88d3a1a3dc0c409aa3956ec50c721f568914d85794b7a1ea3c416864dd",
+        "py/summary/lines-of-code": "d2348000bbffbcb18fc2f5cdaa670bf8e3d6d9e09f5271b11f60036c06aae7e2",
+        "py/summary/lines-of-user-code": "a50e951f7eac5b82617e9da1b57f9152e7c17527456af1adcc0a5873ed2bb658",
+        "py/tarslip": "ee6c6761f2b750a141bbaece89c8a39c1b780c1bb098c451e53a254123ee9c8a",
+        "py/template-injection": "c8da9244e5d20149c12ee3239b365221846dd07f2683ebc5fb546a72811fd866",
+        "py/unsafe-deserialization": "5e93be523ff0eace7a3d70ced1398b400fa013cf4badfe29c06f90a6746ebb3f",
+        "py/url-redirection": "ee3d81a22ff440b5a2a52c5dd7617cb15e3ac33db761d4d278aad564cbf57e65",
+        "py/use-of-input": "70a3620965a293e7e15cb1f27b68cf44667e05e6ec8759936bfd090f6c474f53",
+        "py/weak-crypto-key": "ccf4f40b9ef7e595122e3c697d1964e73fbdf3a984486f4c33280bdc8db09607",
+        "py/weak-cryptographic-algorithm": "97176fdbb7ac5e870b69b83d63b5553bebf94860e4c75118ca4df4c0df958f8c",
+        "py/weak-sensitive-data-hashing": "448f10df6aec801ce12e80f5d33bd50376533b29886a4416764a2a46e0d5add4",
+        "py/xml-bomb": "0ed4fa1e0fe6a7f224cb27fc02149640f2dfe771f0328801033a0bfb36ad2cde",
+        "py/xpath-injection": "bec92fb1a2e6dee3b4ebd408572485fc85b33c0bad5353621be24b3b3f218e0e",
+        "py/xxe": "7e63374059308c1e518ca8edf5ec65ea7a3f412367b8be96bc20c69f5369843b"
+      },
+      "native_artifact_roles": [
+        "query_inventory",
+        "sarif_report"
+      ],
+      "report": "native.json",
+      "rule_ids": [
+        "py/bad-tag-filter",
+        "py/bind-socket-all-network-interfaces",
+        "py/clear-text-logging-sensitive-data",
+        "py/clear-text-storage-sensitive-data",
+        "py/client-exposed-cookie",
+        "py/code-injection",
+        "py/command-line-injection",
+        "py/cookie-injection",
+        "py/csrf-protection-disabled",
+        "py/diagnostics/extraction-warnings",
+        "py/diagnostics/successfully-extracted-files",
+        "py/flask-debug",
+        "py/full-ssrf",
+        "py/http-response-splitting",
+        "py/incomplete-hostname-regexp",
+        "py/incomplete-url-substring-sanitization",
+        "py/insecure-cookie",
+        "py/insecure-default-protocol",
+        "py/insecure-protocol",
+        "py/insecure-temporary-file",
+        "py/jinja2/autoescape-false",
+        "py/ldap-injection",
+        "py/log-injection",
+        "py/nosql-injection",
+        "py/overly-large-range",
+        "py/overly-permissive-file",
+        "py/pam-auth-bypass",
+        "py/paramiko-missing-host-key-validation",
+        "py/partial-ssrf",
+        "py/path-injection",
+        "py/polynomial-redos",
+        "py/redos",
+        "py/reflective-xss",
+        "py/regex-injection",
+        "py/request-without-cert-validation",
+        "py/samesite-none-cookie",
+        "py/shell-command-constructed-from-input",
+        "py/sql-injection",
+        "py/stack-trace-exposure",
+        "py/summary/lines-of-code",
+        "py/summary/lines-of-user-code",
+        "py/tarslip",
+        "py/template-injection",
+        "py/unsafe-deserialization",
+        "py/url-redirection",
+        "py/use-of-input",
+        "py/weak-crypto-key",
+        "py/weak-cryptographic-algorithm",
+        "py/weak-sensitive-data-hashing",
+        "py/xml-bomb",
+        "py/xpath-injection",
+        "py/xxe"
+      ],
+      "ruleset_sha256": "1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717",
+      "timeout_seconds": 900,
+      "tool_version": "2.27.1"
+    },
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
+        "osv",
+        "--mode",
+        "offline-pypi-snapshot"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "osv",
+      "family": "dependencies",
+      "id": "osv",
+      "image": "sha256:25e78d2feb76028975872cb16e097a4eaa88f16c31f67a0055a06ced8e151ccc",
+      "languages": [
+        "dependency"
+      ],
+      "memory_mib": 3072,
+      "mode": "offline-pypi-snapshot",
+      "mutation_config_sha256": {
+        "GHSA-9hjg-9r4m-mvj7": "5ce853e5c800b53d9c69d27adffc1e921f0907516000c0623af555a2b53e821b",
+        "GHSA-9wx4-h78v-vm56": "436c7437f4ad06385cd041279a0daf660fbcc020af4380caa1c10ab7d83212fd",
+        "GHSA-gc5v-m9x4-r6x2": "d8bc70e5b97bff3f04885ef2ce2a81cdbe8f27deff434950b701bbad296effb2",
+        "GHSA-j8r2-6x86-q33q": "0ada05de5a8a234f5c95cf648465dc6fcf4674c59311069311aa568995e3d0c7"
+      },
+      "native_artifact_roles": [
+        "advisory_db_identity",
+        "osv_json_report"
+      ],
+      "native_policy": {
+        "advisory_aliases": {
+          "GHSA-9hjg-9r4m-mvj7": [
+            "CVE-2024-47081",
+            "GHSA-9hjg-9r4m-mvj7",
+            "PYSEC-2026-1872"
+          ],
+          "GHSA-9wx4-h78v-vm56": [
+            "CVE-2024-35195",
+            "GHSA-9wx4-h78v-vm56",
+            "PYSEC-2026-1873"
+          ],
+          "GHSA-gc5v-m9x4-r6x2": [
+            "CVE-2026-25645",
+            "GHSA-gc5v-m9x4-r6x2",
+            "PYSEC-2026-2275"
+          ],
+          "GHSA-j8r2-6x86-q33q": [
+            "CVE-2023-32681",
+            "GHSA-j8r2-6x86-q33q",
+            "PYSEC-2023-74"
+          ]
+        },
+        "baseline_config_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+        "database_path": "/opt/factory/osv-db/osv-scanner/PyPI/all.zip",
+        "database_sha256": "a9d670370380fde52d5395debb2e2412639920be5ce9d6aac5349df50d45e9a5"
+      },
+      "report": "native.json",
+      "rule_ids": [
+        "GHSA-9hjg-9r4m-mvj7",
+        "GHSA-9wx4-h78v-vm56",
+        "GHSA-gc5v-m9x4-r6x2",
+        "GHSA-j8r2-6x86-q33q"
+      ],
+      "ruleset_sha256": "a9d670370380fde52d5395debb2e2412639920be5ce9d6aac5349df50d45e9a5",
+      "timeout_seconds": 120,
+      "tool_version": "2.2.0"
+    },
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
+        "syft",
+        "--mode",
+        "native"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "syft",
+      "family": "dependencies",
+      "id": "syft",
+      "image": "sha256:d695f1cc257ce63776abc854c14f247e580ca44c114ff483664729b5d9b7873b",
+      "languages": [
+        "dependency"
+      ],
+      "memory_mib": 512,
+      "mode": "native",
+      "native_artifact_roles": [
+        "sbom_json"
+      ],
+      "report": "native.json",
+      "ruleset_sha256": "cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033",
+      "timeout_seconds": 120,
+      "tool_version": "1.33.0"
+    },
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
+        "gitleaks",
+        "--mode",
+        "secrets-full"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "gitleaks",
+      "family": "secrets",
+      "id": "gitleaks",
+      "image": "sha256:bd4365c801e2e04cb3355db7457c35aff4354162187b8047fa4c99ab86743733",
+      "languages": [
+        "configuration",
+        "data",
+        "dependency",
+        "python"
+      ],
+      "memory_mib": 3072,
+      "mode": "secrets-full",
+      "mutation_config_sha256": {
+        "1password-secret-key": "0738de8c52dbe94f85402f228bf064e7fddbe71037d7709115e46ed5fc987eae",
+        "1password-service-account-token": "608734478293b29ea8e6d16deac3eeca7212b730d42ce3997481eaa26ecda921",
+        "adafruit-api-key": "c04b13b56174a6af8130f89aa1f06255ab875b2ac6e1e874392deb5530816103",
+        "adobe-client-id": "c2b616eafaae854ec34726253cc4005e40101d7536d70df744b0eaa665e8eabe",
+        "adobe-client-secret": "689818161c38e421baa9330178a6ef5779843d73aa114d3d61a2b51461174a81",
+        "age-secret-key": "3cfc4f66ad29226604db9df7adf4ca090d79d23117cf65763c207519d26bb466",
+        "airtable-api-key": "51ae09fd645b6f30f852bf9980d2783883e6353f4a8aa3fd23722c215d37081f",
+        "algolia-api-key": "5ab42758a207baac2c82329f7e350b213ac8e2f4e06274fff39e3650dee8b704",
+        "alibaba-access-key-id": "4c049e452cb1a86135d0698a15ba95038321eac330f081c68c05f2540535a027",
+        "alibaba-secret-key": "d2a047ffdeb5cc4bcc3dc0f46253028e24071090b6ef2cc6eec911e20386c095",
+        "anthropic-admin-api-key": "74aaffab14bf3302dc3ed2abc86a255ab44d2ff33e6d54ad5b2eb5469f9e5133",
+        "anthropic-api-key": "010a4bf9f772073672cdec8276828985ae1518280351adf1695651742f02fba4",
+        "artifactory-api-key": "c415b4740340d35ca7fd6867a3ce064cd7f04026c7d6ab459fb9b39281564b91",
+        "artifactory-reference-token": "d9741bb49f27ca1b34dbae3abbceb059e03b1aab30632bbf1e9e4cccf14bc924",
+        "asana-client-id": "1b9ff1fec74b11a02780fa0e2ba1ac02a0e455cd94c5135b83a69acd6338f95e",
+        "asana-client-secret": "f1cab40a08b2cb1d492ba8384e60da4ec18e87010ec21ff3b89c52e2f76345cb",
+        "atlassian-api-token": "9eb5e5db932f706f1bda0df1f7f9ad780c578266f9e1025715c3ab93d7170a83",
+        "authress-service-client-access-key": "08d158465bff0324787f3ce2bd75b1eee87c1845e7c71cd3b3041d3cb2e31fba",
+        "aws-access-token": "18f2ad5d6152f3a26efdb2ecef245b924cc3f111e5efcab3e89a96a526a49185",
+        "azure-ad-client-secret": "8a21cddc7eb90145b40109424b45444fb2bdbd8f211935511b4b8322d8ea7663",
+        "beamer-api-token": "e9c824421433faa2805f04c00033b823896be7be6bde4b2448d95e2fcfd54201",
+        "bitbucket-client-id": "28b0c3095bccf0ef1b57d537a667545d5ba83235548578347ebda2b88ac2b004",
+        "bitbucket-client-secret": "38c373dd49b62f3a712e8de37548b5409d3bc623c957d96a136533766379d467",
+        "bittrex-access-key": "84ebade229a9143602b8a959d44e5d896b3689db7b91e65728f21a52469aca22",
+        "bittrex-secret-key": "35bb7fb02df4548bd57899d099d42b61740d23dfb884108343b733a04d4a0c25",
+        "cisco-meraki-api-key": "83eb1415085c145b65e1259fdc5525117a04b2de2ca09a61757d48cda5952890",
+        "clickhouse-cloud-api-secret-key": "9a7ba472b2256ef3d3c1327b8eea9210b35f4582d2feec6755b84a90afa92f08",
+        "clojars-api-token": "1a229b675382b0ece26c1acddd80df65fc5aca756e4741c887e566acb6aa5bdf",
+        "cloudflare-api-key": "ff935ec802163fea52a735b53aafe9874b65a02dedb4c863790ed4adfb0db20e",
+        "cloudflare-global-api-key": "cca3085eb3a3449dd3cc2ce0ce00ac959e62ff517d1504bb170cf7631992085e",
+        "cloudflare-origin-ca-key": "3426b41e8ab3b010d9c5f1d89b2274a6511280db06950b001a4081aacda666b3",
+        "codecov-access-token": "b4192e1a0072f7ac2f5a6cb636bd6e3a55201d027b0b88bbc0d234fff2778935",
+        "cohere-api-token": "094c4d0fd93eae6e1cc575a90f7e8761763e70caa4b06829a44fe7a34ae6c263",
+        "coinbase-access-token": "6fbb53adb3bd0e5f16fac995b3a4cd836564229ab1d9d26005fdf826b579e4eb",
+        "confluent-access-token": "9b634b0e8ba82fb856821c1aa6b562117551443710217bab3398937c454e76cc",
+        "confluent-secret-key": "7be7952b8eaa76d5fb3bdd05b9baefd8daf2c079a8d12ac82d938f8757017b52",
+        "contentful-delivery-api-token": "7d412fafb4b628fd876758dc97e5448d3db368b57e53d238b1f63be675da135b",
+        "curl-auth-header": "0eb321db84111559acf9e55173f134b31800f4004062a9d232b235b8fbbcf291",
+        "curl-auth-user": "52e572238516de87d373f9650f5a51dfc04d173dc31cc510346e8133086e2d65",
+        "databricks-api-token": "cb8d486557676af3bea3699c08265e069eb3fd0eba7ddb35bdb4f78933a4de46",
+        "datadog-access-token": "b2a5f19d1d08957b5ab23ec3620a5f41839d234e837a1772b502ecd5f566fe5a",
+        "defined-networking-api-token": "bf5febdef1dababa90da182f3489672f3e7099cdd306ce04168b52ee47fa60d2",
+        "digitalocean-access-token": "c39180018926ab3736ef175e2f19c20bfe46a3ea6f5770699717a844968c169a",
+        "digitalocean-pat": "fce0ffea2f58fc51ff34cd4af27c9a76e348300d1c16709c2b7a502c93246a14",
+        "digitalocean-refresh-token": "41ea837017823fa5ad9972c16cda558a4afe9a8f58df83346a2e861a1dfd9981",
+        "discord-api-token": "fb95e018bd8dbee7c955db5fe93436a92a980f8a4c4b4e82add7dc197d5ea795",
+        "discord-client-id": "a009100978642c21fdb2e293db25da35fcf9d8d3e99c22f7a2378cad98662978",
+        "discord-client-secret": "ee5b856bc1fee009b07e4f39a3455b0c5c6a58aa4be2998d4527f3e1d7663186",
+        "doppler-api-token": "267b80c32ced0a4c7d0fc80a8ed09fac57e2ef0d3a24685ee4dfdf0579c9f2e1",
+        "droneci-access-token": "2b39fe52da78b738ad38c6cf4c08875779107a2deb309b13d0ce1548832f2dd2",
+        "dropbox-api-token": "ada92143c9efbf7dd662a3fe3477adc54f493e18369feb98cc9a6841748dc123",
+        "dropbox-long-lived-api-token": "51ce3431ac3ef11f98402993874594320a932a269037dc6ea59616a124f88629",
+        "dropbox-short-lived-api-token": "ba5d24098c4fef235f7c671d32d228c31a5db46115bbfc4fd5b20471974394f3",
+        "duffel-api-token": "8c3ca33b26e073127be44d46c9bfe39303137f05260913f6900202694fc76553",
+        "dynatrace-api-token": "effb29f5e91fee47f75b2e5543fd97a02db500f40de280b767df55d1c7452848",
+        "easypost-api-token": "239c1d970560c47fdce3416da0e0ecf195516b0b48118bbd19ac1229fd7cf423",
+        "easypost-test-api-token": "5433696f081406cc94665781ab0d67ee26dbc8b42e8c7383542cf6fe8f9a60c6",
+        "etsy-access-token": "3d1f5f68ca87a0f9db8fb4bc2e9c10f8e5f063e8fb6e63c1340c4864b3fe91fa",
+        "facebook-access-token": "7af5d36df56e3556910dfef500443a00d1c20d3a980085f6a0690635226fd54b",
+        "facebook-page-access-token": "375554be04790fcca567875aa1df73d331392b0b79df013707e3274299dc9fa3",
+        "facebook-secret": "78de5707fcc06ad7cbe491a2ae0f5ec22125960dd47c7a1b4c6a8ad572d0b7ae",
+        "fastly-api-token": "aa12b6a8cfc7c7ddfd261f26a8c66956a8a842e41f3792d67963aa238e819766",
+        "finicity-api-token": "a820187b4c9e9e862ecf078f9e765c43757fb39df2f6d2d9df74710a43026ae9",
+        "finicity-client-secret": "ba34576f137a860c4b356ee0652216058a4f9af9e4b4e1b9398d2db42f41db6e",
+        "finnhub-access-token": "2b54511fad725e5b5885b9468715bbd2df6439a3603e62d052d0b8ac02ee7b7b",
+        "flickr-access-token": "892f5688a41117ada193d7942902acb16d97abe2200e9046eb62bba6b9afc238",
+        "flutterwave-encryption-key": "32834fd5b4bb94f6a41b6aaad038e2094f70a054b9119be9cb6b57ffdcfcb729",
+        "flutterwave-public-key": "aac05df3d0dc789abcbd940b22feed8eb89aec8acaec8fb7d017468d06cb94c6",
+        "flutterwave-secret-key": "35a804dfe4bd8626e8c968d40e2cfd2b86bf8bafd675eb41687d9b186032df73",
+        "flyio-access-token": "8d0bf93076b35cde7d53bb069671d58869a00a312211a317ca64a07e3298da5e",
+        "frameio-api-token": "84ccdd03da3e7b1ed48252e2a03a81d4ad63b71e58ef00826192e503f978fd33",
+        "freemius-secret-key": "42413719127f5d125f69847a3c3a6651454238b4af5840c1b7af494478944e6f",
+        "freshbooks-access-token": "50232e883d6e9e51ad66ef8cac0091ae902898cba7890e86c6bca0593c614452",
+        "gcp-api-key": "8fe3188df9539dd44b2bce34e7916358a968879d1ae6b5133e92ef276e0fe80b",
+        "generic-api-key": "4e4edcb184c13e65ad48aaf712c4225a7478178b75aa15349fee9e09986dbd6f",
+        "github-app-token": "0aa83e5992ae066868c6e9316af11eb4656364b7b179ceee320224014f34f910",
+        "github-fine-grained-pat": "bcf9aa1774e11c20077faae3474c10576b96b5dc816e086b1901a7803643a687",
+        "github-oauth": "7c5a3581d595e1048bc8bde009745abcb64e01e75f50bf5aa68a05c033253dad",
+        "github-pat": "96fe855eae5b8d241e23d87586df15ebb591576569423b3c8f5f13e37138e211",
+        "github-refresh-token": "93e4185da3afb79edc618948f1c187019730ceee52003c44dce851bd82a27f3c",
+        "gitlab-cicd-job-token": "2c453b356a81ef5a2f94fb319dcf02c5e11eb0bf92fe7dc8e4e3e96e2cac4f09",
+        "gitlab-deploy-token": "873c17c75ee383907c18faef4681d5ed5a4f77ce26ff034f36dbd9e3fb6fc828",
+        "gitlab-feature-flag-client-token": "6deadf0511b52a4d8eac502518038aad6ee290e747012c1590c96104c22243c8",
+        "gitlab-feed-token": "ee2f1fc8ec79e43bffe21f2fb55791cf668b14933890c0c2a23bf7112b082013",
+        "gitlab-incoming-mail-token": "79cd792e3181141fcff7f325ef731c402ca319766cfbcac4a7420c2f8c12ced4",
+        "gitlab-kubernetes-agent-token": "1fb8a36a3cbee9f00da8c858167d278a602170b733d65b9efba3be5b30856c86",
+        "gitlab-oauth-app-secret": "d7acd36ef3155aac1ff3c766538800d828c1679733e20c70e7dce096d03dfefa",
+        "gitlab-pat": "2d315849972bb680bd77cb824393f384b1d20ce0fa0970ffd56ef4e512229aa7",
+        "gitlab-pat-routable": "872dfc5a9c8b63c8e2a78f33e31b672b8b0c125f24d66d1b659a28de3ebd52a3",
+        "gitlab-ptt": "72edaaf6ec3df46e047fb5fe50994251735c6f8c311af944325db1175cb3971b",
+        "gitlab-rrt": "34e969e0828c26c7f574ffd4b345d2f92e20817947e78ab1a3c7a36d95a250a5",
+        "gitlab-runner-authentication-token": "31f3c7868f7533d8178965b79e53a79c50097f98a4ba41c1db7b5ab597c5cc57",
+        "gitlab-runner-authentication-token-routable": "ee8a84495e3d96223a4721ae86e0bc9a294b542e66f485bbb4fa3f91b88a70e5",
+        "gitlab-scim-token": "6af99efbd6fa9706fd6b791a59644cc07efa57043bb6b7f8f71ab1c5a24bae4b",
+        "gitlab-session-cookie": "7538c0d4dd08dec27a11effb14ef949703a98e53f363d57d08bbb3e0b3450afc",
+        "gitter-access-token": "e452f13e67d6cafbfd3eb0903b896c7c4c0075bb3aa475f9377cdb2d7aa82ad0",
+        "gocardless-api-token": "c6ec57505e45826769bdd4b252aafc174d265c8b1fdb2781211dba2a602e8485",
+        "grafana-api-key": "3928ae707ae3e1ca979106f06692b1d53c5a1cc6076407715727a73c9b103a87",
+        "grafana-cloud-api-token": "6543bf2d4318199a58fe0519c412910f67a0281c60d031e1f041a6c137fbaf8a",
+        "grafana-service-account-token": "59750d6b248804905e5344d42a22b08c0e0cd0fcce4851f4f4b5426a37409985",
+        "harness-api-key": "b1c17f031586d9248a5b98a649dc419b85b511667221a18e7afa81dce6e421a0",
+        "hashicorp-tf-api-token": "81f1adc3a0686c5f031281e6cba35db537aa677db7a92bad49403046c18000b1",
+        "hashicorp-tf-password": "ebbbc8504ebe4327704570a8db467bcab418fe13e37a7b9eb805dbd77754c1ba",
+        "heroku-api-key": "141e57206c5e5c619204d1112da13b9ecb219b67de4b9a44860964bb253148c1",
+        "heroku-api-key-v2": "4e0a06e21f1727ee01f7465a12a079963ed60352d84048b5d209e4abe64057db",
+        "hubspot-api-key": "b0b9695236b83f4a253f28f45c5e34ee27487cdf39516cf0a9a888478e96b3f7",
+        "huggingface-access-token": "80838b0f289ce5526341c3670c90ddc49ebf91cf07fca28eefad7320ad7fdc7c",
+        "huggingface-organization-api-token": "8fbc10c7dfc9fa8273ca34eb7f7942f3fcd9bf7490224a5c4c2e1cec36e2a723",
+        "infracost-api-token": "31b87969b921ffdf2956b05ffb8b9963807bb1e155bb53d687d2c509a3f80840",
+        "intercom-api-key": "dd52ba2cf99740ca8f4d29fe7a09785cf23524eed6899bd6e0e7d3ec72d3a65e",
+        "intra42-client-secret": "d625b5f9726550ba4642dfc7a5e2107bce4b0d45907d0cad007b168133fa9a55",
+        "jfrog-api-key": "a9f5730e0db6283728758a843360416cac5057ddf0e211a24a206ab260c7c71b",
+        "jfrog-identity-token": "3a8109d87027cf288f5e382c42fc295215c10bd276157fde262454b6c8858527",
+        "jwt": "1620139908251caeb24dd5e422d243d348ecac8eb575a215e5ad3279f801f90d",
+        "jwt-base64": "272f046a84caaca2cc79dc92e4c5b19aad0228013b3bb9b5c7ca3b6d65d267ae",
+        "kraken-access-token": "a30ed80ed0a1e7609f760c2b436ec9f56d6a77b97ae9f2faae778ed0b6248c2b",
+        "kubernetes-secret-yaml": "4c8ecb3496b520f8264550342a7e60e744ddb26d58c7fee1f1f104973259ac7a",
+        "kucoin-access-token": "e52a3a34235943b907ef3898b1ae8df9015b0bf3c429ee59155812f22bdb1674",
+        "kucoin-secret-key": "440c8b839cc82e6e16c76405d57f392b640a1de6271617f32ea9cd762f356e2b",
+        "launchdarkly-access-token": "5e975426490256528ab09db86480d1eda7404736b6f78d7a0389c9fc7979e137",
+        "linear-api-key": "a39db69a40e03c7e18b371ec63779062b193c4cd3bcfe6adba21576aad36ad81",
+        "linear-client-secret": "eec32595f4e94145bda9021153a722c3f7add6e74ebb39f0de49d395651e08c9",
+        "linkedin-client-id": "e837dd13cbeb5bc275712c7026073f48b6352723f9ac1c358d876d1d247363b2",
+        "linkedin-client-secret": "05ff3a4cd7b22065243ba6e0440dc3859ac0c55500ed80d1c4c1ac8e18cc9fe4",
+        "lob-api-key": "364725215d5b28775b35fd972269215b369fdda6ae809ccb65f36e7c244ae8ae",
+        "lob-pub-api-key": "650521ca72ee02e30c87b10add809aff92bd7919df0cbf050e7c995b8abf64c0",
+        "mailchimp-api-key": "00697024597fd8617b4b9e57cc55fead2dbdd759c259bf8cdecdefa90e12295c",
+        "mailgun-private-api-token": "04cb31278d2b47082b9095592652068622db3967be4c45a31349eadefc390bc9",
+        "mailgun-pub-key": "bc34e6185c3158b023aed99a18e6835b88d6c4d84aaefede9c8f8ee6060882cd",
+        "mailgun-signing-key": "0f24ef18ae686cfa8499d61d33b4fb7d5ec7bf1fae2b45dfcb03086efcd873e4",
+        "mapbox-api-token": "41cff85ce862cdbef378408484f45a39aa6d66cc1cb8997f0fd11476ab3da400",
+        "mattermost-access-token": "018fc28b5fee573312d60c6abc49944c3d6063e7938bc3e24ab2e67f6f9afd50",
+        "maxmind-license-key": "be0bc0dc7163935bb729874c55b57f88d17ccd63ab8227dbe7e28d8c37ba0fc2",
+        "messagebird-api-token": "05c0d51dfc7aa9403903980221e91b7e05c3004c513c1197cc2efa5b31e05a35",
+        "messagebird-client-id": "6df03112d7c5ffc887050db83c6726eae78b0a7a005c8bd14342eacef1ca2487",
+        "microsoft-teams-webhook": "75804000c6f97d8718e83c1f3cff69750258d2251602d8f2c7a8ebd14841f4d0",
+        "netlify-access-token": "32f0f8441dc0a7dd0a3fbdaaf2998ffe07e1442d38cc1010ece7290eaabdf022",
+        "new-relic-browser-api-token": "7660096a44a90f2e3018e5611d3dbe57a69108edf37b0de4d8a7e13c35b6b517",
+        "new-relic-insert-key": "d3082c05017b03a9441bdf2cdc9d301222ab337256ac20fb7f0763e6d2b06185",
+        "new-relic-user-api-id": "b0b42c7b40a28060b8a9821908cce9d117c8a3b620c43b5d6f2763ca86efc4a5",
+        "new-relic-user-api-key": "631eefbdd05388fcb9e974e70bed95c52ab1a4b3012a4a51a4555efa6687d6b8",
+        "notion-api-token": "2cce1a77df4013460c43c7075dceffd51af65e5f130396bb62358e889960c7f3",
+        "npm-access-token": "298127173fbe3676b2d86c860d8a0ecd44c36afc797b58645f38d5bdf61a9854",
+        "nuget-config-password": "b2c3bdd48d5bf0097ad380a15a75c2c1047954aae92fc7fb33ee68732ead74f7",
+        "nytimes-access-token": "f8bb8e7c0b15115e9fba6ff43ea09b15f3e93c6285cddf07565afcd725abf8c3",
+        "octopus-deploy-api-key": "b27eedfb2738974da04fc16f3c2b57369638530e4e5a35d06c8c9f64f86321d9",
+        "okta-access-token": "292eb40335aebce31c41f0062bff8933cfbca353fd40eb9b75e7da4a97f5969c",
+        "openai-api-key": "2f9e09108bcc7717e416418ca11bec74829d8d8c8c5d5f8d287c60d455e674ef",
+        "openshift-user-token": "cbcb0d4c88078873119e0aa8304e590c2748756c67e56bafc5e4034b0c900a4d",
+        "perplexity-api-key": "caf35997596481ea10661d5a1bd201c58c8bfde81309026cd90704d91c0ec68a",
+        "pkcs12-file": "fe3583c81ae23f2db3f83b3515cf6e55a5768777db95e24dd932dbe2604f9297",
+        "plaid-api-token": "aef083ed9f3ab7717ccd76862498d7ee39b40b0c1c9d06d47d471d437bd2e703",
+        "plaid-client-id": "bbd27be5b6ec074679a886ffa5ec3f3de5b244d214d8764b705c7d95cbf7a16e",
+        "plaid-secret-key": "70c13661e1119dcac04102c16093bc04a33c6593d60dee205e471701f2d2c2af",
+        "planetscale-api-token": "5692692fade4f2e95032e8cd1c2bcba67739b192519fc89b5ed0e7a868239911",
+        "planetscale-oauth-token": "a48ea3ff7ca71a5e2f64b8b242ab8c23893d08b037419d6726c9f3f9ba48062a",
+        "planetscale-password": "e31cc4c8a29959d99179a0b1d6a9b64ac8340b4321469c2de818bb774c84a097",
+        "postman-api-token": "6821f9b4bc4bd1e1d3b0dbf9289ee339b36cb55c0e329ab64a6834bd5deac718",
+        "prefect-api-token": "4d68dff31ff919168e115fa78a47aa2cb74215f4b9be1a21061fd1ad0d7be52f",
+        "private-key": "d694a0c0e7d60bedbf51789081d3952ae5960d0187868a0fd4666b3ff725b3e3",
+        "privateai-api-token": "383b01d07d0f3bf48f91d70b63d11e2246c088db261421677db02da629b08e63",
+        "pulumi-api-token": "75aa4859331defbdd05c6cb00f816f69ac3fc81da6a708284f35a609e0d2d8a6",
+        "pypi-upload-token": "19930718b50741ccb0891fefffd916f7b64049fdd253e9b3b587b9f2bdf414a8",
+        "rapidapi-access-token": "4d85c2f5e290c9ba067958f2d90ded865dd24e13543f8aba6fcfd91da80a9543",
+        "readme-api-token": "f1ca2f52132e6a7dd2441209f5ab74ea269971aa2d2fbf5be2258dfb59c89cd5",
+        "rubygems-api-token": "11bbcef3e344ed8432667c41db09809d14916232962a5fb2209bd03c223d42dd",
+        "scalingo-api-token": "92c4bb3358001495d44903575ccc8954bcc94efc33293f0257c094aa98ecab4d",
+        "sendbird-access-id": "a2588a8d2a3e1071515634c1b7a3dfd782454420905f9eec3815cdcfb7a33a35",
+        "sendbird-access-token": "d9bf8dbb82e23bbdb98e5d446d8609ca4e8177b51aded4ed32a2aea96dfbe049",
+        "sendgrid-api-token": "da088b3c5cd6e34172201e7a4bb4e3356a5c1c1e5a86d3042a4c53a0822ff9b4",
+        "sendinblue-api-token": "82f283045b92e65c88c9dd4adaee4b92441de49af1c79f27e55cd74f2455ae19",
+        "sentry-access-token": "ea1610281a27d0aa8e4c939e5c41ae4f03c9fe9684658a7e0324876db6647252",
+        "sentry-org-token": "62e2373d1b2bf667aa5f90c72fb0a72578d2bf56c8d73e40e3fc13219cba664a",
+        "sentry-user-token": "df291228b51e3e52d3e3dd8ed305015e5f17057d334de042431a6a0a5780649c",
+        "settlemint-application-access-token": "cabe7e11deff1c1ab81da7d6888f9c8c1781de9bfadeaef9a7b132e025027332",
+        "settlemint-personal-access-token": "e5cb35ccefcfda8633a353feefd2ac8e2465831e05152f5080ec3ccb169c6bb3",
+        "settlemint-service-access-token": "f55a24b7d02efab85cba74bcb7f7ee2cab5956c4b1d200f30735e35672e39aeb",
+        "shippo-api-token": "edde721c05a1db2824d68a6e29f38a761f8f3f206ce22be398563786be623e84",
+        "shopify-access-token": "1d1d9d48fb5e36e821f463d4bed1be3b7efe6501d5dc4a46f9aa32f680816e52",
+        "shopify-custom-access-token": "22b8eaab08eb14662839bd8b12ce2fcf346a93a642f0c60721200287260e718d",
+        "shopify-private-app-access-token": "8506dad35b1a30c7bfca12a977100a141f3831b4738f0f62dbbb98eaa73c030e",
+        "shopify-shared-secret": "df3426d1e599eb1b58d8539f780a4ea47c00afd4890f8d0ac4806cc4e4c1681f",
+        "sidekiq-secret": "0c69efdbed65c9b6afc523b738b7e61467067a27251c52566bd302e4c3162297",
+        "sidekiq-sensitive-url": "9744e6794e40974151009be29ed993db30ce916ffc2fb9933d715356c9a972c7",
+        "slack-app-token": "9b2a76358121339f374a7f54456335fc258b3b8936a25c2f049e9f00baef210c",
+        "slack-bot-token": "63b3c27a9848f5c872d7653469e19f9b72973bead6734b9f7795ce668008d0b6",
+        "slack-config-access-token": "a73005f3d0ab6af61ad4c26213ce30b8c89dc0e6d3953d8cc75c8325291d499c",
+        "slack-config-refresh-token": "997ea7bc8d5eb47116ec1afc6a7b1a3d107c805df5f78855f97236edf67367ce",
+        "slack-legacy-bot-token": "3770412c0a4088c28607bee1b48efbc510daf52fb6f9f71ecfd77a46ec609648",
+        "slack-legacy-token": "5904c881634919eeda9618193c7f24c393eedc81a27488b394684c59129ad38c",
+        "slack-legacy-workspace-token": "3245a5d4bb7e023725224891aa1c870d70adb9d5fb185226aaedb5cd5f1910b3",
+        "slack-user-token": "0822ec70d363eccaad36021ce1225c7b360e6234b34f5c1ebeaef86257c99d03",
+        "slack-webhook-url": "a3ded3b141c6cdc93b1084141093d120ea4af2a097ab87551526d0a129ab41d4",
+        "snyk-api-token": "e6d2e916660ba1e776c2d91fb5286b45b6a6f0d642810bd7a875cb8f4e53389a",
+        "sonar-api-token": "6b6d167a4315b4c56a79d9c04d88ba03c8c9178e23ccaf998e9889996514b15a",
+        "sourcegraph-access-token": "3bf2781640468ce33ab838fdd11f6405eed78659ec388c63ae1d0d11419f6669",
+        "square-access-token": "e007641d2dd25ee399eb91519712808bb2471fa121ee170be85810a5769b2fd4",
+        "squarespace-access-token": "380fd1c986a8d702e2d1b3e3d6976df71db075d59415d5d2156ce66744136144",
+        "stripe-access-token": "af0208eb0229175fbab5b4ffff9351e2b88f83ed75ea3c008771d1ad714e8c44",
+        "sumologic-access-id": "aac3855cb7b18a089ed87c826b32a69091ff4b645fcb6106566c0961fe114bde",
+        "sumologic-access-token": "64822154fb10cb1bb2c13587c1b2fb287c84b5d2549589067c12213a1a7cf18f",
+        "telegram-bot-api-token": "81b54e1f7af7342c4c6ed7735833758fe8c30ec275a044d994724ad9abd68990",
+        "travisci-access-token": "f27208efe51e7b29afe2aea266e318482514634e006135a116979451938feac0",
+        "twilio-api-key": "776e628c7f5fcfbdac37b3d6dbb08fb6a389eed8a1a422c24c44d203ed7d0dc7",
+        "twitch-api-token": "94ac20225349688ad96f2c576c4913410af26c1d7234975e34443144fe535b64",
+        "twitter-access-secret": "f2ba700fe2e39d06f5621c120cb9a7491a0f8a9918d88df614845a4ed2b0a0ca",
+        "twitter-access-token": "20f7aafc8176787c8f5f1cf982173dc43cd14fcb03f3b0ad544860d744de33da",
+        "twitter-api-key": "d6b7665ee861b623cc974c0a39aed0f96707a11f539f2e7aaa301217a319d620",
+        "twitter-api-secret": "22118f26bb8752f83be48c34e87de57caf5df583efa4593979abdd80d686740b",
+        "twitter-bearer-token": "200ab5355702c917ac8eb310100895de72cce5628c473f7c9b04cf0f72a3fa69",
+        "typeform-api-token": "c020fa022383f74dfacbb6e9af3710d875e295e8fdc3bbc0dbe3473373b8a5a4",
+        "vault-batch-token": "df1a432124b57b1b3e62c4959b7b298cdf81c1c7b85113258029ccd37d06805c",
+        "vault-service-token": "8ea755233e78090f6792e03261246d526692b94b923df7f31cfee6c2ce16b640",
+        "yandex-access-token": "8bb529c129330876b9fb74c348f251d6bdc4a051dd088454ed8edce73bda5ec4",
+        "yandex-api-key": "da2a361e9f9aea958057e2b84d601fb018913bd04a8fc7481b5a49fa902cadb1",
+        "yandex-aws-access-token": "d2bfc584758e38ad704f1953c4c795fdb94a134dbf1ca04fc7cca895fddde74c",
+        "zendesk-secret-key": "86e1a2f61a8fdc743cbd0fe62e53b67256ecb7bcd098de362ca23af24244150c"
+      },
+      "native_artifact_roles": [
+        "gitleaks_rule_ledger",
+        "sarif_report"
+      ],
+      "report": "native.json",
+      "rule_ids": [
+        "1password-secret-key",
+        "1password-service-account-token",
+        "adafruit-api-key",
+        "adobe-client-id",
+        "adobe-client-secret",
+        "age-secret-key",
+        "airtable-api-key",
+        "algolia-api-key",
+        "alibaba-access-key-id",
+        "alibaba-secret-key",
+        "anthropic-admin-api-key",
+        "anthropic-api-key",
+        "artifactory-api-key",
+        "artifactory-reference-token",
+        "asana-client-id",
+        "asana-client-secret",
+        "atlassian-api-token",
+        "authress-service-client-access-key",
+        "aws-access-token",
+        "azure-ad-client-secret",
+        "beamer-api-token",
+        "bitbucket-client-id",
+        "bitbucket-client-secret",
+        "bittrex-access-key",
+        "bittrex-secret-key",
+        "cisco-meraki-api-key",
+        "clickhouse-cloud-api-secret-key",
+        "clojars-api-token",
+        "cloudflare-api-key",
+        "cloudflare-global-api-key",
+        "cloudflare-origin-ca-key",
+        "codecov-access-token",
+        "cohere-api-token",
+        "coinbase-access-token",
+        "confluent-access-token",
+        "confluent-secret-key",
+        "contentful-delivery-api-token",
+        "curl-auth-header",
+        "curl-auth-user",
+        "databricks-api-token",
+        "datadog-access-token",
+        "defined-networking-api-token",
+        "digitalocean-access-token",
+        "digitalocean-pat",
+        "digitalocean-refresh-token",
+        "discord-api-token",
+        "discord-client-id",
+        "discord-client-secret",
+        "doppler-api-token",
+        "droneci-access-token",
+        "dropbox-api-token",
+        "dropbox-long-lived-api-token",
+        "dropbox-short-lived-api-token",
+        "duffel-api-token",
+        "dynatrace-api-token",
+        "easypost-api-token",
+        "easypost-test-api-token",
+        "etsy-access-token",
+        "facebook-access-token",
+        "facebook-page-access-token",
+        "facebook-secret",
+        "fastly-api-token",
+        "finicity-api-token",
+        "finicity-client-secret",
+        "finnhub-access-token",
+        "flickr-access-token",
+        "flutterwave-encryption-key",
+        "flutterwave-public-key",
+        "flutterwave-secret-key",
+        "flyio-access-token",
+        "frameio-api-token",
+        "freemius-secret-key",
+        "freshbooks-access-token",
+        "gcp-api-key",
+        "generic-api-key",
+        "github-app-token",
+        "github-fine-grained-pat",
+        "github-oauth",
+        "github-pat",
+        "github-refresh-token",
+        "gitlab-cicd-job-token",
+        "gitlab-deploy-token",
+        "gitlab-feature-flag-client-token",
+        "gitlab-feed-token",
+        "gitlab-incoming-mail-token",
+        "gitlab-kubernetes-agent-token",
+        "gitlab-oauth-app-secret",
+        "gitlab-pat",
+        "gitlab-pat-routable",
+        "gitlab-ptt",
+        "gitlab-rrt",
+        "gitlab-runner-authentication-token",
+        "gitlab-runner-authentication-token-routable",
+        "gitlab-scim-token",
+        "gitlab-session-cookie",
+        "gitter-access-token",
+        "gocardless-api-token",
+        "grafana-api-key",
+        "grafana-cloud-api-token",
+        "grafana-service-account-token",
+        "harness-api-key",
+        "hashicorp-tf-api-token",
+        "hashicorp-tf-password",
+        "heroku-api-key",
+        "heroku-api-key-v2",
+        "hubspot-api-key",
+        "huggingface-access-token",
+        "huggingface-organization-api-token",
+        "infracost-api-token",
+        "intercom-api-key",
+        "intra42-client-secret",
+        "jfrog-api-key",
+        "jfrog-identity-token",
+        "jwt",
+        "jwt-base64",
+        "kraken-access-token",
+        "kubernetes-secret-yaml",
+        "kucoin-access-token",
+        "kucoin-secret-key",
+        "launchdarkly-access-token",
+        "linear-api-key",
+        "linear-client-secret",
+        "linkedin-client-id",
+        "linkedin-client-secret",
+        "lob-api-key",
+        "lob-pub-api-key",
+        "mailchimp-api-key",
+        "mailgun-private-api-token",
+        "mailgun-pub-key",
+        "mailgun-signing-key",
+        "mapbox-api-token",
+        "mattermost-access-token",
+        "maxmind-license-key",
+        "messagebird-api-token",
+        "messagebird-client-id",
+        "microsoft-teams-webhook",
+        "netlify-access-token",
+        "new-relic-browser-api-token",
+        "new-relic-insert-key",
+        "new-relic-user-api-id",
+        "new-relic-user-api-key",
+        "notion-api-token",
+        "npm-access-token",
+        "nuget-config-password",
+        "nytimes-access-token",
+        "octopus-deploy-api-key",
+        "okta-access-token",
+        "openai-api-key",
+        "openshift-user-token",
+        "perplexity-api-key",
+        "pkcs12-file",
+        "plaid-api-token",
+        "plaid-client-id",
+        "plaid-secret-key",
+        "planetscale-api-token",
+        "planetscale-oauth-token",
+        "planetscale-password",
+        "postman-api-token",
+        "prefect-api-token",
+        "private-key",
+        "privateai-api-token",
+        "pulumi-api-token",
+        "pypi-upload-token",
+        "rapidapi-access-token",
+        "readme-api-token",
+        "rubygems-api-token",
+        "scalingo-api-token",
+        "sendbird-access-id",
+        "sendbird-access-token",
+        "sendgrid-api-token",
+        "sendinblue-api-token",
+        "sentry-access-token",
+        "sentry-org-token",
+        "sentry-user-token",
+        "settlemint-application-access-token",
+        "settlemint-personal-access-token",
+        "settlemint-service-access-token",
+        "shippo-api-token",
+        "shopify-access-token",
+        "shopify-custom-access-token",
+        "shopify-private-app-access-token",
+        "shopify-shared-secret",
+        "sidekiq-secret",
+        "sidekiq-sensitive-url",
+        "slack-app-token",
+        "slack-bot-token",
+        "slack-config-access-token",
+        "slack-config-refresh-token",
+        "slack-legacy-bot-token",
+        "slack-legacy-token",
+        "slack-legacy-workspace-token",
+        "slack-user-token",
+        "slack-webhook-url",
+        "snyk-api-token",
+        "sonar-api-token",
+        "sourcegraph-access-token",
+        "square-access-token",
+        "squarespace-access-token",
+        "stripe-access-token",
+        "sumologic-access-id",
+        "sumologic-access-token",
+        "telegram-bot-api-token",
+        "travisci-access-token",
+        "twilio-api-key",
+        "twitch-api-token",
+        "twitter-access-secret",
+        "twitter-access-token",
+        "twitter-api-key",
+        "twitter-api-secret",
+        "twitter-bearer-token",
+        "typeform-api-token",
+        "vault-batch-token",
+        "vault-service-token",
+        "yandex-access-token",
+        "yandex-api-key",
+        "yandex-aws-access-token",
+        "zendesk-secret-key"
+      ],
+      "ruleset_sha256": "45f8a4285fbd567e1f7181cb39690312efd2f02bf6a97ce46af74091d8a385d8",
+      "timeout_seconds": 120,
+      "tool_version": "8.28.0"
+    },
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
+        "trivy",
+        "--mode",
+        "config-native"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "trivy",
+      "family": "configuration",
+      "id": "trivy",
+      "image": "sha256:3c53221e425a0cdf275cc277c72fb67764febd0c413584d82ac1b374538c3818",
+      "languages": [
+        "configuration"
+      ],
+      "memory_mib": 3072,
+      "mode": "config-native",
+      "mutation_config_sha256": {
+        "DS001": "81889c99687a8eb997bffac1751c07b774d2c3b3967388576c8c3ea0c1c5cdd5",
+        "DS002": "a72aa9a9cd11f614b1fa42ee9ee71d6d2dcbcf8d85b4103fce1a897f2b25ec5d",
+        "DS004": "ba7455a5942c8dfc81e869a2235b9beea798d621e46c7c185c90f6f7fa2d11b1",
+        "DS005": "94988ab3750fb27a5de3bad3d07651f016a26c05b6085800cedaa4c4d0b76939",
+        "DS006": "bff71e5fc7a9a09fb000a8650dc0ebd9aeb1aabdee2c1bb7e4f88324f2855264",
+        "DS007": "0cbd125f49eb025429823c31b8409617ce11c71c8a897d280cf476f9da738bf0",
+        "DS008": "0289fe3f2d8cb0c3d22562991284e4e1d07a676c3e3b8256f6608534c60fd4fc",
+        "DS009": "746edfef9e79d5f3887261eabd51800bfa37d9be8f7c014cfd3e12588b793650",
+        "DS010": "582d454da3aadd6aa11d4166b51f74fa8da00215d400addd9261a017d57abdcc",
+        "DS011": "8b7314d0f303784cd5916a5c614e4e97617ee0ff9ca936a7d6b5910712c13840",
+        "DS012": "c0286e7857a1eb3ef4569a3633851cb00e15e6b2ae223a39afec30ba1d499645",
+        "DS013": "cbd6f185a71638bd27a26c99a0161208e44ae4f95ff9e21df2c8e0fb779a9494",
+        "DS014": "f0f1e59afbf79e271621b1db7c94dd9c024e0be06721576f163dc7ca806f5033",
+        "DS015": "b1b249fcbac10179f24bb7e30da132f1d2e2a10e859c080f222c741396b29a6e",
+        "DS016": "af6196034b999177ffefb90a65a7b070068360d82f9b15a782d21109c9cce62e",
+        "DS017": "1dea8a8ac4dbe69eab90355efbe8174e2109ee54a90be918c6a5f1d745a9f176",
+        "DS019": "33405dd8b8d6ddee28835f2be6076d1f726aa902a0032f9360bcf1c83baef8a5",
+        "DS020": "714c9a3d086e0afd5ad9562e4ea3714dc5e10338007496b014970513b15cac81",
+        "DS021": "5e82c45da6fed0f5b69554627c8a9b534975a229a9f8a623b0690cff77b20451",
+        "DS022": "2cfd9754f1546a129867390ad981a93558f71d11e003c0e9676ffdf5df6c07e4",
+        "DS023": "d1f972ab05b0778fc0af7f82c1a36f7a489e89bf3ee90d2dd2d6df530ce90095",
+        "DS025": "98530387c2ce32ed23c45e5c86b4a567a1faad7f3c7d1ae4ba30418245cca687",
+        "DS026": "47220df770a77c2aa537715f84d91e81a7e524d28078693fa9de038ffbe9b2b4",
+        "DS027": "52f785e79bc1bb3e60f7124313b061765da6149f7aa3814182b31d0ab36ac9c5",
+        "DS029": "d46e44c514c9d8c18e1b53e1461896082b14fa58c1d05c928878881ab24cfb55",
+        "DS030": "4169d2326498206ec8de1567352153122e8b055eb4fd01e74775adacbbf4383e",
+        "DS031": "3a1926ca07ea203c08682f7a0a2b87468a7dc7a690a33b12e01e8d54aedd5b11"
+      },
+      "native_artifact_roles": [
+        "policy_inventory",
+        "sarif_report"
+      ],
+      "native_policy": {
+        "baseline_ignore_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+        "config_sha256": "adccc045c4ad7567d730ed8091da640464b9ec72a4121dbca21b8a9a11f5fdc9"
+      },
+      "report": "native.json",
+      "rule_ids": [
+        "DS001",
+        "DS002",
+        "DS004",
+        "DS005",
+        "DS006",
+        "DS007",
+        "DS008",
+        "DS009",
+        "DS010",
+        "DS011",
+        "DS012",
+        "DS013",
+        "DS014",
+        "DS015",
+        "DS016",
+        "DS017",
+        "DS019",
+        "DS020",
+        "DS021",
+        "DS022",
+        "DS023",
+        "DS025",
+        "DS026",
+        "DS027",
+        "DS029",
+        "DS030",
+        "DS031"
+      ],
+      "ruleset_sha256": "52e6fb1ff6a8232d6ec480ca9dd0b8db6728e252d092cb7712df7103ba09502e",
+      "timeout_seconds": 120,
+      "tool_version": "0.68.1"
+    },
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
+        "runtime",
+        "--mode",
+        "coverage.py+pytest"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "runtime",
+      "family": "runtime",
+      "id": "runtime",
+      "image": "sha256:c3ea323fd09100d81822c0e812d3d7db52b2132d464273e15d8033533dd3ad2d",
+      "languages": [
+        "python"
+      ],
+      "memory_mib": 3072,
+      "mode": "coverage.py+pytest",
+      "mutation_config_sha256": {
+        "RUNTIME_TEST_FAILURE": "bd2ef52060b0f73da33fedaf875665c37d4e5ca9d0166b96e45c10999a1ccbe2"
+      },
+      "native_artifact_roles": [
+        "coverage_json",
+        "junit_xml"
+      ],
+      "report": "native.json",
+      "rule_ids": [
+        "RUNTIME_TEST_FAILURE"
+      ],
+      "ruleset_sha256": "5e26db266b50fa6f1d434619736ebf3187a227926c7855bab52ca4d7f6210072",
+      "timeout_seconds": 120,
+      "tool_version": "coverage.py 7.16.1; pytest 9.1.1"
+    },
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
+        "atheris",
+        "--mode",
+        "native-fuzzer-owned-harness"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "atheris",
+      "family": "fuzz",
+      "id": "atheris",
+      "image": "sha256:201ebda349ff6736cd4a2889ba99c56011766d8f1937a2bb709f60a2a0a31c8c",
+      "languages": [
+        "python"
+      ],
+      "memory_mib": 3072,
+      "mode": "native-fuzzer-owned-harness",
+      "mutation_config_sha256": {
+        "FUZZ_EXCEPTION": "4cc09838b075c03ca0e2ad9ae9688d34f00b2ecf39e38679b8bd7eb841a0a1bd"
+      },
+      "native_artifact_roles": [
+        "corpus_manifest",
+        "fuzz_result"
+      ],
+      "report": "native.json",
+      "rule_ids": [
+        "FUZZ_EXCEPTION"
+      ],
+      "ruleset_sha256": "c212232aac87ad059b0c3d8065332c44df6a19ae79666156ae12ed196ca65668",
+      "timeout_seconds": 120,
+      "tool_version": "3.0.0"
+    }
+  ],
+  "obligations": [
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "77812cdf5c642985122972b95e97a0754881a7b70b2ea296a22d411379bf1a7f",
+          "fixture_manifest": {
+            "controls/codeql_positive/route.py": "1ca515092ac8ee9d9e28eabe91adff7cd7a089c43b3dd7b3d239d93638dc7ea1",
+            "controls/codeql_positive/service.py": "b3e3a7621b2339cd41b1fa5dfad86c1e536d5467885aae960e63675934d7e456"
+          },
+          "fixture_manifest_sha256": "3725487d04199eab8f1e172d104dc8fb9288a4079823b8929ed86a3eb2deb94d",
+          "fixture_path": "controls/codeql_positive/service.py",
+          "fixture_sha256": "b3e3a7621b2339cd41b1fa5dfad86c1e536d5467885aae960e63675934d7e456",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "c7b94cbc43181274b18a77ff73c5a2840c89b7a4e5b86c75415218f122781973",
+          "fixture_manifest": {
+            "controls/codeql_safe/route.py": "1ca515092ac8ee9d9e28eabe91adff7cd7a089c43b3dd7b3d239d93638dc7ea1",
+            "controls/codeql_safe/service.py": "034f999e502ce8950fce94af8c848554a744e9d50ba213bd78c3dd0cb8dcc483"
+          },
+          "fixture_manifest_sha256": "daa3369e0820fe8df408405d48b402259792632277e72cc316e25746d9357af3",
+          "fixture_path": "controls/codeql_safe/service.py",
+          "fixture_sha256": "034f999e502ce8950fce94af8c848554a744e9d50ba213bd78c3dd0cb8dcc483",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "c047afa5cfeb7c1022543a488bb2e7d3ef53cae86f357935309dd1583f076868",
+          "fixture_manifest": {
+            "controls/codeql_positive/route.py": "1ca515092ac8ee9d9e28eabe91adff7cd7a089c43b3dd7b3d239d93638dc7ea1",
+            "controls/codeql_positive/service.py": "b3e3a7621b2339cd41b1fa5dfad86c1e536d5467885aae960e63675934d7e456"
+          },
+          "fixture_manifest_sha256": "3725487d04199eab8f1e172d104dc8fb9288a4079823b8929ed86a3eb2deb94d",
+          "fixture_path": "controls/codeql_positive/service.py",
+          "fixture_sha256": "b3e3a7621b2339cd41b1fa5dfad86c1e536d5467885aae960e63675934d7e456",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "py/sql-injection",
+      "engine": "codeql",
+      "family": "static",
+      "id": "codeql-py/sql-injection",
+      "paths": [
+        ".factory/fuzz_harness.py",
+        "app.py",
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py",
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
+        "tests/test_runtime_harness.py"
+      ],
+      "remediation": "Bind database query parameters to the fixed query.",
+      "requirements": [
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "738e2d1d020a181e31c9ba06e0420f745d119b3f9ee6f5fd8d4a7d3cf24deca4",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "591b9a52201721fe0a3216cf1becf1d27c30319ff14415f6015bd1eed3e5ebf0",
+          "fixture_manifest": {
+            "controls/dependency_safe/requirements.txt": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58"
+          },
+          "fixture_manifest_sha256": "7e126b3bfa471454d513219cef86f4897a487f4b63e7d837802a30adbac4afcc",
+          "fixture_path": "controls/dependency_safe/requirements.txt",
+          "fixture_sha256": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "a8963f50882e785b883acf888b4268b85a14e86731dd01add7d3c54009ed0ab3",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "GHSA-9hjg-9r4m-mvj7",
+      "engine": "osv",
+      "family": "dependencies",
+      "id": "osv-GHSA-9hjg-9r4m-mvj7",
+      "osv_target": {
+        "aliases": [
+          "CVE-2024-47081",
+          "GHSA-9hjg-9r4m-mvj7",
+          "PYSEC-2026-1872"
+        ],
+        "ecosystem": "PyPI",
+        "fixed_version": "2.33.0",
+        "package": "requests",
+        "vulnerable_version": "2.30.0"
+      },
+      "paths": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
+      ],
+      "remediation": "Use the verified fixed dependency version.",
+      "requirements": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "7458d34f1145c556a5381eebe4f41f835e24918e4bbcd11d11cf92bdce56e575",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "5f89d989cb849c926417fddcc18ef229006c6e27cd8f39b73eb8a143c422a095",
+          "fixture_manifest": {
+            "controls/dependency_safe/requirements.txt": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58"
+          },
+          "fixture_manifest_sha256": "7e126b3bfa471454d513219cef86f4897a487f4b63e7d837802a30adbac4afcc",
+          "fixture_path": "controls/dependency_safe/requirements.txt",
+          "fixture_sha256": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "957b932a8836b06ad40fdf0e2b6cb462733237427eb8198ffc1cb7a58f3350be",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "GHSA-9wx4-h78v-vm56",
+      "engine": "osv",
+      "family": "dependencies",
+      "id": "osv-GHSA-9wx4-h78v-vm56",
+      "osv_target": {
+        "aliases": [
+          "CVE-2024-35195",
+          "GHSA-9wx4-h78v-vm56",
+          "PYSEC-2026-1873"
+        ],
+        "ecosystem": "PyPI",
+        "fixed_version": "2.33.0",
+        "package": "requests",
+        "vulnerable_version": "2.30.0"
+      },
+      "paths": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
+      ],
+      "remediation": "Use the verified fixed dependency version.",
+      "requirements": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "a643269b322f07eed8ac06c58b0cd8c295833f65c186daff835918192d9bc499",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "56710b9085dfca68fe68c10040b75b84b771f393fff759467500353f1d48b5b4",
+          "fixture_manifest": {
+            "controls/dependency_safe/requirements.txt": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58"
+          },
+          "fixture_manifest_sha256": "7e126b3bfa471454d513219cef86f4897a487f4b63e7d837802a30adbac4afcc",
+          "fixture_path": "controls/dependency_safe/requirements.txt",
+          "fixture_sha256": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "45583b31c6c1f4ccfdb02009a559d323d0116139ba6ac83c7fc44a1f18fc1c66",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "GHSA-gc5v-m9x4-r6x2",
+      "engine": "osv",
+      "family": "dependencies",
+      "id": "osv-GHSA-gc5v-m9x4-r6x2",
+      "osv_target": {
+        "aliases": [
+          "CVE-2026-25645",
+          "GHSA-gc5v-m9x4-r6x2",
+          "PYSEC-2026-2275"
+        ],
+        "ecosystem": "PyPI",
+        "fixed_version": "2.33.0",
+        "package": "requests",
+        "vulnerable_version": "2.30.0"
+      },
+      "paths": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
+      ],
+      "remediation": "Use the verified fixed dependency version.",
+      "requirements": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "cc8d6d10be9e3742ede92cfbb733a5dc386d5abb66ff9f3f9ac0c9bbaa857432",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "480e9d84fda3cde1d4ed6129e6a71269c67444d12aa9c35b14d79b6c6d8d3f21",
+          "fixture_manifest": {
+            "controls/dependency_safe/requirements.txt": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58"
+          },
+          "fixture_manifest_sha256": "7e126b3bfa471454d513219cef86f4897a487f4b63e7d837802a30adbac4afcc",
+          "fixture_path": "controls/dependency_safe/requirements.txt",
+          "fixture_sha256": "c115d92a8b5db1e06527ab5712bfea68d09ab56367bcf288896669bf32f56b58",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "979b2189c34a314181b30036c2def298db4b13ed8edb173e2a27962ed145a3f5",
+          "fixture_manifest": {
+            "controls/dependency_positive/requirements.txt": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0"
+          },
+          "fixture_manifest_sha256": "de981369a7062242da318c99095c814ce3ecbebff8f0a49c9adc2a692b49fd76",
+          "fixture_path": "controls/dependency_positive/requirements.txt",
+          "fixture_sha256": "9f62255dc5c54dc3f77771d9042d88d783580e06e88c8d0b4dbb428d58f85cd0",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "GHSA-j8r2-6x86-q33q",
+      "engine": "osv",
+      "family": "dependencies",
+      "id": "osv-GHSA-j8r2-6x86-q33q",
+      "osv_target": {
+        "aliases": [
+          "CVE-2023-32681",
+          "GHSA-j8r2-6x86-q33q",
+          "PYSEC-2023-74"
+        ],
+        "ecosystem": "PyPI",
+        "fixed_version": "2.33.0",
+        "package": "requests",
+        "vulnerable_version": "2.30.0"
+      },
+      "paths": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
+      ],
+      "remediation": "Use the verified fixed dependency version.",
+      "requirements": [
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 10,
+          "expected_report_sha256": "86f2f8fc71ce46253e75316c2730063de95e398ad98bf574b969e3c9ca2090d2",
+          "fixture_manifest": {
+            "controls/secrets_positive/config.txt": "98bed4f6e49ab4028b9753ae57a33e68dc6af4d32ac1d0850febb2b3c7304268"
+          },
+          "fixture_manifest_sha256": "698551836a196858bb0a32f32e75ca4855224d4e8cd31485c17d28316662a257",
+          "fixture_path": "controls/secrets_positive/config.txt",
+          "fixture_sha256": "98bed4f6e49ab4028b9753ae57a33e68dc6af4d32ac1d0850febb2b3c7304268",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "3ffb9ff221d58b0204ec17fccd8f9af18034a0a9ded498ce6e53eb3b1d56172a",
+          "fixture_manifest": {
+            "controls/secrets_safe/config.txt": "744e238a85574f0c11b4fce050a0108ea50954a28472be70513b2b854ad04d15"
+          },
+          "fixture_manifest_sha256": "33951a4a46a1922d272174d5b9ccc2e6bea53286fab55b3c5a5493276c6d83f1",
+          "fixture_path": "controls/secrets_safe/config.txt",
+          "fixture_sha256": "744e238a85574f0c11b4fce050a0108ea50954a28472be70513b2b854ad04d15",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 10,
+          "expected_report_sha256": "e7f59ba9c30517e9b80c844c68ba43fd7e9d76684a712282eab0b83c912bb83e",
+          "fixture_manifest": {
+            "controls/secrets_positive/config.txt": "98bed4f6e49ab4028b9753ae57a33e68dc6af4d32ac1d0850febb2b3c7304268"
+          },
+          "fixture_manifest_sha256": "698551836a196858bb0a32f32e75ca4855224d4e8cd31485c17d28316662a257",
+          "fixture_path": "controls/secrets_positive/config.txt",
+          "fixture_sha256": "98bed4f6e49ab4028b9753ae57a33e68dc6af4d32ac1d0850febb2b3c7304268",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "stripe-access-token",
+      "engine": "gitleaks",
+      "family": "secrets",
+      "id": "gitleaks-stripe-access-token",
+      "paths": [
+        ".factory/fuzz_harness.py",
+        "Dockerfile",
+        "app.py",
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py",
+        "controls/configuration_positive/Dockerfile",
+        "controls/configuration_safe/Dockerfile",
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt",
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
+        "controls/secrets_positive/config.txt",
+        "controls/secrets_safe/config.txt",
+        "requirements.txt",
+        "tests/test_runtime_harness.py"
+      ],
+      "remediation": "Keep credential literals outside application source.",
+      "requirements": [
+        "controls/secrets_positive/config.txt",
+        "controls/secrets_safe/config.txt"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "aaa32b079d3c5ad6feffc87779b8f16c2cd5ebbce9995611dac984f84a46ece5",
+          "fixture_manifest": {
+            "controls/configuration_positive/Dockerfile": "808f7766b708b62618d3a7958478b41de65e9298e66fa57fb467bbc699e98e5d"
+          },
+          "fixture_manifest_sha256": "532d3b8fd4ee1b2dc32d2dba78ea05eb22caa7909fb484f9af72853015c79536",
+          "fixture_path": "controls/configuration_positive/Dockerfile",
+          "fixture_sha256": "808f7766b708b62618d3a7958478b41de65e9298e66fa57fb467bbc699e98e5d",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "e43f75049de7be7f9cebcd52e75e80c9b206a03276c3b4b7efc6160610e090ed",
+          "fixture_manifest": {
+            "controls/configuration_safe/Dockerfile": "45f151f482ec468a7fb80d286df96b4fd49bfdb27fc85aa43d19367d8679789f"
+          },
+          "fixture_manifest_sha256": "02accb66d1383e8cc67be2623e5be03f3e526e4e5c47e0310172d9deb2a16395",
+          "fixture_path": "controls/configuration_safe/Dockerfile",
+          "fixture_sha256": "45f151f482ec468a7fb80d286df96b4fd49bfdb27fc85aa43d19367d8679789f",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "7eb513c3bf3dc7a3c979c0be36ac2ce5195ba7afa755fc862952e16eda7f2c92",
+          "fixture_manifest": {
+            "controls/configuration_positive/Dockerfile": "808f7766b708b62618d3a7958478b41de65e9298e66fa57fb467bbc699e98e5d"
+          },
+          "fixture_manifest_sha256": "532d3b8fd4ee1b2dc32d2dba78ea05eb22caa7909fb484f9af72853015c79536",
+          "fixture_path": "controls/configuration_positive/Dockerfile",
+          "fixture_sha256": "808f7766b708b62618d3a7958478b41de65e9298e66fa57fb467bbc699e98e5d",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "DS002",
+      "engine": "trivy",
+      "family": "configuration",
+      "id": "trivy-DS002",
+      "paths": [
+        "Dockerfile",
+        "controls/configuration_positive/Dockerfile",
+        "controls/configuration_safe/Dockerfile"
+      ],
+      "remediation": "Declare a nonprivileged user in the container definition.",
+      "requirements": [
+        "controls/configuration_positive/Dockerfile",
+        "controls/configuration_safe/Dockerfile"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 1,
+          "expected_report_sha256": "19fdc627f985dd55e04c3ddb6bcb2d5eb781a1b505e1ed343b578747d276c6b5",
+          "fixture_manifest": {
+            "app.py": "8b379a508df8d559302bf75ca2c5bd9b0977ddb87fdaa0dd0a336af6bd4db935",
+            "controls/runtime_positive/tests/test_runtime_harness.py": "2d5097fec23f835a9b9a2290b0f5cf70d8b10e8c6027aa821798834511e6bb7e",
+            "tests/test_runtime_harness.py": "ec7ad071f54713d087dcf0915fa462d3dd5ce0d84d72f9a9dabb1c778fa695f1"
+          },
+          "fixture_manifest_sha256": "9daa8509b41d1dc94a633e00a0c583b55af978fff3e74ec1a5b57f2ce8c88a55",
+          "fixture_path": "controls/runtime_positive/tests/test_runtime_harness.py",
+          "fixture_sha256": "2d5097fec23f835a9b9a2290b0f5cf70d8b10e8c6027aa821798834511e6bb7e",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "9a24ee1841499e6c123c6353945a0fb8d304ce77c16b853c35fde1ed4469696d",
+          "fixture_manifest": {
+            "app.py": "8b379a508df8d559302bf75ca2c5bd9b0977ddb87fdaa0dd0a336af6bd4db935",
+            "controls/runtime_safe/tests/test_runtime_harness.py": "82c5ba3f7762286b47575035d2698455ec0e063da0a5479b42949849dd3fe923",
+            "tests/test_runtime_harness.py": "ec7ad071f54713d087dcf0915fa462d3dd5ce0d84d72f9a9dabb1c778fa695f1"
+          },
+          "fixture_manifest_sha256": "3762c58c20a274e98a70cf50d59b21f59ae4aad5d9f90e13be895f8150f69c12",
+          "fixture_path": "controls/runtime_safe/tests/test_runtime_harness.py",
+          "fixture_sha256": "82c5ba3f7762286b47575035d2698455ec0e063da0a5479b42949849dd3fe923",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "a88c21079b1cecc3cd269e243063b0b714dd417e6baaa928348529b47ef25a05",
+          "fixture_manifest": {
+            "app.py": "8b379a508df8d559302bf75ca2c5bd9b0977ddb87fdaa0dd0a336af6bd4db935",
+            "controls/runtime_positive/tests/test_runtime_harness.py": "2d5097fec23f835a9b9a2290b0f5cf70d8b10e8c6027aa821798834511e6bb7e",
+            "tests/test_runtime_harness.py": "ec7ad071f54713d087dcf0915fa462d3dd5ce0d84d72f9a9dabb1c778fa695f1"
+          },
+          "fixture_manifest_sha256": "9daa8509b41d1dc94a633e00a0c583b55af978fff3e74ec1a5b57f2ce8c88a55",
+          "fixture_path": "controls/runtime_positive/tests/test_runtime_harness.py",
+          "fixture_sha256": "2d5097fec23f835a9b9a2290b0f5cf70d8b10e8c6027aa821798834511e6bb7e",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "RUNTIME_TEST_FAILURE",
+      "engine": "runtime",
+      "family": "runtime",
+      "id": "runtime-RUNTIME_TEST_FAILURE",
+      "paths": [
+        ".factory/fuzz_harness.py",
+        "app.py",
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py",
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
+        "tests/test_runtime_harness.py"
+      ],
+      "remediation": "Investigate the failing marked test.",
+      "requirements": [
+        "app.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
+        "tests/test_runtime_harness.py"
+      ]
+    },
+    {
+      "challenges": [
+        {
+          "expected_exit_code": 77,
+          "expected_report_sha256": "5f8d2e7ffe5492068d5a82ea49402c711fae05d2079020c2f39ee47878bc78b4",
+          "fixture_manifest": {
+            "controls/fuzz_positive/.factory/fuzz_harness.py": "d71e64e37312163a95618d6e7f4972150788367c59832dcf40f0e1dffcc34dfb"
+          },
+          "fixture_manifest_sha256": "f7abdc0c2bd3d40aec7d13d407b13bc792fdd298060f20786256c817a641f92b",
+          "fixture_path": "controls/fuzz_positive/.factory/fuzz_harness.py",
+          "fixture_sha256": "d71e64e37312163a95618d6e7f4972150788367c59832dcf40f0e1dffcc34dfb",
+          "kind": "positive"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "1f52b037f7e4a1249984af52e54c53ac5ba464ca8c0f559a65b06708828033b5",
+          "fixture_manifest": {
+            "controls/fuzz_safe/.factory/fuzz_harness.py": "350f1e6cc7a304795c59a6b0ad43d8723f3c6a7a9c15549a703263468c6d3a7f"
+          },
+          "fixture_manifest_sha256": "ffb23337fbdd3ce862130ed32e4286483b04cd18f201d3695c552f29660f3a67",
+          "fixture_path": "controls/fuzz_safe/.factory/fuzz_harness.py",
+          "fixture_sha256": "350f1e6cc7a304795c59a6b0ad43d8723f3c6a7a9c15549a703263468c6d3a7f",
+          "kind": "negative"
+        },
+        {
+          "expected_exit_code": 0,
+          "expected_report_sha256": "8ecc6c589e13cb5bbf7983eba434ad9c0911b7bf69b2fe3dd3bcf167c548aa5e",
+          "fixture_manifest": {
+            "controls/fuzz_positive/.factory/fuzz_harness.py": "d71e64e37312163a95618d6e7f4972150788367c59832dcf40f0e1dffcc34dfb"
+          },
+          "fixture_manifest_sha256": "f7abdc0c2bd3d40aec7d13d407b13bc792fdd298060f20786256c817a641f92b",
+          "fixture_path": "controls/fuzz_positive/.factory/fuzz_harness.py",
+          "fixture_sha256": "d71e64e37312163a95618d6e7f4972150788367c59832dcf40f0e1dffcc34dfb",
+          "kind": "mutation"
+        }
+      ],
+      "detector_rule_id": "FUZZ_EXCEPTION",
+      "engine": "atheris",
+      "family": "fuzz",
+      "id": "atheris-FUZZ_EXCEPTION",
+      "paths": [
+        ".factory/fuzz_harness.py",
+        "app.py",
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py",
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
+        "tests/test_runtime_harness.py"
+      ],
+      "remediation": "Handle the owned failing input in the application.",
+      "requirements": [
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py"
+      ]
+    }
+  ],
+  "schema": "factory.deep-execution.v2"
+}

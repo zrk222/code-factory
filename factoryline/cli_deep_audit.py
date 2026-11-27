@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -288,6 +289,24 @@ def _coordinator_payload_shape(payload):
         relative_path(payload[name])
 
 
+def _coordinator_python_executable():
+    if os.name == "nt" and sys.prefix != sys.base_prefix:
+        return sys._base_executable
+    return sys.executable
+
+
+def _coordinator_worker_launch():
+    executable = _coordinator_python_executable()
+    # A Windows venv redirector spawns a second PID. Start the real interpreter
+    # with Python's own venv marker so the observed PID is the signed worker.
+    env = (
+        {**os.environ, "__PYVENV_LAUNCHER__": sys.executable}
+        if executable != sys.executable
+        else None
+    )
+    return executable, env
+
+
 def _coordinator_runtime_identity():
     # Bind loaded bodies, not merely a source file which could change after import.
     # Marshal encodings can change reference flags after first execution; only
@@ -321,8 +340,12 @@ def _coordinator_runtime_identity():
         ops_telemetry,
     )
     loaded = [_coordinator_loaded_identity(module) for module in modules]
-    executable = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
-    identity = [str(Path(sys.executable).resolve()), sys.version, executable, loaded]
+    paths = dict.fromkeys((sys.executable, _coordinator_python_executable()))
+    executables = [
+        [str(Path(path).resolve()), hashlib.sha256(Path(path).read_bytes()).hexdigest()]
+        for path in paths
+    ]
+    identity = [sys.version, executables, loaded]
     return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
 
@@ -713,11 +736,13 @@ def _coordinator_execute_job(root, request, owner, context, job):
         if remaining <= 0:
             raise ValueError("coordinator lease expired before launch")
         job["launch_attempted"] = True
+        executable, child_env = _coordinator_worker_launch()
         result = run_cli_detailed(
-            sys.executable,
+            executable,
             args,
             root,
             timeout=remaining + CLEANUP_TIMEOUT_SECONDS,
+            env=child_env,
             started_observer=lambda facts: _coordinator_launched(
                 request, context, job, facts
             ),
@@ -1086,6 +1111,12 @@ def add_parser(sub: Any) -> None:
     coordinator.add_argument("--root", default=".")
     coordinator.add_argument("--session-nonce", required=True)
     coordinator.add_argument("--lease-seconds", type=int, default=300)
+    blade = deep_sub.add_parser(
+        "blade-structure", help="account for Blade echo expression spans"
+    )
+    blade.add_argument("source", type=Path)
+    blade.add_argument("--grammar-dir", type=Path, required=True)
+    blade.add_argument("--json", action="store_true")
     _add_execution_parsers(deep_sub)
     for action in ("evaluate", "status", "compare", "attestation"):
         command = deep_sub.add_parser(action)
@@ -1485,6 +1516,23 @@ def _deep_evaluate(args: Any, root: Path, execute: Any) -> tuple[dict[str, Any],
 def _run_deep(args: Any) -> int:
     if args.deep_cmd == "coordinator":
         return _run_coordinator(args)
+    if args.deep_cmd == "blade-structure":
+        from .deep_audit_contract import blade_structure
+        from .runtime_audit_common import RuntimeAuditError
+
+        try:
+            result = blade_structure(args.source, args.grammar_dir)
+        except (OSError, ValueError, RuntimeAuditError) as exc:
+            return _emit(
+                {
+                    "state": "INCOMPLETE",
+                    "authority": "none",
+                    "code": getattr(exc, "code", "E_BLADE_INPUT"),
+                    "message": str(exc),
+                },
+                2,
+            )
+        return _emit(result, 0 if result["state"] == "STRUCTURE_OBSERVED" else 2)
     if args.deep_cmd in {
         "inventory",
         "scan",

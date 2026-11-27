@@ -34,6 +34,14 @@ PAYLOAD_TYPE = "application/vnd.factory.deep-audit-attestation.v1+json"
 RESULT_SCHEMA = "factory.deep-audit-attestation-verification.v1"
 DEFAULT_MAX_AGE_SECONDS = 3600
 MAX_VALIDITY_SECONDS = 86400
+_KEYLESS_TRUST = "factory.deep-audit-sigstore-trust.v1"
+_KEYLESS_ENVELOPE = "factory.deep-audit-sigstore-envelope.v1"
+_GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+_EXECUTION_ROLES = {
+    "implementer": "implementer_id",
+    "reviewer": "reviewer_identity",
+    "coordinator": "coordinator_identity",
+}
 
 
 def _execution_bytes(path: Path) -> bytes:
@@ -63,6 +71,30 @@ def _execution_document(
     if sha256_bytes(trust) != trust_pin:
         raise RuntimeAuditError("E_TRUST_ROOT_PIN", "trust root changed")
     envelope, trust_value = strict_json(raw), strict_json(trust)
+    if trust_value.get("schema") == _KEYLESS_TRUST:
+        parsed = _keyless_execution_payload(
+            envelope, trust_value, identity, keyid, schema
+        )
+    else:
+        parsed = _dsse_execution_payload(
+            path, trust_root, envelope, trust_value, identity, keyid, schema
+        )
+    if _execution_bytes(path) != raw or _execution_bytes(trust_root) != trust:
+        raise RuntimeAuditError(
+            "E_REVIEW_DRIFT", "signed inputs changed during verification"
+        )
+    _execution_freshness(parsed)
+    if return_envelope_sha256:
+        # Run artifacts add a self-integrity field outside the signed envelope.
+        return parsed, digest(
+            {key: value for key, value in envelope.items() if key != "sha256"}
+        )
+    return parsed
+
+
+def _dsse_execution_payload(
+    path, trust_root, envelope, trust_value, identity, keyid, schema
+):
     try:
         encoded = envelope["payload"]
         parsed = strict_json(
@@ -79,22 +111,122 @@ def _execution_document(
         trust_root_path=trust_root,
     )
     _execution_signer(verified["signature"], trust_value, identity, keyid)
+    if verified["payload"] != parsed:
+        raise RuntimeAuditError(
+            "E_REVIEW_DRIFT", "signed payload changed during verification"
+        )
+    return parsed
+
+
+def _keyless_roles(trust):
+    roles = trust.get("roles")
     if (
-        verified["payload"] != parsed
-        or _execution_bytes(path) != raw
-        or _execution_bytes(trust_root) != trust
+        set(trust) != {"schema", "roles"}
+        or not isinstance(roles, dict)
+        or roles.keys() != _EXECUTION_ROLES.keys()
     ):
         raise RuntimeAuditError(
-            "E_REVIEW_DRIFT", "signed inputs changed during verification"
+            "E_REVIEW_TRUST", "exactly three keyless roles are required"
         )
-    _execution_freshness(parsed)
-    if return_envelope_sha256:
-        # Run artifacts add a self-integrity field outside the signed envelope.
-        signed_envelope = {
-            key: value for key, value in envelope.items() if key != "sha256"
-        }
-        return parsed, digest(signed_envelope)
-    return parsed
+    workflow_paths = set()
+    for row in roles.values():
+        if not isinstance(row, dict) or set(row) != {
+            "keyid",
+            "identity",
+            "workflow_digest",
+        }:
+            raise RuntimeAuditError(
+                "E_REVIEW_TRUST", "keyless roles require exact workload pins"
+            )
+        require_str(row["keyid"], "keyless workload id", maximum=256)
+        identity = require_str(row["identity"], "certificate identity", maximum=512)
+        workflow, separator, ref = identity.rpartition("@")
+        if not (
+            workflow.startswith("https://github.com/")
+            and "/.github/workflows/" in workflow
+            and separator
+            and ref.startswith(("refs/heads/", "refs/tags/"))
+        ):
+            raise RuntimeAuditError(
+                "E_REVIEW_IDENTITY", "GitHub workflow identity is required"
+            )
+        workflow_paths.add(workflow.casefold())
+        sha = row["workflow_digest"]
+        if (
+            not isinstance(sha, str)
+            or len(sha) != 40
+            or set(sha) - set("0123456789abcdef")
+        ):
+            raise RuntimeAuditError(
+                "E_REVIEW_TRUST", "exact workflow commit SHA is required"
+            )
+    if len(workflow_paths) != len(_EXECUTION_ROLES) or len(
+        {row["keyid"] for row in roles.values()}
+    ) != len(_EXECUTION_ROLES):
+        raise RuntimeAuditError(
+            "E_REVIEW_IDENTITY", "keyless roles require distinct workflow paths and ids"
+        )
+    return roles
+
+
+def _keyless_execution_payload(envelope, trust, identity, keyid, schema):
+    fields = set(envelope) - {"sha256"}
+    if (
+        fields != {"schema", "payload", "bundle"}
+        or envelope["schema"] != _KEYLESS_ENVELOPE
+    ):
+        raise RuntimeAuditError("E_REVIEW_PAYLOAD", "invalid keyless envelope")
+    payload = envelope["payload"]
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != schema
+        or not isinstance(envelope["bundle"], dict)
+    ):
+        raise RuntimeAuditError("E_REVIEW_PAYLOAD", "invalid keyless signed document")
+    role = next(
+        (
+            row
+            for row in _keyless_roles(trust).values()
+            if (row["identity"], row["keyid"]) == (identity, keyid)
+        ),
+        None,
+    )
+    if role is None:
+        raise RuntimeAuditError(
+            "E_REVIEW_IDENTITY", "keyless signer is outside the pinned role"
+        )
+    _verify_keyless_artifact(
+        _deep_audit_io.canonical_bytes(payload), envelope["bundle"], role
+    )
+    return payload
+
+
+def _verify_keyless_artifact(payload, bundle, role):
+    try:
+        from sigstore.errors import Error
+        from sigstore.models import Bundle
+        from sigstore.verify import Verifier, policy
+    except ImportError as error:
+        raise RuntimeAuditError(
+            "E_SIGSTORE_UNAVAILABLE",
+            "the Sigstore extra is required for keyless audit trust",
+        ) from error
+    pins = policy.AllOf(
+        [
+            policy.Identity(identity=role["identity"], issuer=_GITHUB_OIDC_ISSUER),
+            policy.OIDCBuildSignerURI(role["identity"]),
+            policy.OIDCBuildSignerDigest(role["workflow_digest"]),
+            policy.OIDCRunnerEnvironment("github-hosted"),
+        ]
+    )
+    try:
+        Verifier.production(offline=True).verify_artifact(
+            payload, Bundle.from_json(_deep_audit_io.canonical_bytes(bundle)), pins
+        )
+    except (Error, ValueError, TypeError) as error:
+        raise RuntimeAuditError(
+            "E_REVIEW_KEYLESS_SIGNATURE", "keyless artifact verification failed"
+        ) from error
 
 
 def _execution_signer(signature, trust_value, identity, keyid):
@@ -131,12 +263,19 @@ def _execution_freshness(parsed):
 
 def _execution_keys(plan: dict, trust_root: Path) -> None:
     trust = strict_json(_execution_bytes(trust_root))
+    if trust.get("schema") == _KEYLESS_TRUST:
+        roles = _keyless_roles(trust)
+        if any(
+            (roles[role]["identity"], roles[role]["keyid"])
+            != (plan[identity], plan[f"{role}_keyid"])
+            for role, identity in _EXECUTION_ROLES.items()
+        ):
+            raise RuntimeAuditError(
+                "E_REVIEW_TRUST", "manifest role differs from the keyless trust pin"
+            )
+        return
     keys = []
-    for role, identity in (
-        ("implementer", "implementer_id"),
-        ("reviewer", "reviewer_identity"),
-        ("coordinator", "coordinator_identity"),
-    ):
+    for role, identity in _EXECUTION_ROLES.items():
         found = [
             key
             for key in trust.get("keys", [])
@@ -2131,6 +2270,58 @@ def _semgrep_rule_inventory(config, lane):
     }
 
 
+def _build_php_interfile_rules(baseline, profile_path, output):
+    import yaml
+
+    from .audit_taxonomy import _NATIVE_WORKERS
+
+    rule_ids = _NATIVE_WORKERS["semgrep"]["php_rule_ids"]
+    rules = [
+        rule
+        for rule in yaml.safe_load(Path(baseline).read_bytes())["rules"]
+        if rule["id"] in rule_ids
+    ]
+    for rule in rules:
+        if rule["languages"] != ["php"] or rule.get("mode") != "taint":
+            raise RuntimeAuditError("E_SEMGREP_RULESET", "expected PHP taint rule")
+        rule.setdefault("options", {})["taint_interfile"] = True
+    raw = _deep_audit_io.canonical_bytes({"rules": rules})
+    profile = strict_json(Path(profile_path).read_bytes())
+    _semgrep_rule_inventory(raw, {**profile, "rule_ids": sorted(rule_ids)})
+    Path(output).write_bytes(raw)
+
+
+_PHP_INTERFILE_FLAGS = (
+    "--enable-interfile",
+    "--interfile-depth=3",
+    "--interfile-timeout=30",
+    "--max-memory=512",
+    "--jobs=1",
+    "--exclude=*.blade.php",
+)
+
+
+def _semgrep_rule_prefix(tool_version):
+    argv = [
+        "/usr/bin/semgrep",
+        "scan",
+        "--json",
+        "--strict",
+        "--metrics=off",
+        "--disable-version-check",
+        "--no-git-ignore",
+        "--disable-nosem",
+        "--no-rewrite-rule-ids",
+        "--config",
+    ]
+    if tool_version in {"1.15.0", "2.0.0"}:
+        argv[0] = "/usr/bin/opengrep"
+        argv.remove("--metrics=off")
+    if tool_version == "2.0.0":
+        argv[-1:-1] = _PHP_INTERFILE_FLAGS
+    return argv
+
+
 def _semgrep_rule_runs(
     profile,
     lane,
@@ -2173,24 +2364,13 @@ def _semgrep_rule_runs(
         config = _deep_audit_io.canonical_bytes({"rules": [rule]})
         config_path, report_path = directory / "rule.json", directory / "report.json"
         config_path.write_bytes(config)
-        argv = [
-            profile["commands"][0]["argv"][0],
-            "scan",
-            "--json",
-            "--strict",
-            "--metrics=off",
-            "--disable-version-check",
-            "--no-git-ignore",
-            "--disable-nosem",
-            "--no-rewrite-rule-ids",
-            "--config",
+        argv = _semgrep_rule_prefix(profile.get("tool_version")) + [
             str(config_path),
             "--json-output",
             str(report_path),
             str(source),
         ]
-        if profile.get("tool_version") == "1.15.0":
-            argv.remove("--metrics=off")
+        argv[0] = profile["commands"][0]["argv"][0]
         options = (
             {"tool_context": execution_context["tool_context"]}
             if execution_context
@@ -2374,21 +2554,7 @@ def _semgrep_raw_bindings(observation, index, *, execution_context=None):
     from pathlib import PurePosixPath
 
     argv = observation["argv"]
-    prefix = [
-        "/usr/bin/semgrep",
-        "scan",
-        "--json",
-        "--strict",
-        "--metrics=off",
-        "--disable-version-check",
-        "--no-git-ignore",
-        "--disable-nosem",
-        "--no-rewrite-rule-ids",
-        "--config",
-    ]
-    if observation["native_report"].get("version") == "1.15.0":
-        prefix[0] = "/usr/bin/opengrep"
-        prefix.remove("--metrics=off")
+    prefix = _semgrep_rule_prefix(observation["native_report"].get("version"))
     if execution_context:
         _local_semgrep_raw_argv(observation, index, execution_context, prefix)
     else:
@@ -2485,6 +2651,7 @@ def _native_profile_coverage(
     rule_accounting = None
     native_source_inventory = None
     native_source_inventory_sha256 = None
+    source_accounting = None
     if lane["engine"] == "gitleaks" and ledger is not None and ledger_sha256:
         _deep_audit_io._gitleaks_coverage_preflight(
             execution, report, inventory, lane, challenges, covered_obligations
@@ -2502,35 +2669,39 @@ def _native_profile_coverage(
             execution["invocations"],
             execution["raw_report"],
         )
-    errors = ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"]
-    complete = False
+    errors = (
+        []
+        if lane["engine"] == "syft"
+        and lane.get("native_artifact_roles") == ["sbom_json"]
+        and not (
+            covered_obligations or challenges["observations"] or challenges.get("gaps")
+        )
+        else ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"]
+    )
     if lane["engine"] == "gitleaks":
         errors = _deep_audit_io._gitleaks_coverage_errors(
             rule_accounting, challenges, covered_obligations
         )
-        complete = not errors
     elif lane["engine"] == "trivy":
         errors = _deep_audit_io._trivy_coverage_errors(
             execution, report, inventory, lane, challenges, covered_obligations
         )
-        complete = not errors
     elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
         errors = _deep_audit_io._runtime_coverage_errors(
             report, inventory, lane, challenges, covered_obligations
         )
-        complete = not errors
     elif execution.get("semgrep_rule_execution") is not None:
-        _deep_audit_io._semgrep_source_accounting(
+        source_accounting = _deep_audit_io._semgrep_source_accounting(
             execution, inventory, lane, execution_context=execution_context
         )
-        errors = (
-            []
-            if _deep_audit_io._gitleaks_challenges_complete(
+        required = {
+            "NATIVE_CHALLENGES_REQUIRED": _deep_audit_io._gitleaks_challenges_complete(
                 challenges, covered_obligations
-            )
-            else ["NATIVE_CHALLENGES_REQUIRED"]
-        )
-        complete = not errors
+            ),
+            "NATIVE_SOURCE_ACCOUNTING_REQUIRED": source_accounting["state"]
+            == "COMPLETE",
+        }
+        errors = [error for error, satisfied in required.items() if not satisfied]
     elif lane["engine"] == "osv":
         from .deep_audit_sarif import _osv_lookup_binding_gaps
 
@@ -2544,12 +2715,11 @@ def _native_profile_coverage(
             errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
         if not _deep_audit_io._osv_challenges_complete(challenges, covered_obligations):
             errors.append("NATIVE_CHALLENGES_REQUIRED")
-        complete = not errors
     coverage = {
         "profile_sha256": _deep_audit_io.digest(profile),
         **_local_provider_coverage_identity(lane),
         "schema": "factory.deep-coverage.v1",
-        "complete": complete,
+        "complete": not errors,
         "sources": {
             item["path"]: item["sha256"]
             for item in inventory["files"]
@@ -2561,7 +2731,8 @@ def _native_profile_coverage(
         "ruleset_sha256": profile["ruleset_sha256"],
         "report_sha256": _deep_audit_io.digest(report),
         "native_report_sha256": _deep_audit_io.digest(execution["raw_report"]),
-        "source_accounting": _deep_audit_io._native_source_accounting(
+        "source_accounting": source_accounting
+        or _deep_audit_io._native_source_accounting(
             execution,
             report,
             inventory,
@@ -2910,7 +3081,7 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
             f"--output={result}",
             "--search-path=/opt/codeql/codeql/qlpacks",
             "--threads=2",
-            "--ram=2048",
+            f"--ram={_deep_audit_io._codeql_ram_mib(lane)}",
         ],
         [
             executable,
@@ -3212,6 +3383,14 @@ def _codeql_steps_facts(invocations, streams, started, budget, expected_steps=3)
 def _native_source_accounting(
     execution, report, inventory, lane, *, execution_context=None
 ):
+    if lane.get("engine") == "syft":
+        from .deep_audit_sarif import _execution_syft, _native_syft_accounting
+
+        sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+        _execution_syft(report, lane, sources)
+        return _native_syft_accounting(
+            report, _deep_audit_io._trivy_source_map(inventory, lane)
+        )
     if lane.get("engine") == "osv":
         from .deep_audit_sarif import _osv_source_accounting
 
@@ -3257,12 +3436,17 @@ def _semgrep_source_accounting(execution, inventory, lane, *, execution_context=
         if item["language"] in lane["languages"]
     }
     missing = sorted(required - measured)
-    if missing:
+    blade_gap = (
+        lane.get("tool_version") == "2.0.0"
+        and "php" in lane["languages"]
+        and all(path.lower().endswith(".blade.php") for path in missing)
+    )
+    if missing and not blade_gap:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "native source accounting incomplete"
         )
     return {
-        "state": "COMPLETE",
+        "state": "INCOMPLETE" if missing else "COMPLETE",
         "required_paths": sorted(required),
         "measured_paths": sorted(measured),
         "missing_paths": missing,
