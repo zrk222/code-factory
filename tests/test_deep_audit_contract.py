@@ -5114,11 +5114,13 @@ def test_coordinator_renewal_contention_retries_and_direct_api_never_renews():
     "memory_mib, ram_mib", [(1024, 768), (2048, 1536), (4096, 3072), (8192, 7168)]
 )
 def test_codeql_ram_follows_signed_lane_memory(memory_mib, ram_mib):
+    import sys
+
     from factoryline.deep_audit_contract import _codeql_ram_mib, _native_argv
 
     lane = {"memory_mib": memory_mib}
     assert _codeql_ram_mib(lane) == ram_mib
-    command = {"argv": ["/bin/codeql", "--ram={ram_mib}"], "accepted_exit_codes": [0]}
+    command = {"argv": [sys.executable, "--ram={ram_mib}"], "accepted_exit_codes": [0]}
     assert _native_argv([command], {}, lane)[0]["argv"][1] == f"--ram={ram_mib}"
     with pytest.raises(RuntimeAuditError, match="lane memory binding required"):
         _native_argv([command], {})
