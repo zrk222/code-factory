@@ -291,8 +291,46 @@ function regionSpan({ startLine, startColumn, endLine, endColumn }) {
   return [startColumn ?? null, lineOffset, endColumn ?? null];
 }
 
+export function sarifTraceThreads(result, resolvePath) {
+  return (result.codeFlows ?? []).map(flow =>
+    (flow.threadFlows ?? []).map(thread => (thread.locations ?? []).map(step => {
+      const location = step.location?.physicalLocation;
+      if (!location?.artifactLocation) return { state: 'nonphysical' };
+      const path = resolvePath(location.artifactLocation);
+      const line = location.region?.startLine;
+      return Number.isSafeInteger(line) && line > 0 ? { path, line } : { path, state: 'invalid_line' };
+    })));
+}
+
+// Match a complete, source-bound flow to a changed line while keeping its actual endpoint.
+export function anchoredTraceMatches({ oldFindings, newFindings, hunks, families, rules, flows }) {
+  const wanted = new Set(families);
+  const sinkKey = (rule, path) => JSON.stringify([rule, path]);
+  const fixedSinks = new Set(newFindings.map(({ rule, path }) => sinkKey(rule, path)));
+  const matches = new Map();
+  for (const [index, finding] of oldFindings.entries()) {
+    const { rule, path, line, span } = finding;
+    if (hunks[path]?.old?.includes(line) || !rules[rule]?.some(family => wanted.has(family))) continue;
+    for (const thread of (flows?.[index] ?? finding.threads ?? []).flat()) {
+      const steps = thread.filter(step => step.state !== 'nonphysical');
+      const sink = steps.at(-1);
+      if (steps.length < 2 || sink?.path !== path || sink.line !== line
+        || steps.some(step => step.state || !step.path || !Number.isSafeInteger(step.line) || step.line < 1)) continue;
+      const anchor = steps.slice(0, -1).find(step => hunks[step.path]?.old?.includes(step.line));
+      if (!anchor) continue;
+      const match = {
+        rule, sink: { path, line, ...(span ? { span } : {}) }, anchor,
+        source_paths: [...new Set(steps.map(step => step.path))].sort(),
+        fixed_sink_residual: fixedSinks.has(sinkKey(rule, hunks[path]?.new_path ?? path)),
+      };
+      matches.set(JSON.stringify(match), match);
+    }
+  }
+  return [...matches.values()];
+}
+
 export function sarifFindings(sarif, packetPaths, normalizeRuleId = id => id.split('.').slice(-2).join('.'),
-  resolveArtifact = artifact => sarifPath(artifact.uri, packetPaths)) {
+  resolveArtifact = artifact => sarifPath(artifact.uri, packetPaths), retainThreads = false) {
   const out = [];
   for (const run of sarif.runs ?? []) {
     const clean = loc => resolveArtifact(loc.artifactLocation, run);
@@ -303,8 +341,13 @@ export function sarifFindings(sarif, packetPaths, normalizeRuleId = id => id.spl
         .flatMap(thread => thread.locations ?? []).map(step => step.location?.physicalLocation)
         .filter(step => step?.artifactLocation && step.region).map(step => [clean(step), step.region.startLine]);
       const span = regionSpan(location.region);
+      const threads = retainThreads && result.codeFlows?.length ? sarifTraceThreads(result, artifact => {
+        const path = resolveArtifact(artifact, run);
+        return packetPaths?.has(path) ? path : null;
+      }) : [];
       out.push({ rule: normalizeRuleId(result.ruleId), path: clean(location),
-        line: location.region.startLine, ...(span ? { span } : {}), trace });
+        line: location.region.startLine, ...(span ? { span } : {}), trace,
+        ...(threads.length ? { threads } : {}), });
     }
   }
   return out;
@@ -329,7 +372,9 @@ export function scoreCase({ families, hunks, editedLines, oldFindings, newFindin
     deleted_line_hit: hunkHits.some(f => editedLines.deleted.get(f.path)?.has(f.line)),
     added_line_residuals: residual.filter(f => editedLines.added.get(f.path)?.has(f.line)).map(f => [f.rule, f.path, f.line]),
   };
-  return { hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
+  const anchored = oldFindings.some(f => f.threads?.length)
+    ? anchoredTraceMatches({ oldFindings, newFindings, hunks, families, rules }) : [];
+  return { ...(anchored.length ? { anchored_trace_matches: anchored } : {}), hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
     hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]),
     ...(hunkSpans.some(Boolean) ? { hunk_spans: hunkSpans } : {}), matched_hunk_families: matchedFamilies,
     alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
@@ -568,7 +613,7 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   try {
     const sarif = JSON.parse(utf8(reportBytes));
     if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Scan produced no SARIF run');
-    const findings = sarifFindings(sarif, context.packetPaths);
+    const findings = sarifFindings(sarif, context.packetPaths, undefined, undefined, true);
     findings.notes = { ...diagnostics, ...scanNotes(sarif) };
     findings.coverage = coverage;
     findings.notes.timeouts = Math.max(execution.timeouts, findings.notes.timeouts);
@@ -2403,7 +2448,7 @@ function capturedFindings(report, packets, sarifCache = null, verifiedDigest = n
   const sarif = sarifCache?.get(verifiedDigest) ?? JSON.parse(utf8(report));
   if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Review SARIF has no run');
   sarifCache?.set(verifiedDigest, sarif);
-  const findings = sarifFindings(sarif, new Set(hashes.keys()));
+  const findings = sarifFindings(sarif, new Set(hashes.keys()), undefined, undefined, true);
   if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
   return { hashes, findings, diagnostics: scanNotes(sarif) };
 }

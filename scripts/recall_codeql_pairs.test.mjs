@@ -234,6 +234,7 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
   assert.equal(receipt.strict_hunk_hits, 0);
   assert.equal(receipt.changed_file_hits, 0);
   assert.equal(receipt.cross_file_trace_hits, 1);
+  assert.deepEqual(receipt.cases[0].anchored_trace_matches, receipt.cases[0].cross_file_trace_matches);
   assert.deepEqual(receipt.cases[0].cross_file_trace_matches, [{
     rule: pair.query_id, sink: { path: 'helper.py', line: 1 }, anchor: { path: 'sample.py', line: 1 },
     source_paths: ['helper.py', 'sample.py'], fixed_sink_residual: false,
