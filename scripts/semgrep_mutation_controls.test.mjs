@@ -139,7 +139,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 397);
+  assert.equal(balancedReplacement.length, 398);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
@@ -153,7 +153,7 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
   assert.deepEqual(manifest.filter(item => item.path.startsWith('typescript-shell-')).map(({ path, line }) =>
     [path, line]), [['typescript-shell-wrapper.ts', 7], ['typescript-shell-binding.ts', 5],
     ['typescript-shell-sanitizer.ts', 6], ['typescript-shell-sanitizer.ts', 11]]);
-  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 64);
+  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 65);
   assert.deepEqual(manifest.filter(item => item.path === 'typescript-sql-identifier.ts').map(item => item.line),
     [42, 47, 49, 55, 60, 71, 81, 88]);
   assert.equal(manifest.find(item => item.path === 'typescript-html-escaped-local.ts').line, 10);

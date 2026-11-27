@@ -5863,56 +5863,90 @@ rules:
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/docs/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js", "**/compiled/**", "**/*.development.js", "**/*.production.js"]
   - id: javascript.dom-innerhtml-from-variable
-    message: Review dynamic HTML or a parameter URL opened in a new window without an opener policy.
+    message: Review dynamic HTML, incomplete foreign-node sanitization, or a parameter URL opened without an opener policy.
     severity: INFO
     languages: [javascript, typescript]
     patterns:
       - pattern-either:
-          - pattern: $E.innerHTML = $V
-          - pattern: $E.outerHTML = $V
-          - pattern: $E.insertAdjacentHTML($POS, $V)
-          - patterns:
-              - pattern: window.open($V, "_blank")
-              - metavariable-pattern:
-                  metavariable: $V
-                  pattern: $INPUT.url
-              - pattern-either:
-                  - pattern-inside: ($INPUT) => { ... }
-                  - pattern-inside: function $F(..., $INPUT, ...) { ... }
-              - focus-metavariable: $V
           - patterns:
               - pattern-either:
-                  - pattern: <$TAG ... innerHTML={$V} ... />
-                  - pattern: <$TAG ... innerHTML={$V} ...>...</$TAG>
-              - metavariable-regex: {metavariable: $TAG, regex: '^[a-z][\w-]*$'}
-              - metavariable-regex:
-                  metavariable: $V
-                  regex: >-
-                    (?s)\A\s*(?:[\w$]+(?:\??\.[\w$]+)+|.*\?(?!\.)\s*[\w$]+(?:\??\.[\w$]+)+\s*:[^?]+)\s*\z
+                  - pattern: $E.innerHTML = $V
+                  - pattern: $E.outerHTML = $V
+                  - pattern: $E.insertAdjacentHTML($POS, $V)
+                  - patterns:
+                      - pattern: window.open($V, "_blank")
+                      - metavariable-pattern:
+                          metavariable: $V
+                          pattern: $INPUT.url
+                      - pattern-either:
+                          - pattern-inside: ($INPUT) => { ... }
+                          - pattern-inside: function $F(..., $INPUT, ...) { ... }
+                      - focus-metavariable: $V
+                  - patterns:
+                      - pattern-either:
+                          - pattern: <$TAG ... innerHTML={$V} ... />
+                          - pattern: <$TAG ... innerHTML={$V} ...>...</$TAG>
+                      - metavariable-regex: {metavariable: $TAG, regex: '^[a-z][\w-]*$'}
+                      - metavariable-regex:
+                          metavariable: $V
+                          regex: >-
+                            (?s)\A\s*(?:[\w$]+(?:\??\.[\w$]+)+|.*\?(?!\.)\s*[\w$]+(?:\??\.[\w$]+)+\s*:[^?]+)\s*\z
+                      - metavariable-pattern:
+                          metavariable: $V
+                          patterns:
+                            - pattern-either:
+                                - pattern: $OBJECT.$PROPERTY
+                                - pattern: '$CONDITION ? $OBJECT.$PROPERTY : $DEFAULT'
+                                - pattern: '$CONDITION ? $DEFAULT : $OBJECT.$PROPERTY'
+                      - focus-metavariable: $V
               - metavariable-pattern:
                   metavariable: $V
                   patterns:
-                    - pattern-either:
-                        - pattern: $OBJECT.$PROPERTY
-                        - pattern: '$CONDITION ? $OBJECT.$PROPERTY : $DEFAULT'
-                        - pattern: '$CONDITION ? $DEFAULT : $OBJECT.$PROPERTY'
-              - focus-metavariable: $V
-      - metavariable-pattern:
-          metavariable: $V
-          patterns:
-            - pattern-not: '"..."'
-            - pattern-not: "''"
-            - pattern-not: '`...`'
-            - pattern-not: $S.sanitize(...)
-            - pattern-not: DOMPurify.sanitize(...)
-            - pattern-not: sanitize(...)
-            - pattern-not: $ESC(...)
-      # A static placeholder on a class or namespace (AST.emptyHTML) is not data.
-      # Empty placeholders, UPPER_CASE template constants and values already named as
-      # sanitized or purified are not raw markup.
-      - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)(?![A-Z_][A-Z0-9_]*$)(?!(?i:\w*(?:sanitiz|purif)\w*|empty\w*)$)'}
-      # Appending a string literal to an element's own markup adds no outside data.
-      - pattern-not: $E.innerHTML = $E.innerHTML + "..."
+                    - pattern-not: '"..."'
+                    - pattern-not: "''"
+                    - pattern-not: '`...`'
+                    - pattern-not: $S.sanitize(...)
+                    - pattern-not: DOMPurify.sanitize(...)
+                    - pattern-not: sanitize(...)
+                    - pattern-not: $ESC(...)
+              # A static placeholder on a class or namespace (AST.emptyHTML) is not data.
+              # Empty placeholders, UPPER_CASE template constants and values already named as
+              # sanitized or purified are not raw markup.
+              - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)(?![A-Z_][A-Z0-9_]*$)(?!(?i:\w*(?:sanitiz|purif)\w*|empty\w*)$)'}
+              # Appending a string literal to an element's own markup adds no outside data.
+              - pattern-not: $E.innerHTML = $E.innerHTML + "..."
+          - patterns:
+              - pattern-inside: |
+                  const $CHECK = function ($NODE) {
+                    ...
+                    const $TAG = $LOWER($NODE.nodeName);
+                    ...
+                    if (($TAG === 'svg' || $TAG === 'math') && $NODE.querySelectorAll($SELECTORS).length !== 0) {
+                      $REMOVE($NODE);
+                      return true;
+                    }
+                    ...
+                  };
+              - pattern: $NODE.querySelectorAll($SELECTORS)
+              - metavariable-regex:
+                  metavariable: $SELECTORS
+                  regex: '^[\x22\x27](?=[^\x22\x27]*\bp\b)(?=[^\x22\x27]*\bbr\b)(?=[^\x22\x27]*\bform\b)(?![^\x22\x27]*\btable\b)[a-z ,]+[\x22\x27]$'
+              - pattern-not-inside: |
+                  const $CHECK = function ($NODE) {
+                    ...
+                    const $TAG = $LOWER($NODE.nodeName);
+                    ...
+                    if (($TAG === 'svg' || $TAG === 'math') && $NODE.querySelector('table')) {
+                      $REMOVE($NODE);
+                      return true;
+                    }
+                    ...
+                    if (($TAG === 'svg' || $TAG === 'math') && $NODE.querySelectorAll($SELECTORS).length !== 0) {
+                      $REMOVE($NODE);
+                      return true;
+                    }
+                    ...
+                  };
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -5920,7 +5954,7 @@ rules:
       category: security
       confidence: LOW
       cwe: ["CWE-79"]
-      scope: Dynamic HTML content or a parameter URL passed to the two-argument window.open call with a blank target.
+      scope: Dynamic HTML, foreign-node sanitizer guard coverage, or a parameter URL opened without an opener policy.
   - id: go.tls-client-cert-requested-not-verified
     message: Client certificates are requested but not verified against a CA; any self-signed certificate is accepted. Use tls.VerifyClientCertIfGiven or tls.RequireAndVerifyClientCert with ClientCAs.
     severity: WARNING

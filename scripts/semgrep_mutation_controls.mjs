@@ -183,7 +183,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.java.request-path-traversal': 1,
   'opt.factory.rules.java.request-sql-injection': 7,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
-  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 4,
+  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 5,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 6,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.parameter-shell-command': 9,
@@ -270,6 +270,8 @@ export function javascriptControlManifest() {
       path: 'typescript-html-escaped-local.ts', line: 35 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable',
       path: 'typescript-html-escaped-local.ts', line: 51 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable',
+      path: 'typescript-html-escaped-local.ts', line: 85 },
     { rule: 'opt.factory.rules.javascript.parameter-shell-command',
       path: 'typescript-html-escaped-local.ts', line: 56 },
     // Values stay reported; quoted identifiers, placeholder lists and aliased quoting helpers do not.
@@ -303,7 +305,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 397;
+const REVIEWED_FINDINGS = 398;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
