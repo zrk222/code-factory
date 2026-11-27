@@ -64,6 +64,8 @@ def test_keyless_review_decodes_lossless_bounded_input():
         "complete",
         "unresolved",
         "obligation_gap",
+        "no_indicator",
+        "conflicting_assessment",
         "omitted",
         "out_of_scope",
         "truncated",
@@ -363,6 +365,24 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                     "remediation": "Review the fixture evidence",
                 }
             ]
+        if (
+            mode in {"no_indicator", "conflicting_assessment"}
+            and payload["family"] == "secrets"
+        ):
+            result["path_assessments"][assigned[0]] = {
+                "state": "REVIEWED_NO_INDICATOR",
+                "reason": "Inspected the assigned text for secret indicators",
+            }
+            if mode == "conflicting_assessment":
+                result["findings"] = [
+                    {
+                        "id": "conflicting-finding",
+                        "severity": "low",
+                        "path": assigned[0],
+                        "evidence": "Synthetic indicator claim",
+                        "remediation": "Inspect the recorded indicator",
+                    }
+                ]
         if mode == "obligation_gap" and payload["family"] == "dependencies":
             result["coverage_gaps"] = [
                 "The ledger lacks evidence for a declared dependency obligation"
@@ -445,6 +465,19 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         assert result["coverage_gaps"][0].endswith("Manifest has insufficient evidence")
         assert [finding["id"] for finding in result["findings"]] == ["fixture-finding"]
         assert "| dependencies | 3 | 2 | 1 | 0 | 1 |" in summary
+    elif mode == "conflicting_assessment":
+        assert result["decision"] == "INCOMPLETE"
+        assert len(result["coverage_gaps"]) == 1
+        assert result["coverage_gaps"][0].startswith(
+            "secrets: finding conflicts with no-indicator assessment for "
+        )
+        assert [finding["id"] for finding in result["findings"]] == [
+            "conflicting-finding"
+        ]
+    elif mode == "no_indicator":
+        assert result["decision"] == "ACCEPT" and result["coverage_gaps"] == []
+        secrets = next(row for row in coverage if row["family"] == "secrets")
+        assert secrets["result"]["reviewed_paths"] == secrets["assigned_paths"]
     elif mode == "obligation_gap":
         assert result["decision"] == "INCOMPLETE"
         assert result["coverage_gaps"] == [
