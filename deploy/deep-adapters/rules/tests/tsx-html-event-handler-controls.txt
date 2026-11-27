@@ -1,0 +1,35 @@
+// Inline event-handler attributes are script: a value anywhere in them is reported.
+export function itemButton(item: { name: string }, index: number) {
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return `<button class="pick" onclick="select(${index}, '${item.name}')">Pick</button>`;
+}
+
+export function contextButton(context: string) {
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return `<button onclick="event.stopPropagation(); open('${context}')">Open</button>`;
+}
+
+export function indexButton(index: number) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<button onclick="select(${index})">Pick</button>`;
+}
+
+export function encodedButton(item: { name: string }) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<button onclick="select('${encodeForJs(item.name)}')">Pick</button>`;
+}
+
+export function dataAttributeButton(item: { name: string }) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<button data-name="${escapeHtml(item.name)}" onclick="select(this.dataset.name)">Pick</button>`;
+}
+
+export function constantButton() {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<button onclick="toggle('${PANEL_ID}')">Toggle</button>`;
+}
+
+export function textOnly(item: { name: string }) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<span class="name" title="Name">${item.name}</span>`;
+}

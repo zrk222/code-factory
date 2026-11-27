@@ -3992,3 +3992,55 @@ def test_zap_docker_control_rejects_expired_deadline_before_api(monkeypatch):
         host._zap_docker_control(["docker"], ["network", "create"], 10.9)
 
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "tags, tier",
+    [
+        (["security", "LOW CONFIDENCE"], "lead"),
+        (["security", "MEDIUM CONFIDENCE"], "finding"),
+        (["security", "HIGH CONFIDENCE"], "finding"),
+        (["security"], "finding"),
+        ("not-a-list", "finding"),
+    ],
+)
+def test_report_tier_marks_low_confidence_rules_as_leads(tags, tier):
+    from factoryline.deep_audit_sarif import (
+        _sarif_result_finding,
+        matches_recorded_findings,
+    )
+
+    path = "app.py"
+    result = {
+        "ruleId": "py/example",
+        "level": "warning",
+        "message": {"text": "example"},
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": path},
+                    "region": {"startLine": 3},
+                }
+            }
+        ],
+    }
+    finding = _sarif_result_finding(
+        result,
+        {"py/example": {"properties": {"tags": tags}}},
+        {"id": "native", "engine": "semgrep"},
+        {path: "a" * 64},
+    )
+    assert finding["report_tier"] == tier
+    assert finding["state"] == "observed"
+
+    saved = dict(finding, rerun=["factory", "audit"])
+    assert matches_recorded_findings([finding], [saved])
+    assert not matches_recorded_findings(
+        [finding], [dict(saved, report_tier="changed")]
+    )
+    del saved["report_tier"]
+    assert matches_recorded_findings([finding], [saved])
+    assert not matches_recorded_findings(
+        [finding], [dict(saved, source_sha256="b" * 64)]
+    )
+    assert not matches_recorded_findings([finding], [])

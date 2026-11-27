@@ -2,15 +2,16 @@ package controls
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"github.com/huandu/go-sqlbuilder"
+	"github.com/jmoiron/sqlx"
 	"gorm.io/gorm/clause"
 	"os/exec"
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
-	"github.com/huandu/go-sqlbuilder"
 )
 
 func archive(name string) error {
@@ -193,4 +194,35 @@ func constantProjection() (string, []interface{}) {
 	// ok: go.parameter-sql-text
 	builder.Select(fmt.Sprintf("TRIM('%s')", sqlbuilder.Escape("fixed")))
 	return builder.Build()
+}
+
+func deleteHosts(tx *sqlx.Tx, ids []uint) error {
+	stmt, args, err := sqlx.In("DELETE FROM hosts WHERE id IN (?)", ids)
+	if err != nil {
+		return err
+	}
+	// ok: go.parameter-sql-text
+	_, err = tx.Exec(stmt, args...)
+	return err
+}
+
+func orderedHosts(tx *sqlx.Tx, column string, ids []uint) error {
+	stmt, args, _ := sqlx.In("SELECT id FROM hosts WHERE id IN (?) ORDER BY "+column, ids)
+	// ruleid: go.parameter-sql-text
+	_, err := tx.Exec(stmt, args...)
+	return err
+}
+
+func orderedHostsFromLocal(tx *sqlx.Tx, column string, ids []uint) error {
+	query := "SELECT id FROM hosts WHERE id IN (?) ORDER BY " + column
+	stmt, args, _ := sqlx.In(query, ids)
+	// ruleid: go.parameter-sql-text
+	_, err := tx.Exec(stmt, args...)
+	return err
+}
+
+func renderJsonAttribute(w http.ResponseWriter, req *http.Request) {
+	data, _ := json.Marshal(req.FormValue("label"))
+	// ruleid: go.request-html-injection
+	fmt.Fprintf(w, "<span data-label='%s'></span>", data)
 }

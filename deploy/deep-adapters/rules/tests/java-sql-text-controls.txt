@@ -9,9 +9,9 @@ class SearchStore {
         connection.prepareStatement("insert into " + tempTable + " (entity_id) values (?)").execute();
     }
 
-    String byOwner(String owner) {
+    String byOwner(String query) {
         // ruleid: java.parameter-sql-text
-        return String.format("select id from documents where owner = '%s'", owner);
+        return String.format("select id from documents where owner = '%s'", query);
     }
 
     java.sql.PreparedStatement bound(java.sql.Connection connection) throws java.sql.SQLException {
@@ -47,6 +47,11 @@ class SearchStore {
     String byIdWithSuffix(String id, String suffix) {
         // ruleid: java.parameter-sql-text
         return String.format("select name from documents where id = %s", id) + suffix;
+    }
+
+    String complete(String statement) {
+        // ok: java.parameter-sql-text
+        return "select doc.fullName from XWikiDocument doc " + statement.trim();
     }
 
     static final String KIND_DOCUMENT = "1";

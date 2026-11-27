@@ -2494,7 +2494,7 @@ def _semgrep_scanned_sources(native, sources, lane):
             "E_SEMGREP_EXECUTION", "native report failed or version drifted"
         )
     paths = native.get("paths", {}).get("scanned")
-    if not isinstance(paths, list) or len(paths) > 64:
+    if not isinstance(paths, list) or len(paths) > len(sources):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "bounded native scanned paths required"
         )

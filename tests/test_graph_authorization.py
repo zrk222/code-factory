@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import pytest
+from factoryline import compat_sha as _sha
 from factoryline.graph_authorization import (
     GraphAuthorizationError,
     create_graph_authorization,
@@ -218,3 +219,83 @@ def test_graph_portfolio_cli_is_machine_readable_and_never_executes(tmp_path, ca
     assert payload["cli_marker"] == "GRAPH_PORTFOLIO_CLI_READ_ONLY"
     assert all(value is False for value in payload["authority"].values())
     assert before == after
+
+
+def test_expired_authorization_cannot_execute(tmp_path: Path) -> None:
+    node_id = _prepared_reality(tmp_path)
+    now = datetime(2026, 8, 15, 12, tzinfo=timezone.utc)
+    result = create_graph_authorization(tmp_path, _payload(node_id), now=now)
+    with pytest.raises(GraphAuthorizationError, match="expired"):
+        run_authorized_reality_check(
+            tmp_path, Path(result["path"]), now=now + timedelta(hours=1, minutes=1)
+        )
+
+
+def test_authorization_id_cannot_be_reused(tmp_path: Path) -> None:
+    node_id = _prepared_reality(tmp_path)
+    now = datetime(2026, 8, 15, 12, tzinfo=timezone.utc)
+    create_graph_authorization(tmp_path, _payload(node_id), now=now)
+    with pytest.raises(GraphAuthorizationError, match="already exists"):
+        create_graph_authorization(tmp_path, _payload(node_id), now=now)
+
+
+def test_authorization_path_cannot_escape_the_workspace(tmp_path: Path) -> None:
+    node_id = _prepared_reality(tmp_path)
+    now = datetime(2026, 8, 15, 12, tzinfo=timezone.utc)
+    result = create_graph_authorization(tmp_path, _payload(node_id), now=now)
+    outside = tmp_path.parent / "outside-authorization.json"
+    outside.write_text(
+        Path(result["path"]).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    with pytest.raises(GraphAuthorizationError, match="inside the workspace"):
+        run_authorized_reality_check(tmp_path, outside, now=now + timedelta(minutes=1))
+    with pytest.raises(GraphAuthorizationError):
+        run_authorized_reality_check(
+            tmp_path, Path("../outside-authorization.json"), now=now
+        )
+
+
+def test_repair_plan_authorization_cannot_execute_a_reality_check(
+    tmp_path: Path,
+) -> None:
+    node_id = _prepared_reality(tmp_path)
+    now = datetime(2026, 8, 15, 12, tzinfo=timezone.utc)
+    result = create_graph_authorization(tmp_path, _payload(node_id), now=now)
+    forged = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    forged["action"] = "repair_plan_review"
+    forged["authority"] = {key: False for key in forged["authority"]}
+    core = {key: forged[key] for key in forged if key != "authorization_sha256"}
+    forged["authorization_sha256"] = _sha(core)
+    forged_path = (
+        tmp_path / ".factory" / "graph-ops" / "authorizations" / "forged-action.json"
+    )
+    forged_path.write_text(json.dumps(forged), encoding="utf-8")
+    assert validate_graph_authorization(forged)["action"] == "repair_plan_review"
+    with pytest.raises(GraphAuthorizationError, match="not an unused Reality Check"):
+        run_authorized_reality_check(
+            tmp_path, forged_path, now=now + timedelta(minutes=1)
+        )
+
+
+def test_failed_run_consumes_the_single_authorization(tmp_path: Path) -> None:
+    node_id = _prepared_reality(tmp_path)
+    now = datetime(2026, 8, 15, 12, tzinfo=timezone.utc)
+    result = create_graph_authorization(tmp_path, _payload(node_id), now=now)
+    # Sabotage the run environment without touching any hash-bound bytes:
+    # the positive command writes proof.txt, so a directory at that path fails it.
+    (tmp_path / "proof.txt").unlink()  # left over from the preparation run
+    (tmp_path / "proof.txt").mkdir()
+    executed = run_authorized_reality_check(
+        tmp_path, Path(result["path"]), now=now + timedelta(minutes=1)
+    )
+    assert executed["receipt"]["ok"] is False
+    consumed = validate_graph_authorization(
+        json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    )
+    assert consumed["state"] == "consumed"
+    # Repair the environment; the single authorization must still be gone.
+    (tmp_path / "proof.txt").rmdir()
+    with pytest.raises(GraphAuthorizationError, match="not an unused Reality Check"):
+        run_authorized_reality_check(
+            tmp_path, Path(result["path"]), now=now + timedelta(minutes=2)
+        )

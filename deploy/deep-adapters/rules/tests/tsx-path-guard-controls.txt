@@ -1,0 +1,91 @@
+// A separator-aware containment check must exit before the read on failure.
+// Type checks and names alone provide no containment evidence.
+import path from 'node:path'
+import fs from 'node:fs'
+import fsp from 'node:fs/promises'
+export function serveContained(request: any, response: any, baseDir: string) {
+  const uri = new URL(request.url).pathname
+  // ok: javascript.request-path-traversal
+  const filename = path.resolve(path.join(baseDir, uri))
+  const normalizedBase = baseDir.endsWith(path.sep) ? baseDir : baseDir + path.sep
+  if (filename !== baseDir && filename.indexOf(normalizedBase) !== 0) {
+    response.writeHead(400)
+    return
+  }
+  // ok: javascript.request-path-traversal
+  return fs.readFileSync(filename)
+}
+export function servePrefixOnly(request: any, response: any, baseDir: string) {
+  const uri = new URL(request.url).pathname
+  // ruleid: javascript.request-path-traversal
+  const filename = path.resolve(path.join(baseDir, uri))
+  if (filename.indexOf(baseDir) != 0) {
+    response.writeHead(400)
+    return
+  }
+  return filename
+}
+export function serveStartsWith(request: any, root: string) {
+  // ok: javascript.request-path-traversal
+  const file = path.resolve(root, request.params.name)
+  if (!file.startsWith(root + path.sep)) {
+    throw new Error('outside root')
+  }
+  // ok: javascript.request-path-traversal
+  return fs.readFileSync(file)
+}
+export async function serveTypeCheckOnly(req: any, root: string, next: any, deps: any) {
+  // ruleid: javascript.request-path-traversal
+  const mapPath = path.resolve(root, req.url.slice(1))
+  if (!deps.isPdfFile(mapPath)) {
+    return next()
+  }
+  // ruleid: javascript.request-path-traversal
+  return fsp.readFile(mapPath, 'utf-8')
+}
+export async function serveReadBeforeGuard(req: any, root: string, next: any, deps: any) {
+  // ruleid: javascript.request-path-traversal
+  const mapPath = path.resolve(root, req.url.slice(1))
+  // ruleid: javascript.request-path-traversal
+  const early = await fsp.readFile(mapPath, 'utf-8')
+  if (!deps.isOptimizedDepFile(mapPath)) {
+    return next()
+  }
+  return early
+}
+export async function serveExistenceOnly(req: any, root: string, next: any) {
+  // ruleid: javascript.request-path-traversal
+  const p = path.resolve(root, req.url.slice(1))
+  if (!fs.existsSync(p)) {
+    return next()
+  }
+  // ruleid: javascript.request-path-traversal
+  return fsp.readFile(p, 'utf-8')
+}
+export async function serveNotFailClosed(req: any, root: string, log: any, deps: any) {
+  // ruleid: javascript.request-path-traversal
+  const p = path.resolve(root, req.url.slice(1))
+  if (!deps.isOptimizedDepFile(p)) {
+    log.warn('outside deps')
+  }
+  // ruleid: javascript.request-path-traversal
+  return fsp.readFile(p, 'utf-8')
+}
+
+export function readRawInlinePrefix(req: any, root: string) {
+  const file = root + path.sep + req.params.name
+  if (!file.startsWith(root + path.sep)) {
+    throw new Error('outside root')
+  }
+  // ruleid: javascript.request-path-traversal
+  return fs.readFileSync(file)
+}
+export function readRawStoredPrefix(req: any, root: string) {
+  const file = root + path.sep + req.params.name
+  const prefix = root + path.sep
+  if (!file.startsWith(prefix)) {
+    throw new Error('outside root')
+  }
+  // ruleid: javascript.request-path-traversal
+  return fs.readFileSync(file)
+}
