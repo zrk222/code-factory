@@ -573,6 +573,12 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                 )
                 == assigned
             )
+            cited = {"source_line": 1, "source_excerpt": "def test_owned_control():"}
+            assert review.source_supports_fact(
+                cited,
+                "def test_owned_control():\n    pass",
+                "This function tests the owned control outcome.",
+            )
             for unsupported in (
                 {"source_fact": "REVIEWED"},
                 {"source_fact": "This file only lists pinned package versions."},

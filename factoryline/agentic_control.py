@@ -3477,7 +3477,8 @@ class CoordinatorRequestStore:
         self.path = self.root / ".factory/deep-runs/requests/coordinator-metadata.json"
         self._process_absent = process_absent
         self._lease_cache = None
-        self._paths()
+        with self._metadata_lock:
+            self._paths()
 
     def _paths(self):
         current = self.root
@@ -3526,28 +3527,34 @@ class CoordinatorRequestStore:
 
         @contextmanager
         def transaction():
-            self._paths()
             try:
-                with self._metadata_lock, _authorization_lock(self.path):
-                    snapshot = (
-                        read_run_json(self.path.parent, self.path.name)
-                        if self.path.exists()
-                        else {"rows": {}}
-                    )
-                    rows = self._snapshot(snapshot)
-                    before = _sha(rows)
-                    yield rows
-                    if _sha(rows) != before:
-                        self._paths()
-                        self._tracked_boundary()
-                        value = {"rows": rows}
-                        if len(_canonical({**value, "sha256": _sha(value)})) > LIMIT:
-                            raise AgenticControlError(
-                                "E_COORDINATOR_INTEGRITY",
-                                "metadata byte bound exceeded",
-                            )
-                        write_run_json(self.path.parent, self.path.name, value)
-                    self._remember(rows)
+                with self._metadata_lock:
+                    # A concurrent status or renewal request may release its lock
+                    # file while this transaction is validating the same paths.
+                    self._paths()
+                    with _authorization_lock(self.path):
+                        snapshot = (
+                            read_run_json(self.path.parent, self.path.name)
+                            if self.path.exists()
+                            else {"rows": {}}
+                        )
+                        rows = self._snapshot(snapshot)
+                        before = _sha(rows)
+                        yield rows
+                        if _sha(rows) != before:
+                            self._paths()
+                            self._tracked_boundary()
+                            value = {"rows": rows}
+                            if (
+                                len(_canonical({**value, "sha256": _sha(value)}))
+                                > LIMIT
+                            ):
+                                raise AgenticControlError(
+                                    "E_COORDINATOR_INTEGRITY",
+                                    "metadata byte bound exceeded",
+                                )
+                            write_run_json(self.path.parent, self.path.name, value)
+                        self._remember(rows)
             except GraphAuthorizationError as error:
                 if error.code != "GRAPH_AUTHORIZATION_IN_PROGRESS":
                     raise

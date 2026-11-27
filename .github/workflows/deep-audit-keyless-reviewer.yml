@@ -505,7 +505,7 @@ jobs:
                       and isinstance(excerpt, str) and 4 <= len(excerpt.strip()) <= len(excerpt) <= 96
                       and excerpt in lines[line - 1]):
                   return False
-              tokens = r"\w{3,}"
+              tokens = r"[^\W_]{3,}"
               return bool(set(re.findall(tokens, excerpt.casefold())) & set(re.findall(tokens, fact.casefold())))
 
 
