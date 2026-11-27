@@ -177,6 +177,24 @@ test('requires matching old and fixed evidence for registered scanner path exclu
     advisory_ids: candidate.cases.slice(1, 6).map(row => row.ghsa) }]);
 });
 
+test('rejects retained historical coverage gaps even when all protected hits remain', () => {
+  const { reference, candidate } = fixture();
+  candidate.scanner_path_policy = 'opengrep-2.1.0-target-inventory-v1';
+  const index = 100;
+  const row = candidate.cases[index];
+  reference.cases[index].after = 'coverage_incomplete';
+  row.outcome = 'coverage_incomplete';
+  row.file_coverage.old = [{ path: 'fixture.js', submitted: true, state: 'unreported' }];
+  candidate.summary.scored--;
+  candidate.summary.outcomes.miss--;
+  candidate.summary.outcomes.coverage_incomplete++;
+  const protectedHits = candidate.cases.slice(0, 39).map(item => item.ghsa);
+  const result = verifyRegisteredRecall(reference, candidate, rulesHash, protectedHits);
+  assert.equal(result.summary.retained_protected_hunk_hits, 39);
+  assert.equal(result.decision, 'REJECT');
+  assert.deepEqual(result.failures, [{ code: 'CANDIDATE_COVERAGE_INCOMPLETE', advisory_ids: [row.ghsa] }]);
+});
+
 test('rejects unresolved cases and extra fixed-side residuals', () => {
   const { reference, candidate } = fixture();
   Object.assign(candidate.cases[39], { status: 'no_old_side_source', outcome: 'unknown' });

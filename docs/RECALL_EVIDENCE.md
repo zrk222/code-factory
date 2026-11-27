@@ -27,7 +27,9 @@ The local and GitHub 2.1.0 runs agreed on all 63 hit identities. The GitHub run
 had three incomplete coverage cases with path-policy handling disabled. A
 replay from the captured bytes classified those cases as misses when path
 evidence was enabled and preserved all finding spans. The required GitHub
-check now enables that policy and protects each of the 63 advisory IDs.
+check now enables that policy, rejects incomplete coverage, and protects
+each of the 63 advisory IDs. Fixed-side span review and native gain
+qualification require direct scan evidence for every submitted fixed packet.
 
 [Protected hit set and input hashes](evidence/recall-protected-exposed-161-63.json) ·
 [GitHub retention check](https://github.com/zrk222/code-factory/actions/runs/45925314417/job/140265186499)

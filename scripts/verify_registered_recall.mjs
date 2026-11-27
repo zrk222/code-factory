@@ -74,7 +74,7 @@ function compareCases(reference, candidate, summary, failures, protectedHitIds, 
   const expected = new Set(reference.map(row => row.advisory));
   const rows = readCandidateCases(candidate, failures);
   const missing = [], unexpected = [], bindings = [], invalid = [], fixedGaps = [];
-  const lost = [], gained = [], unresolved = [];
+  const lost = [], gained = [], unresolved = [], incompleteCoverage = [];
   for (const id of rows.keys()) if (!expected.has(id)) unexpected.push(id);
   for (const row of reference) {
     const id = row.advisory;
@@ -99,12 +99,13 @@ function compareCases(reference, candidate, summary, failures, protectedHitIds, 
     if (row.after === 'hit' && outcome !== 'hit') lost.push(id);
     if (row.after === 'hit' && outcome === 'hit') summary.retained_hunk_hits++;
     if (row.after !== 'hit' && outcome === 'hit') gained.push(id);
-    if (outcome === 'timeout' || outcome === 'error' || (!scored(outcome) && outcome !== row.after)) unresolved.push(id);
+    if (protectedHitIds.length && outcome === 'coverage_incomplete') incompleteCoverage.push(id);
+    else if (outcome === 'timeout' || outcome === 'error' || (!scored(outcome) && outcome !== row.after)) unresolved.push(id);
   }
   const issueIds = {
     MISSING_CANDIDATE_ADVISORY: missing, UNEXPECTED_CANDIDATE_ADVISORY: unexpected,
     CASE_INPUT_MISMATCH: bindings, INVALID_CANDIDATE_OUTCOME: invalid,
-    FIXED_SIDE_COVERAGE_INCOMPLETE: fixedGaps,
+    CANDIDATE_COVERAGE_INCOMPLETE: incompleteCoverage, FIXED_SIDE_COVERAGE_INCOMPLETE: fixedGaps,
     LOST_REFERENCE_HIT: lost, LOST_PROTECTED_HIT: [...remainingProtected], NEW_UNRESOLVED_CASE: unresolved,
   };
   for (const [code, ids] of Object.entries(issueIds)) {

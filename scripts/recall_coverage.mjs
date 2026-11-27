@@ -222,6 +222,7 @@ export function coverageGaps(files) {
   return coverageGapEntries(files).map(file => file.path);
 }
 
+// Callers may provide old coverage when they independently replay the path-policy evidence.
 export function completeFixedCoverage(files, packets, oldFiles = []) {
   if (!Array.isArray(files) || !Array.isArray(packets)
     || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
