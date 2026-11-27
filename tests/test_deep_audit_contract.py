@@ -311,18 +311,25 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                 row for row in plan["obligations"] if row["family"] == payload["family"]
             ]
             family_obligation = family_obligations[0]
-            observed = receipts["lanes"][lane_ids[family_obligation["engine"]]]["observations"]
+            observed = receipts["lanes"][lane_ids[family_obligation["engine"]]][
+                "observations"
+            ]
             for path in assigned:
                 source = packet["sources"][path]
-                assert payload["sources"][path] == list(map(list, enumerate(source.splitlines(), 1)))
+                assert payload["sources"][path] == list(
+                    map(list, enumerate(source.splitlines(), 1))
+                )
                 path_evidence = payload["path_evidence"][path]
                 assert path_evidence["source_sha256"] == sha256_bytes(source.encode())
                 assert path_evidence.get("requirements", []) == [
-                    row["id"] for row in family_obligations if path in row["requirements"]
+                    row["id"]
+                    for row in family_obligations
+                    if path in row["requirements"]
                 ]
                 controls = {
                     (row["id"], control["kind"]): (row, control)
-                    for row in family_obligations for control in row["challenges"]
+                    for row in family_obligations
+                    for control in row["challenges"]
                     if control["fixture_path"] == path
                 }
                 supplied = {
@@ -332,47 +339,83 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                 assert set(supplied) == set(controls)
                 for (identity, role), control in supplied.items():
                     obligation, registered = controls[(identity, role)]
-                    lane_receipts = receipts["lanes"][lane_ids[obligation["engine"]]]["observations"]
-                    receipt = next(row for row in lane_receipts
-                                   if row["role"] == role and row["obligation_id"] == identity)
-                    assert control["exit_code"] == registered["expected_exit_code"] == receipt["exit_code"]
-                    assert control["observation_sha256"] == receipt["observation_sha256"]
+                    lane_receipts = receipts["lanes"][lane_ids[obligation["engine"]]][
+                        "observations"
+                    ]
+                    receipt = next(
+                        row
+                        for row in lane_receipts
+                        if row["role"] == role and row["obligation_id"] == identity
+                    )
+                    assert (
+                        control["exit_code"]
+                        == registered["expected_exit_code"]
+                        == receipt["exit_code"]
+                    )
+                    assert (
+                        control["observation_sha256"] == receipt["observation_sha256"]
+                    )
                 assert path_evidence.get("supporting_controls", []) == [
                     [row["id"], control["kind"]]
-                    for row in family_obligations for control in row["challenges"]
-                    if path in control["fixture_manifest"] and path != control["fixture_path"]
+                    for row in family_obligations
+                    for control in row["challenges"]
+                    if path in control["fixture_manifest"]
+                    and path != control["fixture_path"]
                 ]
             assert "They do not establish execution" in body["messages"][0]["content"]
             assert "obligations" not in payload and "observations" not in payload
             family_input = next(
-                item for item in review.family_inputs(plan, packet)
+                item
+                for item in review.family_inputs(plan, packet)
                 if item["family"] == payload["family"]
             )
-            retry = json.loads(review.rationale_messages(family_input, assigned[:1])[1]["content"])
+            retry = json.loads(
+                review.rationale_messages(family_input, assigned[:1])[1]["content"]
+            )
             assert retry["sources"] == {assigned[0]: payload["sources"][assigned[0]]}
-            assert retry["path_evidence"] == {assigned[0]: payload["path_evidence"][assigned[0]]}
+            assert retry["path_evidence"] == {
+                assigned[0]: payload["path_evidence"][assigned[0]]
+            }
             expected_coverage.update(assigned)
-            assert {"decision", "coverage_gaps"}.isdisjoint(body["response_format"]["schema"]["properties"])
-            positive = next(item for item in family_obligation["challenges"] if item["kind"] == "positive")
+            assert {"decision", "coverage_gaps"}.isdisjoint(
+                body["response_format"]["schema"]["properties"]
+            )
+            positive = next(
+                item
+                for item in family_obligation["challenges"]
+                if item["kind"] == "positive"
+            )
             positive_path = positive["fixture_path"]
             positive_receipt = next(
-                item for item in observed
-                if item["role"] == "positive" and item["obligation_id"] == family_obligation["id"]
+                item
+                for item in observed
+                if item["role"] == "positive"
+                and item["obligation_id"] == family_obligation["id"]
             )
             claim = {
-                "kind": "exit_mismatch", "obligation": family_obligation["id"], "path": positive_path,
-                "role": "positive", "observation_sha256": positive_receipt["observation_sha256"],
+                "kind": "exit_mismatch",
+                "obligation": family_obligation["id"],
+                "path": positive_path,
+                "role": "positive",
+                "observation_sha256": positive_receipt["observation_sha256"],
                 "reason": "The positive exit was incorrectly reported as a defect.",
             }
             source = packet["sources"][positive_path].splitlines()[0]
             finding = {
-                "id": "REVIEWED", "severity": "low", "path": positive_path,
-                "evidence": "A routine source observation.", "remediation": "Inspect the source.",
-                "source_line": 1, "source_excerpt": source,
+                "id": "REVIEWED",
+                "severity": "low",
+                "path": positive_path,
+                "evidence": "A routine source observation.",
+                "remediation": "Inspect the source.",
+                "source_line": 1,
+                "source_excerpt": source,
             }
             result = {
                 "findings": [finding],
-                "control_claims": [claim, {**claim, "kind": "missing_observation", "observation_sha256": ""}],
+                "control_claims": [
+                    claim,
+                    {**claim, "kind": "missing_observation", "observation_sha256": ""},
+                ],
                 "path_assessments": {
                     path: {
                         "state": "REVIEWED",
@@ -387,83 +430,170 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert len(rejected) == 3 and grounded["decision"] == "ACCEPT"
             assert not grounded["coverage_gaps"] and not grounded["findings"]
             genuine = {**finding, "id": "fixture-source-defect"}
-            grounded, _ = review.ground_observed_response({**result, "findings": [genuine]}, family_input)
+            grounded, _ = review.ground_observed_response(
+                {**result, "findings": [genuine]}, family_input
+            )
             assert grounded["findings"][0]["id"] == genuine["id"]
             native = {
                 **family_input,
-                "observations": [{"engine": "fixture", "findings": [{
-                    "path": positive_path, "line": 1, "rule_id": "native-rule", "suppressed": False,
-                }]}],
+                "observations": [
+                    {
+                        "engine": "fixture",
+                        "findings": [
+                            {
+                                "path": positive_path,
+                                "line": 1,
+                                "rule_id": "native-rule",
+                                "suppressed": False,
+                            }
+                        ],
+                    }
+                ],
             }
-            for identity in ("native-rule", "fixture:native-rule", "fixture-native-rule"):
+            for identity in (
+                "native-rule",
+                "fixture:native-rule",
+                "fixture-native-rule",
+            ):
                 grounded, rejected = review.ground_observed_response(
-                    {**result, "findings": [{**genuine, "id": identity}, genuine]}, native
+                    {**result, "findings": [{**genuine, "id": identity}, genuine]},
+                    native,
                 )
                 assert [row["id"] for row in grounded["findings"]] == [genuine["id"]]
                 assert rejected[0]["kind"] == "existing_native_finding"
                 assert rejected[0]["native"]["line"] == 1
             different_line = {**genuine, "id": "native-rule", "source_line": 2}
-            native["sources"] = {**native["sources"], positive_path: f"{source}\n{source}"}
+            native["sources"] = {
+                **native["sources"],
+                positive_path: f"{source}\n{source}",
+            }
             grounded, _ = review.ground_observed_response(
                 {**result, "findings": [different_line]}, native
             )
             assert [row["id"] for row in grounded["findings"]] == ["native-rule"]
-            unresolved = {**result, "path_assessments": {
-                **result["path_assessments"],
-                positive_path: {
-                    **result["path_assessments"][positive_path],
-                    "state": "UNRESOLVED",
-                    "source_fact": "Specific source evidence missing",
+            unresolved = {
+                **result,
+                "path_assessments": {
+                    **result["path_assessments"],
+                    positive_path: {
+                        **result["path_assessments"][positive_path],
+                        "state": "UNRESOLVED",
+                        "source_fact": "Specific source evidence missing",
+                    },
                 },
-            }}
-            raw = json.dumps({"choices": [{"message": {"content": json.dumps(unresolved)}, "finish_reason": "stop"}]})
+            }
+            raw = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": json.dumps(unresolved)},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            )
             recorded = review.recorded_response(raw.encode(), family_input)
-            disposition = review.disposition([{"family": payload["family"], "result": recorded, "assigned_paths": assigned}])
+            disposition = review.disposition(
+                [
+                    {
+                        "family": payload["family"],
+                        "result": recorded,
+                        "assigned_paths": assigned,
+                    }
+                ]
+            )
             assert disposition["decision"] == "INCOMPLETE"
             assert disposition["coverage_gaps"] == [
                 f"{payload['family']}: unresolved review for {positive_path}: Specific source evidence missing"
             ]
             with pytest.raises(ValueError, match="invalid grounded review response"):
-                review.ground_observed_response({**result, "coverage_gaps": []}, family_input)
+                review.ground_observed_response(
+                    {**result, "coverage_gaps": []}, family_input
+                )
             for echo in ("", "\t\n", "a" * 161, f"{source}\nseparate line"):
                 grounded, _ = review.ground_observed_response(
-                    {**result, "findings": [{**genuine, "source_excerpt": echo}]}, family_input
+                    {**result, "findings": [{**genuine, "source_excerpt": echo}]},
+                    family_input,
                 )
                 assert grounded["decision"] == "INCOMPLETE" and not grounded["findings"]
-                assert grounded["coverage_gaps"] == [f"{positive_path}: source finding lacks its exact quoted line"]
-            quoted = {**family_input, "sources": {**family_input["sources"], positive_path: "source\tvalue\n"}}
+                assert grounded["coverage_gaps"] == [
+                    f"{positive_path}: source finding lacks its exact quoted line"
+                ]
+            quoted = {
+                **family_input,
+                "sources": {
+                    **family_input["sources"],
+                    positive_path: "source\tvalue\n",
+                },
+            }
             grounded, _ = review.ground_observed_response(
-                {**result, "findings": [{**genuine, "source_excerpt": "source\tvalue\n"}]}, quoted
+                {
+                    **result,
+                    "findings": [{**genuine, "source_excerpt": "source\tvalue\n"}],
+                },
+                quoted,
             )
             assert grounded["findings"][0]["id"] == genuine["id"]
             unbound = {**claim, "observation_sha256": "f" * 64}
-            grounded, rejected = review.ground_observed_response({**result, "control_claims": [unbound],
-                "findings": [{**genuine, "source_line": 999_999}]}, family_input)
-            assert grounded["decision"] == "INCOMPLETE" and len(grounded["coverage_gaps"]) == 1
+            grounded, rejected = review.ground_observed_response(
+                {
+                    **result,
+                    "control_claims": [unbound],
+                    "findings": [{**genuine, "source_line": 999_999}],
+                },
+                family_input,
+            )
+            assert (
+                grounded["decision"] == "INCOMPLETE"
+                and len(grounded["coverage_gaps"]) == 1
+            )
             assert rejected[0]["kind"] == "contradicted_control_claim"
             assert rejected[0]["reference_matches"] is False
             assert not grounded["findings"]
-            assert schema["properties"][positive_path]["properties"]["source_fact"]["minLength"] > len("REVIEWED_NO_INDICATOR")
+            assert schema["properties"][positive_path]["properties"]["source_fact"][
+                "minLength"
+            ] > len("REVIEWED_NO_INDICATOR")
             proven = result["path_assessments"]
-            assert review.reviewed_paths(review.grounded_assessments(proven, family_input["sources"])) == assigned
+            assert (
+                review.reviewed_paths(
+                    review.grounded_assessments(proven, family_input["sources"])
+                )
+                == assigned
+            )
             paraphrased = {
-                path: {**row, "source_fact": "The synthetic input describes the scope of the fixture."}
+                path: {
+                    **row,
+                    "source_fact": "The synthetic input describes the scope of the fixture.",
+                }
                 for path, row in proven.items()
             }
-            assert review.reviewed_paths(review.grounded_assessments(paraphrased, family_input["sources"])) == assigned
+            assert (
+                review.reviewed_paths(
+                    review.grounded_assessments(paraphrased, family_input["sources"])
+                )
+                == assigned
+            )
             for unsupported in (
                 {"source_fact": "REVIEWED"},
                 {"source_fact": "This file only lists pinned package versions."},
                 {"source_line": 2},
-                {"source_excerpt": "pinned package versions",
-                 "source_fact": "This file only lists pinned package versions."},
+                {
+                    "source_excerpt": "pinned package versions",
+                    "source_fact": "This file only lists pinned package versions.",
+                },
             ):
-                followup = {path: {**row, **unsupported} for path, row in proven.items()}
-                assert not review.reviewed_paths(review.grounded_assessments(followup, family_input["sources"]))
+                followup = {
+                    path: {**row, **unsupported} for path, row in proven.items()
+                }
+                assert not review.reviewed_paths(
+                    review.grounded_assessments(followup, family_input["sources"])
+                )
             observed_control = next(
-                item for obligation in family_input["obligations"]
+                item
+                for obligation in family_input["obligations"]
                 if obligation["id"] == claim["obligation"]
-                for item in obligation["controls"] if item["role"] == "positive"
+                for item in obligation["controls"]
+                if item["role"] == "positive"
             )
             observation = observed_control.pop("observed_challenge")
             try:
@@ -475,17 +605,46 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             finally:
                 observed_control["observed_challenge"] = observation
             invalid = {**result, "findings": [{**genuine, "remediation": ""}]}
-            malformed = json.dumps({"choices": [{"message": {"content": json.dumps(invalid)}, "finish_reason": "stop"}]})
+            malformed = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": json.dumps(invalid)},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            )
             recorded = review.recorded_response(malformed.encode(), family_input)
             assert recorded["decision"] == "INCOMPLETE" and not recorded["findings"]
             assert set(recorded["path_assessments"]) == set(assigned)
-            assert all(row["state"] == "UNRESOLVED" for row in recorded["path_assessments"].values())
-            disposition = review.disposition([{"family": payload["family"], "result": recorded, "assigned_paths": assigned}])
+            assert all(
+                row["state"] == "UNRESOLVED"
+                for row in recorded["path_assessments"].values()
+            )
+            disposition = review.disposition(
+                [
+                    {
+                        "family": payload["family"],
+                        "result": recorded,
+                        "assigned_paths": assigned,
+                    }
+                ]
+            )
             assert disposition["decision"] == "INCOMPLETE"
             assert len(disposition["coverage_gaps"]) == len(assigned)
-            return BytesIO(json.dumps({
-                "choices": [{"message": {"content": json.dumps(result)}, "finish_reason": "stop"}],
-            }).encode())
+            return BytesIO(
+                json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {"content": json.dumps(result)},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                ).encode()
+            )
         assert {
             control["role"]
             for row in payload["obligations"]
@@ -722,10 +881,16 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         assert not result["coverage_gaps"]
         for row in coverage:
             if row["family"] in {"runtime", "fuzz"}:
-                assert [claim["kind"] for claim in row["result"]["rejected_claims"]] == [
-                    "assessment_status_as_finding", "contradicted_control_claim", "contradicted_control_claim",
+                assert [
+                    claim["kind"] for claim in row["result"]["rejected_claims"]
+                ] == [
+                    "assessment_status_as_finding",
+                    "contradicted_control_claim",
+                    "contradicted_control_claim",
                 ]
-                assert len(row["result"]["reviewed_paths"]) == len(row["assigned_paths"])
+                assert len(row["result"]["reviewed_paths"]) == len(
+                    row["assigned_paths"]
+                )
                 assert "incorrectly reported as a defect" in row["raw_response"]
     elif mode == "obligation_gap":
         assert result["decision"] == "INCOMPLETE"
