@@ -1785,20 +1785,18 @@ def _codeql_ram_mib(lane: dict) -> int:
 
 
 def _native_argv(commands: list, bindings: dict, lane: dict | None = None) -> list:
-    if lane is not None and any(
-        "{ram_mib}" in value for command in commands for value in command["argv"]
-    ):
-        bindings = {**bindings, "ram_mib": _codeql_ram_mib(lane)}
     result = []
     for command in commands:
         argv = []
         for value in command["argv"]:
+            if "{ram_mib}" in value:
+                if lane is None or value != "--ram={ram_mib}":
+                    raise _deep_audit_io.RuntimeAuditError(
+                        "E_ADAPTER_PROFILE", "lane memory binding required"
+                    )
+                value = f"--ram={_codeql_ram_mib(lane)}"
             for name, bound in bindings.items():
                 value = value.replace("{" + name + "}", str(bound))
-            if "{ram_mib}" in value:
-                raise _deep_audit_io.RuntimeAuditError(
-                    "E_ADAPTER_PROFILE", "lane memory binding required"
-                )
             argv.append(value)
         _deep_audit_io._adapter_command_shape(
             {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}

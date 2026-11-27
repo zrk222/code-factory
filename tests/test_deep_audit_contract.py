@@ -5126,6 +5126,26 @@ def test_codeql_ram_follows_signed_lane_memory(memory_mib, ram_mib):
         _native_argv([command], {})
 
 
+@pytest.mark.parametrize("codeql", [False, True])
+def test_native_ram_binding_preserves_literal_report_path(codeql):
+    from factoryline.deep_audit_contract import _native_argv
+
+    report = "/out/report-{ram_mib}.json"
+    import sys
+
+    argv = [sys.executable, "--output={report}"]
+    expected = [sys.executable, f"--output={report}"]
+    lane = {"engine": "semgrep"}
+    if codeql:
+        argv.append("--ram={ram_mib}")
+        expected.append("--ram=1536")
+        lane = {"engine": "codeql", "memory_mib": 2048}
+    result = _native_argv(
+        [{"argv": argv, "accepted_exit_codes": [0]}], {"report": report}, lane
+    )
+    assert result[0]["argv"] == expected
+
+
 @pytest.mark.parametrize("language", ["python", "javascript", "ruby", "actions"])
 def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     profile = json.loads(
