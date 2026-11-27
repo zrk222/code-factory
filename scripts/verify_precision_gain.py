@@ -2375,34 +2375,10 @@ def _native_review_row(item: dict, capture: dict) -> dict:
     return {**capture, "file": item["file"], "line": line}
 
 
-def adjudicate(args) -> None:
-    packet_bytes = Path(args.packet).read_bytes()
-    packet, packet_sha = json.loads(packet_bytes), digest(packet_bytes)
-    key_bytes = Path(args.key).read_bytes()
-    sealed = json.loads(key_bytes)
-    if sealed["packet_sha256"] != packet_sha:
-        raise SystemExit("key belongs to a different packet")
-    native_evidence = _native_evidence_pin(args, packet, packet_sha, key_bytes)
-    first, second = review_label_pair(args.labels, packet, packet_sha, args.reviewer)
-    disagreements = {
-        index: item["item"]
-        for index, (item, a, b) in enumerate(zip(packet["items"], first, second))
-        if a["verdict"] != b["verdict"]
-    }
-    judged, assignment_sha = {}, None
-    if args.judge:
-        if not args.judge_packet:
-            raise SystemExit(
-                "judge verdicts need the judge assignment they answer (--judge-packet)"
-            )
-        assignment_sha = _verify_judge_assignment(
-            args.judge_packet, packet_sha, args.labels, disagreements
-        )
-        judged = review_judge_verdicts(
-            read_json(Path(args.judge)), packet_sha, disagreements, assignment_sha
-        )
+def _adjudicated_rows(items, captures, first, second, judged, *, native):
+    """Bind each final verdict to the reviewed position and captured location."""
     rows, final = [], {}
-    for index, (item, a, b) in enumerate(zip(packet["items"], first, second)):
+    for index, (item, a, b) in enumerate(zip(items, first, second)):
         if a["verdict"] == b["verdict"]:
             verdict, judge = a["verdict"], None
         elif index in judged:
@@ -2413,10 +2389,10 @@ def adjudicate(args) -> None:
             raise SystemExit(
                 f"duplicate item {item['item']} received different final verdicts"
             )
-        capture = sealed["key"][item["item"]]
+        capture = captures[item["item"]]
         location = (
             _native_review_row(item, capture)
-            if native_evidence is not None
+            if native
             else {
                 "case": item["repository_case"],
                 "file": item["file"],
@@ -2435,6 +2411,43 @@ def adjudicate(args) -> None:
                 "final": verdict,
             }
         )
+    return rows, len(final)
+
+
+def adjudicate(args) -> None:
+    packet_bytes = Path(args.packet).read_bytes()
+    packet, packet_sha = json.loads(packet_bytes), digest(packet_bytes)
+    key_bytes = Path(args.key).read_bytes()
+    sealed = json.loads(key_bytes)
+    if sealed["packet_sha256"] != packet_sha:
+        raise SystemExit("key belongs to a different packet")
+    native_evidence = _native_evidence_pin(args, packet, packet_sha, key_bytes)
+    first, second = review_label_pair(args.labels, packet, packet_sha, args.reviewer)
+    disagreements = {
+        index: item["item"]
+        for index, (item, a, b) in enumerate(zip(packet["items"], first, second))
+        if a["verdict"] != b["verdict"]
+    }
+    judged = {}
+    if args.judge:
+        if not args.judge_packet:
+            raise SystemExit(
+                "judge verdicts need the judge assignment they answer (--judge-packet)"
+            )
+        assignment_sha = _verify_judge_assignment(
+            args.judge_packet, packet_sha, args.labels, disagreements
+        )
+        judged = review_judge_verdicts(
+            read_json(Path(args.judge)), packet_sha, disagreements, assignment_sha
+        )
+    rows, unique_positions = _adjudicated_rows(
+        packet["items"],
+        sealed["key"],
+        first,
+        second,
+        judged,
+        native=native_evidence is not None,
+    )
     inputs = _adjudication_inputs(args, packet_sha, key_bytes)
     if native_evidence is not None:
         inputs["native_evidence"] = native_evidence
@@ -2467,7 +2480,7 @@ def adjudicate(args) -> None:
         json.dumps(
             {
                 "digest": write_json(Path(args.out), out),
-                "unique": len(final),
+                "unique": unique_positions,
                 "verdicts": out["final_counts"],
             }
         )
