@@ -2288,6 +2288,7 @@ def _build_php_interfile_rules(baseline, profile_path, output):
     Path(output).write_bytes(raw)
 
 
+_OPENGREP_VERSIONS = frozenset({"1.15.0", "2.0.0", "2.1.0"})
 _PHP_INTERFILE_FLAGS = (
     "--enable-interfile",
     "--interfile-depth=3",
@@ -2311,12 +2312,61 @@ def _semgrep_rule_prefix(tool_version):
         "--no-rewrite-rule-ids",
         "--config",
     ]
-    if tool_version in {"1.15.0", "2.0.0"}:
+    if tool_version in _OPENGREP_VERSIONS:
         argv[0] = "/usr/bin/opengrep"
         argv.remove("--metrics=off")
     if tool_version == "2.0.0":
         argv[-1:-1] = _PHP_INTERFILE_FLAGS
     return argv
+
+
+class _NativeRuleJsonPairs(list):
+    pass
+
+
+def _semgrep_rule_json(raw, tool_version):
+    try:
+        return _deep_audit_io.strict_json(raw)
+    except RuntimeAuditError as exc:
+        if tool_version != "2.1.0" or exc.code != "E_DUPLICATE_FIELD":
+            raise
+
+    import json
+
+    def restore(value, path=()):
+        if isinstance(value, _NativeRuleJsonPairs):
+            items = [(key, restore(item, (*path, key))) for key, item in value]
+            if (
+                len(path) == 4
+                and path[0] == "results"
+                and isinstance(path[1], int)
+                and path[2:] == ("extra", "metavars")
+                and all(
+                    key.startswith("$") and isinstance(item, dict)
+                    for key, item in items
+                )
+            ):
+                # OpenGrep 2.1 can emit multiple ordered bindings for one name.
+                # Preserve every binding. Conflicting proof fields still fail closed.
+                grouped = {}
+                for key, binding in items:
+                    grouped.setdefault(key, []).append(binding)
+                return {
+                    key: group[0] if len(group) == 1 else group
+                    for key, group in grouped.items()
+                }
+            return _deep_audit_io._object(items)
+        if isinstance(value, list):
+            return [restore(item, (*path, index)) for index, item in enumerate(value)]
+        return value
+
+    try:
+        decoded = restore(json.loads(raw, object_pairs_hook=_NativeRuleJsonPairs))
+        return _deep_audit_io.strict_json(_deep_audit_io.canonical_bytes(decoded))
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        if isinstance(exc, RuntimeAuditError):
+            raise
+        raise RuntimeAuditError("E_REPORT_JSON", "invalid native rule JSON") from exc
 
 
 def _semgrep_rule_runs(
@@ -2396,7 +2446,7 @@ def _semgrep_rule_runs(
             raise error
         with _deep_audit_io.local_file(directory, "report.json").open("rb") as stream:
             raw = stream.read(_deep_audit_io.LIMIT + 1)
-        report = _deep_audit_io.strict_json(raw)
+        report = _semgrep_rule_json(raw, profile["tool_version"])
         observations.append(
             {
                 "rule_id": rule["id"],
@@ -2429,7 +2479,11 @@ def verify_semgrep_rule_execution(
     findings, dispositions = [], []
     for index, (rule, observation) in enumerate(zip(rules, observations)):
         _deep_audit_io._semgrep_observation_identity(
-            rule, observation, index, execution_context=execution_context
+            rule,
+            observation,
+            index,
+            lane["tool_version"],
+            execution_context=execution_context,
         )
         facts = observation["execution"]
         _validate_runner_facts(facts, facts.get("timeout_seconds"))
@@ -2501,7 +2555,9 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
     return rules, observations
 
 
-def _semgrep_observation_identity(rule, observation, index, *, execution_context=None):
+def _semgrep_observation_identity(
+    rule, observation, index, tool_version, *, execution_context=None
+):
     import base64
 
     fields = {
@@ -2542,11 +2598,11 @@ def _semgrep_observation_identity(rule, observation, index, *, execution_context
             "E_SEMGREP_EXECUTION", "native report digest differs"
         )
     _deep_audit_io._semgrep_raw_bindings(
-        observation, index, execution_context=execution_context
+        observation, index, tool_version, execution_context=execution_context
     )
 
 
-def _semgrep_raw_bindings(observation, index, *, execution_context=None):
+def _semgrep_raw_bindings(observation, index, tool_version, *, execution_context=None):
     import base64
     from pathlib import PurePosixPath
 
@@ -2593,7 +2649,7 @@ def _semgrep_raw_bindings(observation, index, *, execution_context=None):
     if (
         len(raw) > _deep_audit_io.LIMIT
         or _deep_audit_io.sha256_bytes(raw) != observation["raw_report_sha256"]
-        or _deep_audit_io.strict_json(raw) != observation["native_report"]
+        or _semgrep_rule_json(raw, tool_version) != observation["native_report"]
     ):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "raw report binding differs"

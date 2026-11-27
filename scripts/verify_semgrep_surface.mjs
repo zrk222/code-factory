@@ -381,7 +381,8 @@ try {
     '--entrypoint', profile.commands[0].argv[0], id, ...argv.map(value => value === '{source}' ? '/src' : value)]);
   const sarif = JSON.parse(native);
   const driver = sarif.runs?.[0]?.tool?.driver;
-  if (sarif.runs?.length !== 1 || driver?.name !== 'Opengrep OSS' ||
+  const expectedDriver = { '1.15.0': 'Opengrep OSS', '2.1.0': 'Opengrep' }[receipt.tool_version];
+  if (!expectedDriver || sarif.runs?.length !== 1 || driver?.name !== expectedDriver ||
       driver.semanticVersion !== receipt.tool_version) throw new Error('Native report driver/version differs from pinned OpenGrep');
   receipt.native_driver = driver.name;
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
@@ -435,7 +436,7 @@ raw=json.loads(sys.stdin.read())
 report=_native_sarif_paths(_native_sarif_metadata(raw, profile, [{"executionSuccessful": True}]), hashes)
 path=root/'native-control.sarif'
 path.write_text(json.dumps(report), encoding='utf-8')
-analyzer={"id":"semgrep-surface", "driver":"Opengrep OSS", "version":profile["tool_version"]}
+analyzer={"id":"semgrep-surface", "driver":sys.argv[4], "version":profile["tool_version"]}
 normalized=normalize_sarif(root, {"path":path.name,"sha256":sha256_bytes(path.read_bytes())}, analyzer, hashes)
 binding={"path":path.name,"sha256":sha256_bytes(path.read_bytes())}
 for bad in ({**hashes, next(iter(hashes)): "0"*64}, {key:value for key,value in hashes.items() if not key.endswith('.go')}, {key:value for key,value in hashes.items() if not key.endswith('.tsx')}):
@@ -451,7 +452,7 @@ for finding in normalized["findings"]:
   for step in flow:
    assert step["source_sha256"] == hashes[step["path"]]
 print(json.dumps(normalized))
-`, temp, JSON.stringify(profile), JSON.stringify(sourceHashes)],
+`, temp, JSON.stringify(profile), JSON.stringify(sourceHashes), expectedDriver],
     { input: native, encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
   if (roundtrip.error || roundtrip.status !== 0) throw new Error(`Native normalization failed: ${roundtrip.error?.message ?? roundtrip.stderr}`);
   const normalized = JSON.parse(roundtrip.stdout);

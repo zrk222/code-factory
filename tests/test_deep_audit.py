@@ -1125,6 +1125,51 @@ def test_semgrep_challenge_rejects_weakened_profile(option):
         _semgrep_challenge_command(profile)
 
 
+@pytest.mark.parametrize(
+    ("driver", "version", "wrong_version"),
+    [("Opengrep OSS", "1.15.0", "2.1.0"), ("Opengrep", "2.1.0", "1.15.0")],
+)
+def test_native_opengrep_pins_driver_identity(driver, version, wrong_version):
+    from factoryline.deep_audit_sarif import _native_sarif_metadata, _sarif_analyzer
+
+    report = {"runs": [{"tool": {"driver": {"name": driver, "rules": []}}}]}
+    profile = {"tool_version": version}
+    bound = _native_sarif_metadata(report, profile, [])
+    _, identity = _sarif_analyzer(
+        bound["runs"][0], {"engine": "semgrep", "tool_version": version}
+    )
+    assert identity == {"driver": driver, "version": version}
+    assert "version" not in report["runs"][0]["tool"]["driver"]
+
+    wrong = {"runs": [{"tool": {"driver": {"name": driver, "version": wrong_version}}}]}
+    with pytest.raises(RuntimeAuditError, match="E_TOOLCHAIN_DRIFT"):
+        _native_sarif_metadata(wrong, profile, [])
+    with pytest.raises(RuntimeAuditError, match="E_ANALYZER_MISMATCH"):
+        _sarif_analyzer(
+            wrong["runs"][0], {"engine": "semgrep", "tool_version": wrong_version}
+        )
+
+
+def test_native_opengrep_preserves_multiple_bindings_without_relaxing_proof_json():
+    from factoryline.deep_audit_attestation import _semgrep_rule_json
+
+    raw = (
+        b'{"results":[{"extra":{"metavars":{'
+        b'"$VALUE":{"start":1},"$VALUE":{"start":2},"$OTHER":{"start":3}'
+        b"}}}]}"
+    )
+    decoded = _semgrep_rule_json(raw, "2.1.0")
+    assert decoded["results"][0]["extra"]["metavars"] == {
+        "$VALUE": [{"start": 1}, {"start": 2}],
+        "$OTHER": {"start": 3},
+    }
+    with pytest.raises(RuntimeAuditError, match="E_DUPLICATE_FIELD"):
+        _semgrep_rule_json(raw, "1.15.0")
+    wrong = raw.replace(b'"metavars"', b'"bindings"')
+    with pytest.raises(RuntimeAuditError, match="E_DUPLICATE_FIELD"):
+        _semgrep_rule_json(wrong, "2.1.0")
+
+
 def test_php_interfile_profile_keeps_bounded_flags_in_challenge_and_rule_execution():
     from factoryline.deep_audit_attestation import _semgrep_rule_prefix
     from factoryline.deep_audit_io import _semgrep_challenge_command
@@ -2617,7 +2662,9 @@ def semgrep_execution_evidence(
             }
         )
         argv = [
-            "/usr/bin/opengrep" if version == "1.15.0" else "/usr/bin/semgrep",
+            "/usr/bin/opengrep"
+            if version in {"1.15.0", "2.1.0"}
+            else "/usr/bin/semgrep",
             "scan",
             "--json",
             "--strict",
@@ -2632,7 +2679,7 @@ def semgrep_execution_evidence(
             f"/tmp/factory-native-test/semgrep-rule-{index}/report.json",
             "/src",
         ]
-        if version == "1.15.0":
+        if version in {"1.15.0", "2.1.0"}:
             argv.remove("--metrics=off")
         observations[-1].update(argv=argv, argv_sha256=digest(argv))
     evidence = {
@@ -3788,7 +3835,7 @@ def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
         ("swift", "app.swift"),
     ],
 )
-@pytest.mark.parametrize("version", ["1.141.0", "1.15.0"])
+@pytest.mark.parametrize("version", ["1.141.0", "1.15.0", "2.1.0"])
 def test_semgrep_native_rules_account_for_applicable_and_other_languages(
     language, source, version
 ):
@@ -3857,7 +3904,7 @@ def test_semgrep_native_rules_account_for_applicable_and_other_languages(
         ("swift", "app.swift"),
     ],
 )
-@pytest.mark.parametrize("version", ["1.141.0", "1.15.0"])
+@pytest.mark.parametrize("version", ["1.141.0", "1.15.0", "2.1.0"])
 def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(
     invalid, language, source, version
 ):
@@ -5914,7 +5961,9 @@ def test_codeql_result_path_maps_exact_versioned_inventory_path():
         == "results/codeql/actions-queries/Security/A.bqrs"
     )
     assert (
-        _codeql_result_path("codeql/rust-queries/0.1.43/queries/security/CWE-319/UseOfHttp.ql")
+        _codeql_result_path(
+            "codeql/rust-queries/0.1.43/queries/security/CWE-319/UseOfHttp.ql"
+        )
         == "results/codeql/rust-queries/queries/security/CWE-319/UseOfHttp.bqrs"
     )
 

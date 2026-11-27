@@ -3910,7 +3910,7 @@ def _semgrep_challenge_result(
 
 
 def _semgrep_challenge_command(profile, *, execution_context=None):
-    from .deep_audit_attestation import _PHP_INTERFILE_FLAGS
+    from .deep_audit_attestation import _OPENGREP_VERSIONS, _PHP_INTERFILE_FLAGS
 
     if profile.get("engine") != "semgrep" or len(profile.get("commands", [])) != 1:
         raise _deep_audit_io.RuntimeAuditError(
@@ -3932,7 +3932,7 @@ def _semgrep_challenge_command(profile, *, execution_context=None):
         "{source}",
     ]
     tool_version = profile.get("tool_version")
-    if tool_version in {"1.15.0", "2.0.0"}:
+    if tool_version in _OPENGREP_VERSIONS:
         expected[0] = "/usr/bin/opengrep"
         expected.remove("--metrics=off")
     if tool_version == "2.0.0":

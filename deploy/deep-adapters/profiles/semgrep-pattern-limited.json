@@ -2,7 +2,7 @@
   "schema": "factory.native-profile.v1",
   "engine": "semgrep",
   "mode": "pattern-limited",
-  "tool_version": "1.15.0",
+  "tool_version": "2.1.0",
   "ruleset_sha256": "673d1a4f7c07b4f2ad57a86801265827669fc611cdbf1329545f1a849eba8886",
   "commands": [
     {

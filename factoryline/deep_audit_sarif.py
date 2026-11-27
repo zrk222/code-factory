@@ -368,16 +368,17 @@ def _sarif_analyzer(run, lane):
     require_str(analyzer["version"], "version")
     names = {
         "codeql": {"codeql"},
-        "semgrep": {"semgrep", "semgrep oss", "opengrep oss"},
+        "semgrep": {"semgrep", "semgrep oss", "opengrep", "opengrep oss"},
         "gitleaks": {"gitleaks"},
         "trivy": {"trivy"},
     }
+    opengrep_versions = {"opengrep": "2.1.0", "opengrep oss": "1.15.0"}
+    name = analyzer["driver"].lower()
     if (
-        analyzer["driver"].lower() not in names[lane["engine"]]
+        name not in names[lane["engine"]]
         or analyzer["version"] != lane["tool_version"]
         or (
-            analyzer["driver"].lower() == "opengrep oss"
-            and analyzer["version"] != "1.15.0"
+            name in opengrep_versions and analyzer["version"] != opengrep_versions[name]
         )
     ):
         raise RuntimeAuditError(
@@ -2996,7 +2997,12 @@ def _sarif_evidence(result, rule, sources):
 
 
 def _usable_native_fingerprint(analyzer: dict, native: dict) -> bool:
-    semgrep = analyzer["driver"].lower() in {"semgrep", "semgrep oss", "opengrep oss"}
+    semgrep = analyzer["driver"].lower() in {
+        "semgrep",
+        "semgrep oss",
+        "opengrep",
+        "opengrep oss",
+    }
     return any(
         value.strip()
         and not (

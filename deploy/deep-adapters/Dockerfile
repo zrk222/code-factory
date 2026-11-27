@@ -39,14 +39,7 @@ ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk-yaml AS semgrep-worker
 # The Semgrep-compatible OSS fork emits native source/sink traces without login.
 # Reuse the shared Python/module closure instead of another interpreter image.
-ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476469656 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_manylinux_x86 /usr/bin/opengrep
-# Materialize the signed-release payload at build time. Runtime scratch remains
-# non-executable; run the fixed, root-owned standalone payload from the image.
-RUN XDG_CACHE_HOME=/opt/factory/opengrep-cache /usr/bin/opengrep --version \
-    && chmod -R a+rX /opt/factory/opengrep-cache \
-    && test -x /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin \
-    && printf '#!/bin/sh\nexec /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin --legacy "$@"\n' > /usr/bin/opengrep \
-    && /usr/bin/opengrep --version
+ADD --checksum=sha256:d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v2.1.0/opengrep_linux_x86 /usr/bin/opengrep
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.json /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/semgrep-pattern-limited.yml /opt/factory/rules/semgrep-pattern-limited.yml
 RUN mkdir -p /src /out /opt/factory/rules
