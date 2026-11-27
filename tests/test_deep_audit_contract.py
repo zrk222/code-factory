@@ -6286,6 +6286,39 @@ def test_coordinator_renewal_contention_retries_and_direct_api_never_renews():
     assert direct["store"].calls == []
 
 
+def test_coordinator_defers_pre_ack_worker_during_metadata_contention(tmp_path):
+    import threading
+    import time
+
+    import factoryline.cli_deep_audit as module
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.graph_authorization import _authorization_lock
+
+    root = tmp_path.resolve()
+    store = CoordinatorRequestStore(root)
+    nonce = "1" * 32
+    owner = module._coordinator_owner(root, nonce, "2" * 64)
+    lease = store.acquire(owner, 60, time.monotonic())
+    request = dict(session_nonce=nonce, workspace=str(root))
+    context = dict(
+        stop=False,
+        expires_at=lease["expires_monotonic"],
+        store=CoordinatorRequestStore(root),
+    )
+    job = dict(cancel=threading.Event(), acknowledged=False, directory=root)
+
+    with _authorization_lock(store.path):
+        assert module._coordinator_heartbeat(root, request, owner, context, job)
+        assert not job["cancel"].is_set()
+        assert not job["acknowledged"]
+
+    assert module._coordinator_heartbeat(root, request, owner, context, job)
+    context["expires_at"] = time.monotonic() - 1
+    assert not module._coordinator_heartbeat(root, request, owner, context, job)
+    assert job["cancel"].is_set()
+    assert not job["acknowledged"]
+
+
 @pytest.mark.parametrize(
     "memory_mib, ram_mib", [(1024, 768), (2048, 1536), (4096, 3072), (8192, 7168)]
 )
