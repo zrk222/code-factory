@@ -32,8 +32,14 @@ ASSEMBLY_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("forgeline", ("smoke", "{f}")),
     ("prestige", ("score", "smoke/{f}.ui", "--json", "--strict")),
     ("hsf", ("compile", "specs/{f}.yaml")),
+    ("specline", ("evidence", "{f}")),
+    ("hsf", ("harness", "check", "--json", "--no-cache")),
     ("forgeline", ("ship", "{f}")),
 )
+
+# Stages that run only when their inputs are declared; they are never part of the base requirement.
+CONDITIONAL_STAGE_KEYS = frozenset({("specline", "evidence")})
+DECISION_HANDOFF_ARGS = ("handoff", "{f}", "specs/{f}.md", "--compile")
 
 
 def receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
@@ -45,6 +51,8 @@ def receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
     stage = args[0].replace("_", "-")
     if module == "specline" and stage == "gate" and len(args) > 1:
         return f"gate-{args[1].replace('_', '-')}"
+    if module == "hsf" and stage == "harness" and len(args) > 1:
+        return f"harness-{args[1].replace('_', '-')}"
     return stage
 
 
@@ -56,7 +64,7 @@ BASE_REQUIRED_MODULES = ("specline", "forgeline")
 
 REQUIRED_COMMANDS = {
     "specline": {"challenge"},
-    "forgeline": {"gate", "fill", "challenge"},
+    "forgeline": {"gate", "fill", "challenge", "handoff"},
     "hsf": {"compile", "goldens", "challenge"},
     "prestige": {
         "audit",
@@ -74,7 +82,11 @@ REQUIRED_COMMANDS = {
 
 
 for _module, _args in ASSEMBLY_STAGES:
-    if _module in {"specline", "forgeline"}:
+    # Conditional stages run only when declared, so they must not make an older companion "incompatible".
+    if (
+        _module in {"specline", "forgeline"}
+        and (_module, receipt_stage(_module, _args)) not in CONDITIONAL_STAGE_KEYS
+    ):
         REQUIRED_COMMANDS[_module].add(_args[0])
 
 

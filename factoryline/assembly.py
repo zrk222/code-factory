@@ -17,8 +17,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from .contract import MODULES, Meter, ensure_layout, Receipt
-from .protocol import ASSEMBLY_STAGES, ASSEMBLY_STAGE_KEYS
+from .contract import LAYOUT, MODULES, Meter, ensure_layout, Receipt
+from .protocol import ASSEMBLY_STAGES, ASSEMBLY_STAGE_KEYS, DECISION_HANDOFF_ARGS
 from .protocol import receipt_stage as _receipt_stage
 from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution
@@ -292,6 +292,25 @@ def _ssat_contract(root: Path, feature: str) -> Path:
         if path.is_file():
             return path
     return root / "specs" / f"{feature}.ssat.yaml"
+
+
+_DECISION_ROW = re.compile(r"^\|\s*\d+\s*\|[^|\n]+\|[^|\n]+\|\s*$", re.M)
+
+
+def decision_source(root: Path, feature: str) -> str | None:
+    """Where the feature's decision logic lives: a legacy HSF spec, or a SpecLine decision table, or nowhere."""
+    if (root / "specs" / f"{feature}.yaml").is_file():
+        return "hsf_spec"
+    try:
+        text = (root / "specs" / f"{feature}.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    section = (
+        text.split("## Decision logic", 1)[1] if "## Decision logic" in text else ""
+    )
+    return (
+        "decision_table" if _DECISION_ROW.search(section.split("\n## ", 1)[0]) else None
+    )
 
 
 MAX_RECEIPT_BYTES = 1_048_576
@@ -706,6 +725,39 @@ def _assembly_agent_contract(root: Path, report: dict, activity: LiveActivity) -
     return True
 
 
+def _bootstrap_step(
+    root: Path,
+    feature: str,
+    args: list[str],
+    release_binding: dict[str, str],
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Run one SpecLine bootstrap command and record its receipt and report row."""
+    stage = args[0]
+    activity.stage_started("specline", stage)
+    with stopwatch() as sw:
+        ok, out = _run_cli(
+            MODULES["specline"]["cli"], args, root, heartbeat=activity.heartbeat
+        )
+    Receipt(
+        module="specline",
+        stage=stage,
+        feature=feature,
+        ok=ok,
+        inputs=dict(release_binding),
+        outputs={"log_tail": out[-2000:]},
+    ).write(root)
+    status = "ok" if ok else "failed"
+    report["stages"].append(
+        {"module": "specline", "stage": stage, "status": status, "wall_ms": sw.wall_ms}
+    )
+    activity.stage_finished("specline", stage, status, wall_ms=sw.wall_ms)
+    if not ok:
+        report["halted_at"] = f"specline:{stage}"
+    return ok
+
+
 def _assembly_spec_bootstrap(
     root: Path,
     feature: str,
@@ -715,40 +767,17 @@ def _assembly_spec_bootstrap(
     report: dict,
     activity: LiveActivity,
 ) -> bool:
-    """Create a missing spec and pause for its author before the build chain."""
+    """Create a missing spec (and SpecLine's context files) and pause for its author."""
     spec_path = root / "specs" / f"{feature}.md"
     if dry_run or spec_path.exists() or not installed["specline"].installed:
         return False
-    activity.stage_started("specline", "new")
-    with stopwatch() as sw:
-        ok, out = _run_cli(
-            MODULES["specline"]["cli"],
-            ["new", feature],
-            root,
-            heartbeat=activity.heartbeat,
-        )
-    Receipt(
-        module="specline",
-        stage="new",
-        feature=feature,
-        ok=ok,
-        inputs=dict(release_binding),
-        outputs={"log_tail": out[-2000:]},
-    ).write(root)
-    report["stages"].append(
-        {
-            "module": "specline",
-            "stage": "new",
-            "status": "ok" if ok else "failed",
-            "wall_ms": sw.wall_ms,
-        }
-    )
-    activity.stage_finished(
-        "specline", "new", "ok" if ok else "failed", wall_ms=sw.wall_ms
-    )
-    if not ok:
-        report["halted_at"] = "specline:new"
-    else:
+    steps = [["new", feature]]
+    if not (root / "context" / "PROGRESS.md").is_file():
+        steps.insert(0, ["init"])
+    if all(
+        _bootstrap_step(root, feature, args, release_binding, report, activity)
+        for args in steps
+    ):
         report["paused_at"] = "author_spec"
         report["next_command"] = (
             f"edit specs/{feature}.md and plans/{feature}.md, then rerun factory assemble {feature}"
@@ -816,6 +845,10 @@ def _plan_assembly_stage(
         args[2] = str(_ssat_contract(root, feature).relative_to(root))
     name = _receipt_stage(module, args)
     stage_id = f"{module}:{name}"
+    if stage_id == "hsf:compile" and decision_source(root, feature) == "decision_table":
+        # The table compiles through ForgeLine's pinned hand-off; the receipt keeps the hsf:compile id.
+        cli = MODULES["forgeline"]["cli"]
+        args = [arg.replace("{f}", feature) for arg in DECISION_HANDOFF_ARGS]
     return _AssemblyStage(
         module,
         cli,
@@ -873,8 +906,9 @@ def _assembly_scope_blocked(
         return True
     if (
         stage.module == "hsf"
+        and stage.name == "compile"
         and stage.required
-        and not (root / f"specs/{feature}.yaml").exists()
+        and decision_source(root, feature) is None
     ):
         _assembly_stage_failure(
             stage,
@@ -941,6 +975,100 @@ def _forge_architect_state(root: Path, feature: str) -> str | None:
         return None
 
 
+# How many leading ForgeLine assembly stages a Forge state already proves. verify-tests, smoke and ship
+# are idempotent in ForgeLine and always run; only the non-repeatable stages are skipped.
+_FORGE_SKIPPABLE = ("architect", "review", "arch-gate")
+_FORGE_STATE_PROVES = {
+    "scaffolded": 1,
+    "filled": 1,
+    "reviewed": 2,
+    "arch_gated": 3,
+    "tests_verified": 3,
+    "smoked": 3,
+    "shipped": 3,
+}
+_FORGE_FAILED_GATE_PROVES = {"fill": 1, "review": 1, "arch_gate": 2}
+
+
+def _forge_stages_proven(root: Path, feature: str) -> tuple[str | None, int]:
+    """Forge state and the count of skippable stages it proves (a blocked run proves those before its failure)."""
+    try:
+        run = json.loads(
+            (root / ".forge" / feature / "state.json").read_text(encoding="utf-8")
+        )
+        state = run.get("state")
+        if state == "blocked":
+            gate = (run.get("history") or [{}])[-1].get("failed_gate")
+            return state, _FORGE_FAILED_GATE_PROVES.get(gate, 3 if gate else 0)
+        return state, _FORGE_STATE_PROVES.get(state, 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None, 0
+
+
+def _prior_passing_receipt(
+    root: Path, feature: str, module: str, stage: str
+) -> str | None:
+    """The newest passing FactoryLine receipt for one stage, as a workspace-relative path."""
+    directory = root / LAYOUT["receipts"]
+    newest: tuple[str, str] | None = None
+    for path in directory.glob(f"{module}-{feature}-{stage}-*.json"):
+        try:
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (
+            receipt.get("ok") is True
+            and receipt.get("stage") == stage
+            and receipt.get("feature") == feature
+        ):
+            key = (str(receipt.get("ts", "")), path.relative_to(root).as_posix())
+            newest = max(newest or key, key)
+    return newest[1] if newest else None
+
+
+def forge_stage_skippable(
+    root: Path, feature: str, stage: _AssemblyStage
+) -> tuple[bool, str | None, str | None]:
+    """Whether the Forge run is already past this stage: (skip, forge state, prior passing receipt).
+
+    A release-contract-required stage is skippable only when a prior passing receipt for it exists. Skipped
+    stages are left out of the run's declared sequence, so whole-run evidence still needs a complete run."""
+    if stage.module != "forgeline" or stage.name not in _FORGE_SKIPPABLE:
+        return False, None, None
+    state, proven = _forge_stages_proven(root, feature)
+    if _FORGE_SKIPPABLE.index(stage.name) >= proven:
+        return False, state, None
+    prior = _prior_passing_receipt(root, feature, stage.module, stage.name)
+    return not (stage.required and prior is None), state, prior
+
+
+def _assembly_forge_satisfied(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Skip a ForgeLine stage the Forge run is already past instead of re-issuing an illegal transition."""
+    skip, state, prior = forge_stage_skippable(root, feature, stage)
+    if dry_run or not skip:
+        return False
+    report["stages"].append(
+        {
+            "module": stage.module,
+            "stage": stage.name,
+            "status": "skipped",
+            "reason": "forge_state_satisfied",
+            "marker": "FORGE_STAGE_ALREADY_SATISFIED",
+            "forge_state": state,
+            "prior_receipt": prior,
+        }
+    )
+    activity.stage_finished(stage.module, stage.name, "skipped")
+    return True
+
+
 def _assembly_forge_architect(
     root: Path,
     feature: str,
@@ -954,11 +1082,12 @@ def _assembly_forge_architect(
     if dry_run or stage.module != "forgeline" or stage.name != "architect":
         return False
     ssat = _ssat_contract(root, feature)
+    ssat_arg = ssat.relative_to(root).as_posix()
     state = _forge_architect_state(root, feature)
     if not ssat.exists():
         report["paused_at"] = "architecture_contract"
         report["next_command"] = (
-            f"write specs/{feature}.ssat.yaml, then run forge expand {feature}"
+            f"write {ssat_arg}, then run forge expand {feature} --root ."
         )
         activity.stage_finished(stage.module, stage.name, "skipped")
         return True
@@ -984,11 +1113,11 @@ def _assembly_forge_architect(
         )
         activity.stage_finished(stage.module, "expand", "ok" if ok else "failed")
         report["paused_at"] = "architecture_approval"
-        report["next_command"] = f"forge gate architected {feature}"
+        report["next_command"] = f"forge gate architected {feature} {ssat_arg} --root ."
         return True
     if state == "expanded":
         report["paused_at"] = "architecture_approval"
-        report["next_command"] = f"forge gate architected {feature}"
+        report["next_command"] = f"forge gate architected {feature} {ssat_arg} --root ."
         activity.stage_finished(stage.module, stage.name, "skipped")
         return True
     return False
@@ -1023,12 +1152,86 @@ def _assembly_forge_review(
         return True
     if state == "scaffolded":
         report["paused_at"] = "implementation_fill"
+        ssat_arg = _ssat_contract(root, feature).relative_to(root).as_posix()
         report["next_command"] = (
-            f"implement the scaffold, then run forge fill {feature} {feature}.ssat.yaml"
+            f"implement the scaffold, then run forge fill {feature} {ssat_arg} --root ."
         )
         activity.stage_finished(stage.module, stage.name, "skipped")
         return True
     return False
+
+
+def _skip_stage(
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+    reason: str,
+    marker: str | None = None,
+) -> str:
+    row = {
+        "module": stage.module,
+        "stage": stage.name,
+        "status": "skipped",
+        "reason": reason,
+    }
+    if marker:
+        row["marker"] = marker
+    report["stages"].append(row)
+    activity.stage_finished(stage.module, stage.name, "skipped")
+    return "skip"
+
+
+def _handoff_probe(root: Path, feature: str, activity: LiveActivity) -> dict:
+    """Export (without compiling) to learn whether goldens exist; ForgeLine pins the bytes either way."""
+    ok, out = _run_cli(
+        MODULES["forgeline"]["cli"],
+        ["handoff", feature, f"specs/{feature}.md", "--root", "."],
+        root,
+        heartbeat=activity.heartbeat,
+    )
+    payload = next(
+        (item for item in _output_objects(out) if "state" in item), None
+    )  # outermost object first
+    return payload or {"state": "blocked", "error": {"message": out[-500:]}}
+
+
+def _decision_handoff_action(
+    root: Path,
+    feature: str,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> str | None:
+    """Skip a table-less handoff, pause for goldens, fail a blocked export, or let compile run."""
+    probe = _handoff_probe(root, feature, activity)
+    state = probe.get("state")
+    if state == "ready_to_compile":
+        return None
+    if state == "no_decisions" and not stage.required:
+        return _skip_stage(
+            stage, report, activity, "no_decision_table", "HSF_DECISIONS_NOT_DECLARED"
+        )
+    if state == "needs_goldens":
+        goldens = os.path.relpath(
+            str(probe.get("goldens") or f"goldens/{feature}_decisions/cases.jsonl"),
+            root.resolve(),
+        )
+        report["paused_at"] = "decision_goldens"
+        report["next_command"] = (
+            f"review golden cases into {Path(goldens).as_posix()} (one JSON object per line), "
+            f"then rerun factory assemble {feature}"
+        )
+        activity.stage_finished(stage.module, stage.name, "skipped")
+        return "halt"
+    error = probe.get("error") or {}
+    _assembly_stage_failure(
+        stage,
+        report,
+        activity,
+        str(error.get("message") or state),
+        str(error.get("code") or "DECISION_HANDOFF_BLOCKED"),
+    )
+    return "halt"
 
 
 def _assembly_hsf_action(
@@ -1039,11 +1242,14 @@ def _assembly_hsf_action(
     report: dict,
     activity: LiveActivity,
 ) -> str | None:
-    """Skip an undeclared decision spec or fail a required compile stage."""
+    """Route the decision stage: legacy HSF spec as before, SpecLine table through forge handoff, else skip."""
     if dry_run or stage.module != "hsf" or stage.name != "compile":
         return None
-    if (root / f"specs/{feature}.yaml").exists():
+    source = decision_source(root, feature)
+    if source == "hsf_spec":
         return None
+    if source == "decision_table":
+        return _decision_handoff_action(root, feature, stage, report, activity)
     if stage.required:
         _assembly_stage_failure(
             stage,
@@ -1053,16 +1259,80 @@ def _assembly_hsf_action(
             "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
         )
         return "halt"
-    report["stages"].append(
-        {
-            "module": stage.module,
-            "stage": stage.name,
-            "status": "skipped",
-            "reason": "no deterministic decision spec",
-        }
+    return _skip_stage(stage, report, activity, "no deterministic decision spec")
+
+
+def _ingest_heal_receipts(root: Path, feature: str) -> list[str]:
+    """Bring HSF heal receipts into FactoryLine receipts before the harness check runs (idempotent, best effort)."""
+    from .proof_reuse import ProofReuseError, ingest_harness_heal
+
+    ingested = []
+    for path in sorted((root / "harness" / "receipts").glob("heal-*.json"))[-20:]:
+        try:
+            result = ingest_harness_heal(root, path.relative_to(root), feature=feature)
+        except ProofReuseError:
+            continue
+        if not result["already_ingested"]:
+            ingested.append(result["receipt"])
+    return ingested
+
+
+def _assembly_harness_action(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> str | None:
+    """Run `hsf harness check` only when the project declares a harness (or a release contract requires it)."""
+    if dry_run or stage.stage_id != "hsf:harness-check":
+        return None
+    if (root / "harness" / "harness.yaml").is_file():
+        report["harness_heals_ingested"] = _ingest_heal_receipts(root, feature)
+        return None
+    if stage.required:
+        _assembly_stage_failure(
+            stage,
+            report,
+            activity,
+            "harness_not_declared",
+            "HARNESS_REQUIRED_EVIDENCE_MISSING",
+        )
+        return "halt"
+    return _skip_stage(
+        stage, report, activity, "harness_not_declared", "HSF_HARNESS_NOT_APPLICABLE"
     )
-    activity.stage_finished(stage.module, stage.name, "skipped")
-    return "skip"
+
+
+def _assembly_evidence_action(
+    root: Path,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> str | None:
+    """Run SpecLine evidence only when the acceptance contract is declared (or a release contract needs it)."""
+    if dry_run or (stage.module, stage.name) != ("specline", "evidence"):
+        return None
+    if (root / ".factory" / "workflow-audit-contract.json").is_file():
+        return None
+    if stage.required:
+        _assembly_stage_failure(
+            stage,
+            report,
+            activity,
+            "acceptance_contract_missing",
+            "ACCEPTANCE_EVIDENCE_REQUIRED_MISSING",
+        )
+        return "halt"
+    return _skip_stage(
+        stage,
+        report,
+        activity,
+        "acceptance_evidence_not_declared",
+        "SPECLINE_EVIDENCE_NOT_APPLICABLE",
+    )
 
 
 def _assembly_dry_run(
@@ -1296,15 +1566,21 @@ def _assembly_stage_halts(
     availability = _assembly_availability_action(root, feature, stage, report, activity)
     if availability is not None:
         return availability == "halt"
+    if _assembly_forge_satisfied(root, feature, dry_run, stage, report, activity):
+        return False
     if _assembly_forge_architect(
         root, feature, dry_run, stage, release_binding, report, activity
     ):
         return True
     if _assembly_forge_review(root, feature, dry_run, stage, report, activity):
         return True
-    hsf_action = _assembly_hsf_action(root, feature, dry_run, stage, report, activity)
-    if hsf_action is not None:
-        return hsf_action == "halt"
+    for action in (
+        _assembly_hsf_action(root, feature, dry_run, stage, report, activity),
+        _assembly_harness_action(root, feature, dry_run, stage, report, activity),
+        _assembly_evidence_action(root, dry_run, stage, report, activity),
+    ):
+        if action is not None:
+            return action == "halt"
     if dry_run:
         _assembly_dry_run(stage, report, activity)
         return False
@@ -1663,6 +1939,21 @@ def assemble_cli(
         }
 
 
+def _read_rollup_receipt(path: Path, feature: str) -> tuple[Receipt, bytes, int]:
+    before = path.stat()
+    if before.st_size > MAX_RECEIPT_BYTES:
+        raise ValueError(f"receipt exceeds {MAX_RECEIPT_BYTES} bytes")
+    raw = path.read_bytes()
+    payload = json.loads(raw.decode("utf-8-sig"))
+    after = path.stat()
+    if (before.st_mtime_ns, before.st_size) != (after.st_mtime_ns, after.st_size):
+        raise ValueError("receipt changed while being read")
+    receipt = Receipt.from_dict(payload)
+    if receipt.feature != feature:
+        raise ValueError("receipt feature does not match requested feature")
+    return receipt, raw, after.st_mtime_ns
+
+
 def rollup_receipts(root: Path, feature: str) -> dict:
     """Load exact-feature receipts with deterministic supersession.
 
@@ -1688,27 +1979,8 @@ def rollup_receipts(root: Path, feature: str) -> dict:
         paths = paths[-MAX_RECEIPT_FILES:]
     for path in paths:
         try:
-            before = path.stat()
-            if before.st_size > MAX_RECEIPT_BYTES:
-                raise ValueError(f"receipt exceeds {MAX_RECEIPT_BYTES} bytes")
-            raw = path.read_bytes()
-            payload = __import__("json").loads(raw.decode("utf-8-sig"))
-            after = path.stat()
-            if (before.st_mtime_ns, before.st_size) != (
-                after.st_mtime_ns,
-                after.st_size,
-            ):
-                raise ValueError("receipt changed while being read")
-            receipt = Receipt.from_dict(payload)
-            if receipt.feature != feature:
-                raise ValueError("receipt feature does not match requested feature")
-        except (
-            ValueError,
-            TypeError,
-            OSError,
-            UnicodeDecodeError,
-            __import__("json").JSONDecodeError,
-        ) as exc:
+            receipt, raw, mtime_ns = _read_rollup_receipt(path, feature)
+        except (ValueError, TypeError, OSError) as exc:
             invalid.append({"path": path.name, "reason": str(exc)[:240]})
             continue
         # Receipt producers historically used both ``verify_tests`` and
@@ -1716,7 +1988,7 @@ def rollup_receipts(root: Path, feature: str) -> dict:
         # stale spelling cannot hide the current result.
         stage = receipt.stage.replace("_", "-")
         key = (receipt.module, stage)
-        rank = (after.st_mtime_ns, path.name)
+        rank = (mtime_ns, path.name)
         row = {
             "module": receipt.module,
             "stage": stage,
@@ -1725,7 +1997,7 @@ def rollup_receipts(root: Path, feature: str) -> dict:
             "inputs": receipt.inputs,
             "outputs": receipt.outputs,
             "receipt_path": path.name,
-            "receipt_mtime_ns": after.st_mtime_ns,
+            "receipt_mtime_ns": mtime_ns,
             "run_id": receipt.run_id,
             "producer_version": receipt.producer_version,
             "receipt_sha256": hashlib.sha256(raw).hexdigest(),
@@ -1739,7 +2011,17 @@ def rollup_receipts(root: Path, feature: str) -> dict:
             key=lambda item: (item[1]["receipt_mtime_ns"], item[1]["receipt_path"]),
         )
     ]
-    return rollup_attributions(stages) | {
+    historical = []
+    current = []
+    for row in stages:
+        destination = (
+            historical
+            if (row["module"], row["stage"]) == ("hsf", "harness-heal")
+            else current
+        )
+        destination.append(row)
+    return rollup_attributions(current) | {
+        "historical_stages": historical,
         "receipt_snapshot": {
             "schema": "factory.receipt-snapshot.v1",
             "feature": feature,

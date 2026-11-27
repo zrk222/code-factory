@@ -16,7 +16,7 @@ from .app_builder import (
     _purpose_from_text,
 )
 from .capability_packs import target_inventory
-from .app_builder import write_output_map
+from .app_builder import NO_EVAL, NO_NETWORK, ssat_module, ssat_yaml, write_output_map
 from . import file_sha256 as _file_sha
 
 
@@ -172,18 +172,47 @@ def _architecture_mermaid(target: str) -> str:
 '''
 
 
-def _forge_state(name: str) -> dict[str, Any]:
-    return {
-        "feature": name,
-        "state": "blocked",
-        "attempts": {},
-        "history": [
-            {
-                "state": "blocked",
-                "note": "target compiled; product-specific proof has not run",
-            }
-        ],
-    }
+def _drop_forge_state(root: Path, name: str) -> None:
+    """ForgeLine owns `.forge/`; a compiled target starts with no Forge run (the app renderer writes one)."""
+    state = root / ".forge" / name / "state.json"
+    if state.is_file():
+        state.unlink()
+        for directory in (state.parent, state.parent.parent):
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
+
+
+MOBILE_VERSION = "0.1.0"
+MOBILE_BUILD = "1"
+
+
+def _display_name(name: str) -> str:
+    return name.replace("-", " ").title()
+
+
+def _bundle_identifier(name: str) -> str:
+    """A placeholder reverse-DNS id derived from the target name; replace com.example before release."""
+    return "com.example." + (
+        "".join(ch for ch in name.lower() if ch.isalnum()) or "app"
+    )
+
+
+def _store_delivery_section(name: str, manifest: dict[str, Any]) -> str:
+    """A-CON-1: the AppForge start for a mobile target, pre-filled from mobile/app.json and the manifest."""
+    purpose = str(manifest["intent"].get("purpose") or "the intended users").replace(
+        '"', "'"
+    )
+    return f"""
+## Store delivery (AppForge)
+
+Commit the target to git first (AppForge records the exact build commit), then start the iOS evidence chain.
+Values come from `mobile/app.json`; replace `com.example` and the mission wording with the real ones:
+
+```bash
+factory appforge init --root . --out-dir .factory/appforge/init-{MOBILE_BUILD} --app-name "{_display_name(name)}" --bundle-identifier {_bundle_identifier(name)} --version {MOBILE_VERSION} --build-number {MOBILE_BUILD} --audience "{purpose}" --primary-job "Use {_display_name(name)}" --desired-emotion "confident" --json
+factory appforge next --root .
+```
+"""
 
 
 def _common_docs(name: str, target: str, manifest: dict[str, Any]) -> str:
@@ -204,8 +233,30 @@ product-specific proof.
 
 ```bash
 factory coverage --root .
-forge verify-tests {name} {name}.ssat.yaml --root .
 factory optimize-pr --changed target_manifest.json --feature {name}
+```
+
+## Bring the starter under ForgeLine
+
+The target starts with no Forge run. From this directory, review the SSAT, approve it, and adopt the generated
+files (nothing is regenerated):
+
+```bash
+forge expand {name} --root .
+forge gate architected {name} {name}.ssat.yaml --root .
+forge architect {name} {name}.ssat.yaml --adopt-existing --root .
+forge status {name} --root .
+```
+
+## Self-healing harness (HSF)
+
+Optional. A harness checks the gates on every assembly run (`hsf:harness-check`) and lets a bounded repair
+loop fix failures without touching protected tests:
+
+```bash
+hsf harness init {name} --target {target}
+hsf harness seed --from all --feature {name}
+hsf harness check
 ```
 
 ## Selected deployment route
@@ -225,7 +276,7 @@ Prerequisites:
 Approval boundary: **{profile["approval"]}**. This route is guidance only;
 `external_effects_authorized` remains `false` until a separate human approval
 grants the exact credentials, spend, and external actions required by the route.
-"""
+""" + (_store_delivery_section(name, manifest) if target == "mobile" else "")
 
 
 def _coverage(name: str, requirements: list[tuple[str, str]]) -> dict[str, Any]:
@@ -367,23 +418,25 @@ def test_worker_rejects_empty_input():
     )
     _write(
         root / f"{name}.ssat.yaml",
-        f"""name: {name}
-modules:
-  - name: worker
-    path: worker/main.py
-    imports: [json, sys]
-    functions:
-      - name: run_task
-        args: ["payload: dict"]
-        returns: "dict"
-        doc: "Return the same normalized result for the same payload."
-dependencies: []
-invariants:
-  - name: no_dynamic_execution
-    forbid_pattern: "\\b(eval|exec)\\s*\\("
-  - name: no_network_clients
-    forbid_pattern: "\\b(requests|urllib3|httpx)\\b"
-""",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "worker",
+                    "worker/main.py",
+                    ["json", "sys"],
+                    [
+                        (
+                            "run_task",
+                            ["payload: dict"],
+                            "dict",
+                            "Return the same normalized result for the same payload.",
+                        )
+                    ],
+                )
+            ],
+            [NO_EVAL, NO_NETWORK],
+        ),
     )
     _write_json(
         root / "smoke" / f"{name}.json",
@@ -445,7 +498,7 @@ import argparse
 import json
 
 
-def render(message: str, *, uppercase: bool = False) -> dict:
+def render(message: str, uppercase: bool = False) -> dict:
     normalized = message.strip()
     if not normalized:
         raise ValueError("message is required")
@@ -483,23 +536,25 @@ def test_cli_rejects_empty_input():
     )
     _write(
         root / f"{name}.ssat.yaml",
-        f"""name: {name}
-modules:
-  - name: cli_app
-    path: cli_app/main.py
-    imports: [argparse, json]
-    functions:
-      - name: render
-        args: ["message: str", "uppercase: bool"]
-        returns: "dict"
-        doc: "Normalize one command input deterministically."
-dependencies: []
-invariants:
-  - name: no_dynamic_execution
-    forbid_pattern: "\\b(eval|exec)\\s*\\("
-  - name: no_network_clients
-    forbid_pattern: "\\b(requests|urllib3|httpx)\\b"
-""",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "cli_app",
+                    "cli_app/main.py",
+                    ["argparse", "json"],
+                    [
+                        (
+                            "render",
+                            ["message: str", "uppercase: bool"],
+                            "dict",
+                            "Normalize one command input deterministically.",
+                        )
+                    ],
+                )
+            ],
+            [NO_EVAL, NO_NETWORK],
+        ),
     )
     _write_json(
         root / "smoke" / f"{name}.json",
@@ -598,25 +653,31 @@ def test_api_rejects_empty_message():
     )
     _write(
         root / f"{name}.ssat.yaml",
-        f"""name: {name}
-modules:
-  - name: api
-    path: backend/main.py
-    imports: [fastapi, pydantic]
-    functions:
-      - name: healthz
-        args: []
-        returns: "dict"
-        doc: "Return stable API health and identity."
-      - name: echo
-        args: ["request: EchoRequest"]
-        returns: "dict"
-        doc: "Return a validated deterministic response."
-dependencies: []
-invariants:
-  - name: no_dynamic_execution
-    forbid_pattern: "\\b(eval|exec)\\s*\\("
-""",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "api",
+                    "backend/main.py",
+                    ["fastapi", "pydantic"],
+                    [
+                        (
+                            "healthz",
+                            [],
+                            "dict",
+                            "Return stable API health and identity.",
+                        ),
+                        (
+                            "echo",
+                            ["request: EchoRequest"],
+                            "dict",
+                            "Return a validated deterministic response.",
+                        ),
+                    ],
+                )
+            ],
+            [NO_EVAL],
+        ),
     )
     _write_json(
         root / "smoke" / f"{name}.json",
@@ -725,23 +786,25 @@ def test_mcp_rejects_unknown_method():
     )
     _write(
         root / f"{name}.ssat.yaml",
-        f"""name: {name}
-modules:
-  - name: mcp_server
-    path: mcp_server/main.py
-    imports: [json, sys]
-    functions:
-      - name: dispatch
-        args: ["request: dict"]
-        returns: "dict"
-        doc: "Dispatch one local JSON-RPC request deterministically."
-dependencies: []
-invariants:
-  - name: stdio_only
-    forbid_pattern: "\\b(socket|requests|urllib3|httpx)\\b"
-  - name: no_dynamic_execution
-    forbid_pattern: "\\b(eval|exec)\\s*\\("
-""",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "mcp_server",
+                    "mcp_server/main.py",
+                    ["json", "sys"],
+                    [
+                        (
+                            "dispatch",
+                            ["request: dict"],
+                            "dict",
+                            "Dispatch one local JSON-RPC request deterministically.",
+                        )
+                    ],
+                )
+            ],
+            [("stdio_only", r"\b(socket|requests|urllib3|httpx)\b"), NO_EVAL],
+        ),
     )
     _write_json(
         root / "smoke" / f"{name}.json",
@@ -862,11 +925,15 @@ def _scaffold_mobile(root: Path, name: str, purpose: str, text: str) -> list[str
         root / "mobile" / "app.json",
         {
             "expo": {
-                "name": name.replace("-", " ").title(),
+                "name": _display_name(name),
                 "slug": name,
-                "version": "0.1.0",
+                "version": MOBILE_VERSION,
                 "orientation": "portrait",
                 "userInterfaceStyle": "automatic",
+                "ios": {
+                    "bundleIdentifier": _bundle_identifier(name),
+                    "buildNumber": MOBILE_BUILD,
+                },
             }
         },
     )
@@ -878,29 +945,31 @@ def _scaffold_mobile(root: Path, name: str, purpose: str, text: str) -> list[str
     _write_backend(root, name, purpose)
     _write(
         root / f"{name}.ssat.yaml",
-        f"""name: {name}
-modules:
-  - name: backend
-    path: backend/main.py
-    imports: [fastapi]
-    functions:
-      - name: healthz
-        args: []
-        returns: "dict"
-        doc: "Return API health and app identity."
-  - name: mobile
-    path: mobile/App.tsx
-    imports: [expo-status-bar, react-native]
-    functions:
-      - name: App
-        args: []
-        returns: "JSX.Element"
-        doc: "Render the governed mobile starter state."
-dependencies: []
-invariants:
-  - name: no_dynamic_execution
-    forbid_pattern: "\\b(eval|exec)\\s*\\("
-""",
+        ssat_yaml(
+            name,
+            [
+                ssat_module(
+                    "backend",
+                    "backend/main.py",
+                    ["fastapi"],
+                    [("healthz", [], "dict", "Return API health and app identity.")],
+                ),
+                ssat_module(
+                    "mobile",
+                    "mobile/App.tsx",
+                    ["expo-status-bar", "react-native"],
+                    [
+                        (
+                            "App",
+                            [],
+                            "JSX.Element",
+                            "Render the governed mobile starter state.",
+                        )
+                    ],
+                ),
+            ],
+            [NO_EVAL],
+        ),
     )
     _write_json(
         root / "smoke" / f"{name}.json",
@@ -1036,6 +1105,7 @@ def _scaffold_app_target(
         text, source_ref, name, "nextjs-fastapi-postgres", purpose
     )
     _render_app(blueprint, out_dir=root, prd_text=prd_text, published_dir=root)
+    _drop_forge_state(root, name)
     if target == "agent-ui":
         _write(root / "frontend" / "app" / "page.tsx", _agent_page(name))
         _write(root / "frontend" / "app" / "globals.css", _agent_css())
@@ -1079,7 +1149,6 @@ testpaths = ["tests"]
         )
     _write_json(root / "target_manifest.json", manifest)
     _write(root / ".factory" / "target-architecture.mmd", _architecture_mermaid(target))
-    _write_json(root / ".forge" / name / "state.json", _forge_state(name))
     _write(root / "docs" / "TARGET_WORKFLOW.md", _common_docs(name, target, manifest))
     output_map = write_output_map(
         root,
@@ -1108,6 +1177,7 @@ testpaths = ["tests"]
         "manifest_sha256": relative_hashes["target_manifest.json"],
         "files": relative_hashes,
         "output_map": {"path": output_map["path"], "sha256": output_map["sha256"]},
+        "forge": {"state": "not_started", "note": "product-specific proof has not run"},
         "claims": {
             "model_calls": 0,
             "runtime_tokens": 0 if target == "worker" else "not_claimed",
@@ -1298,7 +1368,9 @@ def _compile(
         "markers": markers,
         "deployment": manifest["deployment"],
         "next_commands": [
-            f"forge verify-tests {resolved_name} {destination / (resolved_name + '.ssat.yaml')} --root {destination}",
+            f"forge expand {resolved_name} --root {destination}",
+            f"forge gate architected {resolved_name} {resolved_name}.ssat.yaml --root {destination}",
+            f"forge architect {resolved_name} {resolved_name}.ssat.yaml --adopt-existing --root {destination}",
             f"factory coverage --root {destination}",
             f"factory optimize-pr --root {destination} --changed target_manifest.json --feature {resolved_name}",
         ],

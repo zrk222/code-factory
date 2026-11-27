@@ -728,6 +728,19 @@ def _finish_and_close(child, unit, readers, outputs, reason):
         unit.close()
 
 
+def _wait_briefly(child, readers, quantum: float = 0.05) -> None:
+    """Return as soon as the child exits or its output drains, instead of sleeping a fixed 50 ms."""
+    if child.poll() is None:
+        try:
+            child.wait(timeout=quantum)
+        except subprocess.TimeoutExpired:
+            pass
+        return
+    alive = next((reader for reader in readers if reader.is_alive()), None)
+    if alive is not None:
+        alive.join(timeout=quantum)
+
+
 def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
     """Wait for exit and pipe EOF, checking interruption throughout."""
     while True:
@@ -744,7 +757,7 @@ def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
             if failed.is_set():
                 return "output limit exceeded or stream read failed"
             return ""
-        time.sleep(0.05)
+        _wait_briefly(child, readers)
 
 
 def _observe_started_child(observer, child, unit, readers, outputs) -> None:

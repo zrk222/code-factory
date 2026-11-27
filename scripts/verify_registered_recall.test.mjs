@@ -67,6 +67,30 @@ test('retains all reference hits with every input fingerprint verified', () => {
   assert.deepEqual(result.lost, []);
 });
 
+test('protects the exact gained hits even when a replacement preserves the total', () => {
+  const { reference, candidate } = fixture();
+  for (const row of candidate.cases.slice(39, 63)) {
+    Object.assign(row, { outcome: 'hit', hunk_hit: true, hunk_findings: findings });
+  }
+  const protectedHits = candidate.cases.slice(0, 63).map(row => row.ghsa);
+  Object.assign(candidate.summary, { hunk_hits: 63 });
+  Object.assign(candidate.summary.outcomes, { hit: 63, miss: 97 });
+  candidate.scanner_path_policy = 'opengrep-2.1.0-target-inventory-v1';
+  assert.equal(verifyRegisteredRecall(reference, candidate, rulesHash, protectedHits).decision, 'ACCEPT');
+  const lost = candidate.cases[62];
+  Object.assign(lost, { outcome: 'miss', hunk_hit: false, hunk_findings: [] });
+  Object.assign(candidate.cases[63], { outcome: 'hit', hunk_hit: true, hunk_findings: findings });
+  const result = verifyRegisteredRecall(reference, candidate, rulesHash, protectedHits);
+  assert.equal(result.decision, 'REJECT');
+  assert.equal(result.summary.candidate_hunk_hits, 63);
+  assert.equal(result.summary.retained_protected_hunk_hits, 62);
+  assert.deepEqual(result.lost_protected, [lost.ghsa]);
+  assert.deepEqual(result.failures, [{ code: 'LOST_PROTECTED_HIT', advisory_ids: [lost.ghsa] }]);
+  delete candidate.scanner_path_policy;
+  assert(verifyRegisteredRecall(reference, candidate, rulesHash, protectedHits).failures.some(
+    failure => failure.code === 'CANDIDATE_PATH_POLICY_MISMATCH'));
+});
+
 test('rejects spoofed input metadata and recomputes the score summary', () => {
   const { reference, candidate } = fixture();
   candidate.engine.executable_sha256 = 'f'.repeat(64);
@@ -132,6 +156,43 @@ test('rejects scored cases with missing or incomplete fixed-side coverage', () =
   assert.equal(result.summary.retained_hunk_hits, 39);
   assert.deepEqual(result.failures, [{ code: 'FIXED_SIDE_COVERAGE_INCOMPLETE',
     advisory_ids: candidate.cases.slice(0, 4).map(row => row.ghsa) }]);
+});
+
+test('requires matching old and fixed evidence for registered scanner path exclusions', () => {
+  const { reference, candidate } = fixture();
+  candidate.scanner_path_policy = 'opengrep-2.1.0-target-inventory-v1';
+  const excluded = { ...fixedCoverage, state: 'excluded', reason: 'scanner_path_policy', policy: 'engine_target_ignore' };
+  const [matched, oneSided, differentPolicy, changedBytes, unknownPolicy, duplicate] = candidate.cases;
+  matched.file_coverage = { old: [excluded], fixed: [excluded] };
+  const protectedHits = [matched.ghsa];
+  assert.equal(verifyRegisteredRecall(reference, candidate, rulesHash, protectedHits).decision, 'ACCEPT');
+  oneSided.file_coverage = { old: [fixedCoverage], fixed: [excluded] };
+  differentPolicy.file_coverage = { old: [{ ...excluded, policy: 'rule_path_exclusions' }], fixed: [excluded] };
+  changedBytes.file_coverage = { old: [excluded], fixed: [{ ...excluded, bytes: 10 }] };
+  const unsupported = { ...excluded, policy: 'file_size_limit' };
+  unknownPolicy.file_coverage = { old: [unsupported], fixed: [unsupported] };
+  duplicate.file_coverage = { old: [excluded, excluded], fixed: [excluded] };
+  const result = verifyRegisteredRecall(reference, candidate, rulesHash, protectedHits);
+  assert.deepEqual(result.failures, [{ code: 'FIXED_SIDE_COVERAGE_INCOMPLETE',
+    advisory_ids: candidate.cases.slice(1, 6).map(row => row.ghsa) }]);
+});
+
+test('rejects retained historical coverage gaps even when all protected hits remain', () => {
+  const { reference, candidate } = fixture();
+  candidate.scanner_path_policy = 'opengrep-2.1.0-target-inventory-v1';
+  const index = 100;
+  const row = candidate.cases[index];
+  reference.cases[index].after = 'coverage_incomplete';
+  row.outcome = 'coverage_incomplete';
+  row.file_coverage.old = [{ path: 'fixture.js', submitted: true, state: 'unreported' }];
+  candidate.summary.scored--;
+  candidate.summary.outcomes.miss--;
+  candidate.summary.outcomes.coverage_incomplete++;
+  const protectedHits = candidate.cases.slice(0, 39).map(item => item.ghsa);
+  const result = verifyRegisteredRecall(reference, candidate, rulesHash, protectedHits);
+  assert.equal(result.summary.retained_protected_hunk_hits, 39);
+  assert.equal(result.decision, 'REJECT');
+  assert.deepEqual(result.failures, [{ code: 'CANDIDATE_COVERAGE_INCOMPLETE', advisory_ids: [row.ghsa] }]);
 });
 
 test('rejects unresolved cases and extra fixed-side residuals', () => {

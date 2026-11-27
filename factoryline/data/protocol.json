@@ -1,0 +1,46 @@
+{
+  "schema": "factory.protocol-vocabulary.v1",
+  "note": "Published vocabulary for the five bricks. Each companion's FailureClass values must be a subset of failure_classes; every --version --json payload must carry provenance_fields. Minimum versions live only in factoryline/protocol.py MINIMUM_VERSIONS.",
+  "failure_classes": [
+    "accuracy_regression",
+    "ambiguous_requirement",
+    "complexity_exceeded",
+    "hollow_coverage",
+    "hollow_manifest",
+    "hollow_test",
+    "hollow_validator",
+    "inconsistent_logic",
+    "invariant_violation",
+    "invented_param",
+    "nondeterminism",
+    "oracle_weakening",
+    "parser_unsupported",
+    "runtime_crash",
+    "runtime_timeout",
+    "scope_escape",
+    "security_finding",
+    "signature_drift",
+    "stub_unfilled",
+    "syntax_error",
+    "untyped_input",
+    "wrong_output"
+  ],
+  "provenance_fields": [
+    "build_hash",
+    "direct_url",
+    "identity_complete",
+    "install_origin",
+    "package",
+    "python",
+    "receipt_schema",
+    "runtime",
+    "schema",
+    "source_commit",
+    "version"
+  ],
+  "provenance_schemas": [
+    "factory.provenance.v1",
+    "factoryline.provenance.v1",
+    "forgeline.provenance.v1"
+  ]
+}

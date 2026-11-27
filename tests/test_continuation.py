@@ -131,6 +131,10 @@ def _pause_custom_contract(tmp_path, monkeypatch):
 
     monkeypatch.setattr("factoryline.assembly.run_cli", run_cli)
     (tmp_path / "specs").mkdir(exist_ok=True)
+    (tmp_path / "context").mkdir(
+        exist_ok=True
+    )  # an initialised SpecLine project: bootstrap runs only `new`
+    (tmp_path / "context" / "PROGRESS.md").write_text("# Progress\n", encoding="utf-8")
     report = assemble(
         tmp_path, feature, release_contract_path=Path("custom/feature.json")
     )
