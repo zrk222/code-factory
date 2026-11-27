@@ -1,0 +1,77 @@
+{
+ "schema": "factory.precision-tier-prereg.v1",
+ "date": "2026-11-27",
+ "status": "Pre-registered before any scoring of the 323-case reserve or the 10-case Q4 calendar cohort.",
+ "launch_readiness": "Draft. The packet, scoring and corroboration prototypes are archived. Primary endpoint execution requires a verified changed-file population, full alert spans, a sealed arm and tier key, and source-bound corroboration.",
+ "tier_policy": {
+  "finding": "alerts from rules whose metadata.confidence is HIGH or MEDIUM",
+  "lead": "alerts from rules whose metadata.confidence is LOW (listed for review; nothing is suppressed)",
+  "wiring": "deep_audit_sarif._sarif_result_finding sets report_tier from the SARIF rule tag \"<LEVEL> CONFIDENCE\"; missing or unknown confidence stays a finding. Gates are unchanged."
+ },
+ "demotion": {
+  "criterion_D1": "A MEDIUM rule becomes LOW when, at candidate 60f1d3b9 with the main 82c8ada5 scorer, it contributes no hunk-hit case on exposed-161 or Q2 AND its labeled exposed-161 precision is below 60% with at least 5 labeled alerts.",
+  "inputs": "exposed-161 and Q2 (tuning cohorts) and the adjudicated exposed label sets on main; see tuning-rule-table.txt",
+  "result": {
+   "php.request-html-injection": "0 hit cases; 27 TP / 21 FP labeled (56%); 130 alerts -> LOW"
+  },
+  "not_adopted": "A third background tier for LOW rules with no tuning hits (python.parameter-sql-text, go.request-html-injection): no effect on finding-tier precision."
+ },
+ "disclosure": "Q3 alerts at 60f1d3b9 were blind-labeled on 2026-11-27 before this record, and per-tier Q3 results were seen. Q3 is therefore not a confirmation of this policy; the reserve is. No Q3 label is used by any rule or criterion.",
+ "endpoints": {
+  "primary": [
+   "finding-tier precision = TP/(TP+FP) over finding-tier old-side alerts in changed files, Wilson 95% interval",
+   "finding-tier recall = scored cases with a hunk hit from a finding-tier rule / scored cases"
+  ],
+  "secondary": [
+   "overall precision and recall (all tiers)",
+   "lead-tier precision",
+   "UNCLEAR rate",
+   "Q4 (10 cases) reported separately"
+  ],
+  "arms": "frozen candidate vs main, same scorer, engine and profile"
+ },
+ "labeling_protocol": {
+  "population": "census of finding-tier alerts; lead-tier census up to 300 alerts, otherwise a seeded (20261127) sample of 300",
+  "packet": "build_packet.py: repository, file, line, span, claimed weakness, code context (+-5 and +-40 lines, file imports); no advisory id, rule id, arm, tier or outcome",
+  "reviewers": "arm 1 fresh Claude Opus agents, arm 2 fresh Claude Sonnet agents, disjoint packet parts, reading only their part, no web",
+  "judge": "one fresh Fable 5.2 agent on the disagreements, reading only the judge packet",
+  "final": "score_labels.py: agreed verdict, else the judge verdict"
+ },
+ "tools_sha256": {
+  "build_packet.py": "24a4aa622c14a1a498b2b15ef10fe1b6751d066434379aea8270aba1804b97f0",
+  "score_labels.py": "2366898135889db9e2eed59ae1b61363ddc187cc418ae4763ce6e0b1ad7d21fd",
+  "tuning-rule-table.txt": "d2312a9f99d01fc7ec2c12130a38362ea5af125c56314daa9147ef606eda8c11"
+ },
+ "candidate": {
+  "commit": "the commit that adds this record, on #431 (claude/port-q2-rules)",
+  "parent": "60f1d3b9",
+  "rules_sha256": "2dbd16a5134fdc20e54e5a4be6e12c39196a78266db0b984aa0e92d25813ce33",
+  "scorer": "origin/main 82c8ada5: recall_harness 4355f20f, recall_coverage 643ff35f, recall_losses b5a62296",
+  "engine": "OpenGrep 2.1.0, profile 8ec08b71, --timeout=15 --jobs=1"
+ },
+ "arm_C_codeql_corroboration": {
+  "status": "secondary, pre-registered 2026-11-27 before the reserve or Q4 is scored",
+  "definition": "finding = MEDIUM/HIGH alert, or a LOW alert with a CodeQL old-side result (profile codeql-<lang>-full, --ram={ram_mib}) of the same weakness family (CWE tag map in corroborate_tuning.py) whose primary location or any code-flow step is in the same file within 3 lines; lead = every other LOW alert",
+  "scope": "cases in CodeQL-supported ecosystems (PyPI, npm, RubyGems, Maven); other cases fall back to the tier policy and are reported separately",
+  "endpoints": "arm C finding-tier precision and recall on the reserve, beside the tier-only arm, from the same labeled alerts",
+  "tuning_evidence": "exposed-161, 83 CodeQL-scanned cases, head a73d398c: LOW corroborated 9 alerts, labeled 2 TP / 2 FP; LOW uncorroborated 51 alerts, 7 TP / 25 FP; finding-tier hit cases 14 -> 19 of 34. Small samples, tuning data.",
+  "tool_sha256": "7ccad9dc116b5080faf9902081640e6fc2ef35d944d19648bb79e758806eb196"
+ },
+ "arm_D_two_engine_agreement": {
+  "status": "secondary, pre-registered 2026-11-27 before the reserve or Q4 is scored, and before any CodeQL scan of a Q3 case",
+  "definition": "finding = a pattern alert of any tier with a same-family CodeQL old-side result touching the same file within 3 lines (as in arm C); every other alert is a lead",
+  "target": "finding-tier precision >= 6x the Q3 overall pattern precision at 60f1d3b9 (8.2%), i.e. >= 49%; reported with its Wilson interval and alert count",
+  "scope": "CodeQL-supported ecosystems (PyPI, npm, RubyGems, Maven); others reported separately"
+ },
+ "codeql_corroboration_lane": {
+  "method": "old side only; analyze with the scored-family query suites below (security-extended queries whose CWE tags map to the scored families, plus every diagnostics query) instead of the full suite; scanned only for cases with at least one old-side pattern alert in changed files, the only cases where corroboration can change a tier",
+  "equivalence": "on exposed GHSA-23fx, -72qq, -7vxr, -3xgr the family suite gave identical same-family corroboration locations to the full suite (0, 60, 8, 10)",
+  "speed": "per-case wall 809 s -> 351 s on those four cases (2.3x); with alerted-cases-only about 10x or more for a reserve-sized cohort",
+  "suites_sha256": {
+   "java-families.qls": "a4ad351eb61e4c67619e9df8cc49b844133c3e1e34e45d5586e3fedd08106f75",
+   "javascript-families.qls": "6b415a866fb13ef2ba40ffc53140cf057abce76a9e44d82fe54dc573384c66d2",
+   "python-families.qls": "3c1fd18d5adb60b5f67ad7832ec00de603b7fc47c3d5383c3ac4feea09ab1d01",
+   "ruby-families.qls": "8a99c7caf231a6feaf1c63bd215c5ff5bc57431db05b7b55193e2986654bbde8"
+  }
+ }
+}

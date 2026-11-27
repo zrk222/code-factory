@@ -59,3 +59,15 @@ function show_balance() {
     // ruleid: php.request-html-injection
     echo '<b>' . $balance . $_POST['label'] . '</b>';
 }
+
+function show_profile() {
+    $label = $_POST['label'];
+    // ok: php.request-html-injection
+    echo '<td>' . dol_escape_htmltag($label) . '</td>';
+    // ok: php.request-html-injection
+    echo '<td>' . format_date($_POST['when']) . '</td>';
+    // ruleid: php.request-html-injection
+    echo '<td>' . dol_escape_htmltag($label) . $label . '</td>';
+    // ruleid: php.request-html-injection
+    echo '<td>' . escape_sql($label) . '</td>';
+}

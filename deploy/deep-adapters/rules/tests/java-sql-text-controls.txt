@@ -49,5 +49,10 @@ class SearchStore {
         return String.format("select name from documents where id = %s", id) + suffix;
     }
 
+    String complete(String statement) {
+        // ok: java.parameter-sql-text
+        return "select doc.fullName from XWikiDocument doc " + statement.trim();
+    }
+
     static final String KIND_DOCUMENT = "1";
 }

@@ -59,3 +59,31 @@ export function identifierAndValue(table: string, id: string) {
   // ruleid: javascript.parameter-sql-text
   return 'SELECT * FROM "' + table + '" WHERE id = ' + id;
 }
+
+// A local alias of an identifier quoting helper quotes like the helper itself.
+export function aliasedQuoting(options: { db: any; nodeIds: string[]; key: string }) {
+  const { db, nodeIds, key } = options;
+  const qi = db.sequelize.getQueryInterface();
+  const q = qi.quoteIdentifier.bind(qi);
+  // ok: javascript.parameter-sql-text
+  const bound = `SELECT ${q(key)} FROM t WHERE ${q(key)} IN ($1)`;
+  // ruleid: javascript.parameter-sql-text
+  const values = `SELECT ${q(key)} FROM t WHERE ${q(key)} IN ('${nodeIds.join("','")}')`;
+  return [bound, values];
+}
+
+export function arrowAlias(qi: any, key: string, value: string) {
+  const q = (name: string) => qi.quoteIdentifier(name);
+  const e = qi.escapeId;
+  // ok: javascript.parameter-sql-text
+  const ids = `SELECT * FROM t WHERE ${q(key)} = $1 AND ${e(key)} = $2`;
+  // ruleid: javascript.parameter-sql-text
+  const named = `SELECT * FROM t WHERE ${q(key)} = '${value}'`;
+  return [ids, named];
+}
+
+export function notAQuoter(qi: any, key: string) {
+  const f = qi.format.bind(qi);
+  // ruleid: javascript.parameter-sql-text
+  return `SELECT * FROM t WHERE ${f(key)} = 1`;
+}

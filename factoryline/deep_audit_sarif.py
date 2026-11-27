@@ -443,6 +443,21 @@ def _sarif_result_finding(result, rules, lane, sources):
     finding["review_domain"] = (
         "security" if isinstance(tags, list) and "security" in tags else "unclassified"
     )
+    # Report tier only (gates are unchanged): LOW-confidence rules are review leads.
+    # Missing or unknown confidence stays a finding, so the label never hides a result.
+    confidence = (
+        next(
+            (
+                t[: -len(" CONFIDENCE")]
+                for t in tags
+                if isinstance(t, str) and t.endswith(" CONFIDENCE")
+            ),
+            None,
+        )
+        if isinstance(tags, list)
+        else None
+    )
+    finding["report_tier"] = "lead" if confidence == "LOW" else "finding"
     native = (
         _native(result)
         if result.get("partialFingerprints") or result.get("fingerprints")
