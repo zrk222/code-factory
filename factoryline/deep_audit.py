@@ -2053,7 +2053,9 @@ def has_fuzz_controls(lane, inventory, obligations):
     )
 
 
-def _validate_fuzz_host_replay(replay, lane, validate_facts, validate_digest):
+def _validate_fuzz_host_replay(
+    replay, lane, validate_facts, validate_digest, *, error_code="E_FUZZ_REPLAY"
+):
     facts = replay.get("execution", {})
     validate_facts(facts, facts["timeout_seconds"])
     if (
@@ -2061,9 +2063,7 @@ def _validate_fuzz_host_replay(replay, lane, validate_facts, validate_digest):
         or replay.get("cleanup_confirmed") is not True
         or not _osv_replay_process_valid_for_review(facts)
     ):
-        raise RuntimeAuditError(
-            "E_FUZZ_REPLAY", "control replay execution is incomplete"
-        )
+        raise RuntimeAuditError(error_code, "control replay execution is incomplete")
     for key in ("native_execution_sha256", "runtime_sha256", "command_sha256"):
         validate_digest(replay.get(key), key)
 
@@ -2225,22 +2225,27 @@ def _completion_replay_binding(
 ):
     from .runtime_audit_common import _validate_runner_facts, require_digest
 
-    _validate_fuzz_host_replay(replay, lane, _validate_runner_facts, require_digest)
-    if lane["engine"] == "atheris":
-        expected = _deep_audit_io._fuzz_replay_expected(
-            {
-                "lane": lane,
-                "inventory": inventory,
-                "coverage": coverage,
-                "report": report,
-                "challenges": bundle["artifacts"][lane["challenge_report"]],
-                "obligations": obligations,
-            }
+    engine = lane["engine"]
+    _validate_fuzz_host_replay(
+        replay,
+        lane,
+        _validate_runner_facts,
+        require_digest,
+        error_code="E_OSV_REPLAY" if engine == "osv" else "E_FUZZ_REPLAY",
+    )
+    request = {"lane": lane, "inventory": inventory, "coverage": coverage}
+    if engine in {"atheris", "osv"}:
+        request.update(
+            report=report,
+            challenges=bundle["artifacts"][lane["challenge_report"]],
+            obligations=obligations,
         )
+    if engine == "atheris":
+        expected = _deep_audit_io._fuzz_replay_expected(request)
+    elif engine == "osv":
+        expected = _osv_replay_expected(request)
     else:
-        expected = _codeql_replay_expected(
-            {"lane": lane, "inventory": inventory, "coverage": coverage}
-        )
+        expected = _codeql_replay_expected(request)
     if any(replay.get(key) != value for key, value in expected.items()):
         raise RuntimeAuditError("E_NATIVE_COMPLETION", "host replay binding differs")
 
@@ -2250,15 +2255,16 @@ def apply_retained_native_completion(
 ):
     """Reapply independently bound host replay when reading the original bundle."""
     engine = lane["engine"]
-    if engine == "codeql" and saved.get("codeql_replay"):
-        replay = saved["codeql_replay"]
+    if engine in {"codeql", "osv"} and (replay := saved.get(f"{engine}_replay")):
         coverage = bundle["artifacts"][lane["coverage"]]
         report = bundle["artifacts"][lane["report"]]
         _completion_replay_binding(
             replay, lane, inventory, coverage, report, bundle, obligations
         )
         result["gaps"] = [
-            gap for gap in result["gaps"] if gap != "CODEQL_NATIVE_REPLAY_REQUIRED"
+            gap
+            for gap in result["gaps"]
+            if gap != f"{engine.upper()}_NATIVE_REPLAY_REQUIRED"
         ]
     elif (
         engine == "atheris"

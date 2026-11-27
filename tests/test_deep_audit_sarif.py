@@ -778,7 +778,7 @@ def _osv_challenge_package(name, version, vulnerabilities=()):
     }
 
 
-def _osv_challenge_fixture(kind):
+def _osv_challenge_fixture(kind, *, retained=False):
     from factoryline.deep_audit_sarif import _osv_challenge_rows
 
     target = {
@@ -793,6 +793,17 @@ def _osv_challenge_fixture(kind):
     )
     anchor = "requirements.txt"
     other_advisory = _osv_challenge_advisory(details="unrelated package row")
+    if retained:
+        other_advisory.update(id="OSV-FIXTURE-UNRELATED", aliases=[])
+    other_path_package = (
+        _osv_challenge_package("other-library", "1.2.3", [deepcopy(other_advisory)])
+        if retained
+        else _osv_challenge_package(
+            target["package"],
+            target["vulnerable_version"],
+            [_osv_challenge_advisory(details="same advisory, other path")],
+        )
+    )
     target_advisories = [_osv_challenge_advisory()] if kind == "positive" else []
     report = {
         "results": [
@@ -812,13 +823,7 @@ def _osv_challenge_fixture(kind):
             },
             {
                 "source": {"path": "other.txt"},
-                "packages": [
-                    _osv_challenge_package(
-                        target["package"],
-                        target["vulnerable_version"],
-                        [_osv_challenge_advisory(details="same advisory, other path")],
-                    )
-                ],
+                "packages": [other_path_package],
             },
         ]
     }
@@ -839,10 +844,49 @@ def _osv_challenge_fixture(kind):
     return result, report, lane, sources, obligation
 
 
+def _osv_fixture_lookup_ledger(report, database_sha256, *, before_suppression=None):
+    from factoryline.deep_audit_sarif import _osv_lookup_targets
+
+    catalog = sorted([OSV_CHALLENGE_ALIASES[0], "OSV-FIXTURE-UNRELATED"])
+    catalog_sha256 = digest(catalog)
+    queries = []
+    for package, target in sorted(_osv_lookup_targets(report).items()):
+        matches = target if before_suppression is None else before_suppression[package]
+        query = {
+            **json.loads(package),
+            "evaluated_advisories": len(catalog),
+            "matched_advisories": sorted(matches["matched"]),
+        }
+        queries.append(
+            {
+                **query,
+                "locations": sorted(target["locations"]),
+                "state": "EXECUTED",
+                "evaluated_sha256": catalog_sha256,
+                "decision_sha256": digest({**query, "catalog_sha256": catalog_sha256}),
+            }
+        )
+    return {
+        "schema": "factory.osv-lookup-execution.v1",
+        "upstream_commit": "a14aa98ab8408547083d4411091c5fbaf5b47d8e",
+        "database_sha256": database_sha256,
+        "catalog_advisories": len(catalog),
+        "catalog_sha256": catalog_sha256,
+        "extractor_runs": [
+            {
+                "plugins": ["python/requirements"],
+                "statuses": [{"name": "python/requirements", "state": "SUCCEEDED"}],
+            }
+        ],
+        "queries": queries,
+    }
+
+
 def _osv_retained_evidence_fixture():
     from factoryline.deep_audit_io import _codeql_native_blob, _osv_suppression_bytes
     from factoryline.deep_audit_sarif import (
         _osv_challenge_rows,
+        _osv_lookup_targets,
         _osv_source_accounting,
     )
 
@@ -900,8 +944,16 @@ def _osv_retained_evidence_fixture():
     }
     observations = []
     primary_report = None
+    _, positive_report, _, _, _ = _osv_challenge_fixture("positive", retained=True)
+    before_suppression = _osv_lookup_targets(positive_report)
     for control in controls:
-        _, report, _, _, _ = _osv_challenge_fixture(control["kind"])
+        kind = control["kind"]
+        _, report, _, _, _ = _osv_challenge_fixture(kind, retained=True)
+        report["factory_lookup_execution"] = _osv_fixture_lookup_ledger(
+            report,
+            database["sha256"],
+            before_suppression=before_suppression if kind == "mutation" else None,
+        )
         summary = _osv_challenge_rows(
             report, lane, manifest, obligation, control["kind"]
         )
@@ -1661,6 +1713,7 @@ def test_osv_retained_evidence_tampering_is_rejected(damage):
         "oversized_raw_report",
         "source_manifest_drift",
         "unsigned_alias",
+        "missing_lookup_ledger",
         "effective_policy_drift",
         "duplicate_artifact_role",
     ],
@@ -1706,12 +1759,15 @@ def test_osv_retained_challenge_tampering_is_rejected(damage):
     elif damage == "source_manifest_drift":
         evidence["source_manifest"]["requirements.txt"] = "f" * 64
         evidence["source_manifest_sha256"] = digest(evidence["source_manifest"])
-    elif damage == "unsigned_alias":
+    elif damage in {"unsigned_alias", "missing_lookup_ledger"}:
         raw_report = deepcopy(observation["report"]["native_report"])
-        raw_report["results"][0]["packages"][0]["vulnerabilities"][0]["aliases"] = [
-            "GHSA-abcd-1234-efgh",
-            "OSV-UNSIGNED",
-        ]
+        if damage == "unsigned_alias":
+            raw_report["results"][0]["packages"][0]["vulnerabilities"][0]["aliases"] = [
+                "GHSA-abcd-1234-efgh",
+                "OSV-UNSIGNED",
+            ]
+        else:
+            del raw_report["factory_lookup_execution"]
         raw = canonical_bytes(raw_report)
         evidence["raw_report"] = _codeql_native_blob(raw)
         observation["execution"]["raw_report_sha256"] = sha256_bytes(raw)
