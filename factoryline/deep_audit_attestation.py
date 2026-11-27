@@ -3235,9 +3235,10 @@ def _codeql_archived_sources(source, scratch, required):
                 raise _deep_audit_io.RuntimeAuditError(
                     "E_CODEQL_SOURCE", "source archive entry budget exceeded"
                 )
+            member_counts = _deep_audit_io.Counter(names)
             for path, seal in required.items():
                 name = prefix + _deep_audit_io.relative_path(path)
-                if names.count(name) != 1:
+                if member_counts[name] != 1:
                     continue
                 candidate = _deep_audit_io.bound_bytes(
                     source, {"path": path, "sha256": seal}
