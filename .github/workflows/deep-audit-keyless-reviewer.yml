@@ -22,10 +22,16 @@ jobs:
     outputs:
       artifact_name: ${{ steps.build.outputs.artifact_name }}
       runtime_sha256: ${{ steps.build.outputs.runtime_sha256 }}
+      challenge_summary_sha256: ${{ steps.build.outputs.challenge_summary_sha256 }}
     steps:
       - name: Build the pinned offline reviewer runtime
         id: build
+        env:
+          # Register the digest verified from the retained native bundles, outside the review packet.
+          REVIEW_CHALLENGE_SUMMARY_SHA256: ${{ vars.CODE_FACTORY_NATIVE_REVIEW_CHALLENGE_SHA256 }}
         run: |
+          [[ -z "$REVIEW_CHALLENGE_SUMMARY_SHA256" || "$REVIEW_CHALLENGE_SUMMARY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'challenge_summary_sha256=%s\n' "$REVIEW_CHALLENGE_SUMMARY_SHA256" >> "$GITHUB_OUTPUT"
           git init --quiet llama
           git -C llama remote add origin https://github.com/ggml-org/llama.cpp.git
           git -C llama fetch --depth 1 origin b1b770d90d94cad9e9ea5b993bdbc383a522fb28
@@ -56,6 +62,7 @@ jobs:
     env:
       REVIEW_FAMILY: ${{ matrix.family }}
       REVIEW_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}
+      REVIEW_CHALLENGE_SUMMARY_SHA256: ${{ needs.prepare.outputs.challenge_summary_sha256 }}
     permissions:
       contents: read
     steps:
@@ -228,10 +235,15 @@ jobs:
 
 
           def bound_challenge_observations(plan, packet, observations):
+              registered = os.environ.get("REVIEW_CHALLENGE_SUMMARY_SHA256")
+              if registered:
+                  require_digest(registered, "registered challenge summary digest")
               if "challenge_receipts" not in packet:
+                  if registered:
+                      raise ValueError("the registered challenge summary is missing")
                   return {}
               summary = packet["challenge_receipts"]
-              if not isinstance(summary, dict) or digest(summary) != CHALLENGE_SUMMARY_SHA256:
+              if not isinstance(summary, dict) or digest(summary) != (registered or CHALLENGE_SUMMARY_SHA256):
                   raise ValueError("challenge summary differs from the registered receipt")
               if (summary.get("schema") != "factory.keyless-challenge-summary.v1"
                   or summary.get("run_id") != packet["binding"]["run_id"]
@@ -901,6 +913,7 @@ jobs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     env:
       REVIEW_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}
+      REVIEW_CHALLENGE_SUMMARY_SHA256: ${{ needs.prepare.outputs.challenge_summary_sha256 }}
     permissions:
       contents: read
     steps:
