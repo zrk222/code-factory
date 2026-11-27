@@ -15,6 +15,23 @@ pass `--control-timeout 15` to the OpenGrep `controls` or `evaluate` command.
 Both control arms use that budget from their first scan. Advisory scans keep
 their configured budget, and the receipt records the control timeout.
 
+## Registered exposed development replay
+
+At commit dc0f75a2, OpenGrep 2.1.0 detected **63 of 161** registered exposed
+advisories under strict hunk scoring (39.13%). The replay retained all 39
+reference hits and added 24. There were no timeouts and two cases had no scored
+outcome. The default OpenGrep 1.15.0 profile recorded **60 of 161** under its
+verified coverage policy. Both engines recorded 16 alerts on fixed hunks.
+
+The local and GitHub 2.1.0 runs agreed on all 63 hit identities. The GitHub run
+had three incomplete coverage cases with path-policy handling disabled. A
+replay from the captured bytes classified those cases as misses when path
+evidence was enabled and preserved all finding spans. The required GitHub
+check now enables that policy and protects each of the 63 advisory IDs.
+
+[Protected hit set and input hashes](evidence/recall-protected-exposed-161-63.json) ·
+[GitHub retention check](https://github.com/zrk222/code-factory/actions/runs/45925314417/job/140265186499)
+
 ## Parser coverage
 
 Score only the original pinned source bytes. Equal length and stable character

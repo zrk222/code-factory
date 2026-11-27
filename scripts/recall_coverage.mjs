@@ -222,14 +222,19 @@ export function coverageGaps(files) {
   return coverageGapEntries(files).map(file => file.path);
 }
 
-export function completeFixedCoverage(files, packets) {
+export function completeFixedCoverage(files, packets, oldFiles = []) {
   if (!Array.isArray(files) || !Array.isArray(packets)
     || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
   const byPath = new Map(files.map(file => [file.path, file]));
-  return byPath.size === files.length && packets.every(packet => {
+  const oldByPath = new Map(oldFiles.map(file => [file?.path, file]));
+  return byPath.size === files.length && oldByPath.size === oldFiles.length && packets.every(packet => {
     const file = byPath.get(packet?.path);
-    return file?.submitted === true && file.state === 'reported_scanned'
-      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
+    if (file?.submitted !== true || file.sha256 !== packet.sha256 || file.bytes !== packet.bytes) return false;
+    if (file.state === 'reported_scanned') return true;
+    const old = oldByPath.get(file.path);
+    return file.state === 'excluded' && file.reason === 'scanner_path_policy'
+      && ['engine_target_ignore', 'rule_path_exclusions'].includes(file.policy)
+      && old?.submitted === true && old.state === 'excluded' && old.reason === file.reason && old.policy === file.policy;
   });
 }
 
