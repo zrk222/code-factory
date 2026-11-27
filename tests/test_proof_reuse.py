@@ -11,6 +11,9 @@ from factoryline.proof_reuse import (
     record_proof,
     verify_proof_receipt,
 )
+from factoryline import proof_reuse
+from factoryline.assembly import rollup_receipts
+from factoryline.contract import Receipt
 from factoryline.cli import main
 from pathlib import Path
 import hashlib
@@ -1155,12 +1158,12 @@ def _heal_workspace(tmp_path, *, status="healthy", classification="ok", read_onl
     return Path("harness/receipts/heal-1.json")
 
 
-def test_healthy_heal_receipt_becomes_a_receipt_and_read_only_proofs(tmp_path):
+def test_healthy_heal_receipt_becomes_historical_evidence(tmp_path):
     from factoryline.proof_reuse import ingest_harness_heal
 
     heal = _heal_workspace(tmp_path)
     result = ingest_harness_heal(tmp_path, heal, feature="calc")
-    assert result["ok"] is True and result["proofs"] == ["harness:unit"]
+    assert result["ok"] is True and result["proofs"] == []
     written = json.loads((tmp_path / result["receipt"]).read_text(encoding="utf-8"))
     assert (
         written["module"] == "hsf"
@@ -1182,7 +1185,7 @@ def test_healthy_heal_receipt_becomes_a_receipt_and_read_only_proofs(tmp_path):
         ("healthy", "ok", False),
     ],
 )
-def test_only_fresh_green_read_only_gates_of_a_healthy_run_become_proofs(
+def test_historical_gate_outcomes_cannot_become_proofs(
     tmp_path, status, classification, read_only
 ):
     from factoryline.proof_reuse import ingest_harness_heal
@@ -1238,7 +1241,7 @@ def test_ingest_harness_cli(tmp_path, capsys):
         )
         == 0
     )
-    assert json.loads(capsys.readouterr().out)["proofs"] == ["harness:unit"]
+    assert json.loads(capsys.readouterr().out)["proofs"] == []
 
 
 def test_harness_requests_without_outputs_are_not_recorded(tmp_path):
@@ -1250,3 +1253,113 @@ def test_harness_requests_without_outputs_are_not_recorded(tmp_path):
     del manifest["gates"][0]["outputs"]
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     assert ingest_harness_heal(tmp_path, heal, feature="calc")["proofs"] == []
+
+
+def _heal(tmp_path, *, harness="demo", status="healthy"):
+    path = tmp_path / "heal.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "hsf.harness-heal.v2",
+                "harness": harness,
+                "status": status,
+                "rounds": [
+                    {
+                        "gates": [
+                            {"gate": "lint", "passed": True, "classification": "ok"}
+                        ]
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_historical_heal_cannot_mint_current_proof(tmp_path, monkeypatch):
+    heal = _heal(tmp_path)
+    manifest = tmp_path / ".factory/proof-requests/harness.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps({"gates": [{"name": "harness:lint", "read_only": True}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        proof_reuse,
+        "record_proof",
+        lambda *args, **kwargs: pytest.fail("historical import minted proof"),
+    )
+    first = proof_reuse.ingest_harness_heal(tmp_path, heal, feature="demo-v2")
+    replay = proof_reuse.ingest_harness_heal(tmp_path, heal, feature="demo-v2")
+    assert first["ok"] and first["proofs"] == []
+    assert replay["already_ingested"] and replay["receipt"] == first["receipt"]
+    assert json.loads((tmp_path / first["receipt"]).read_text())["feature"] == "demo-v2"
+
+
+def test_legacy_harness_proofs_require_new_observation(tmp_path, monkeypatch):
+    (tmp_path / "input.txt").write_text("source", encoding="utf-8")
+    (tmp_path / "output.txt").write_text("result", encoding="utf-8")
+    gate = {
+        "name": "harness:lint",
+        "read_only": True,
+        "command": ["lint"],
+        "inputs": ["input.txt"],
+        "outputs": ["output.txt"],
+        "toolchain": {},
+        "environment": {},
+    }
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            proof_reuse,
+            "_proof_key",
+            lambda facts: proof_reuse._sha_bytes(proof_reuse._canonical(facts)),
+        )
+        stale = proof_reuse.record_proof(tmp_path, gate, elapsed_ms=1)
+    fresh = proof_reuse.record_proof(tmp_path, gate, elapsed_ms=1)
+    stale_verification = proof_reuse.verify_proof_receipt(
+        tmp_path, Path(stale["receipt"])
+    )
+    assert "proof key mismatch" in stale_verification["errors"]
+    assert proof_reuse.verify_proof_receipt(tmp_path, Path(fresh["receipt"]))["valid"]
+
+
+def test_failed_heal_is_historical_and_failed_check_blocks(tmp_path):
+    heal = _heal(tmp_path, status="unhealthy")
+    result = proof_reuse.ingest_harness_heal(tmp_path, heal)
+    assert result["ok"] is False
+    Receipt(module="hsf", stage="harness-check", feature="demo", ok=False).write(
+        tmp_path
+    )
+    rollup = rollup_receipts(tmp_path, "demo")
+    assert rollup["earliest_failing_stage"] == "hsf:harness-check"
+    assert rollup["historical_stages"][0]["status"] == "failed"
+    Receipt(module="hsf", stage="harness-check", feature="demo", ok=True).write(
+        tmp_path
+    )
+    assert rollup_receipts(tmp_path, "demo")["earliest_failing_stage"] is None
+
+
+@pytest.mark.parametrize("feature", [None, "invalid/name", "invalid\\name", "glob*"])
+def test_invalid_heal_feature_is_refused_before_write(tmp_path, feature):
+    with pytest.raises(
+        proof_reuse.ProofReuseError, match="feature must be a safe identifier"
+    ):
+        proof_reuse.ingest_harness_heal(
+            tmp_path, _heal(tmp_path, harness="invalid/name"), feature=feature
+        )
+    assert not (tmp_path / "receipts").exists()
+
+
+def test_linked_receipt_directory_is_refused(tmp_path):
+    neighbor = tmp_path / "neighbor"
+    neighbor.mkdir()
+    try:
+        (tmp_path / "receipts").symlink_to(neighbor, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"creating a temporary symlink is unavailable: {error}")
+    with pytest.raises(
+        proof_reuse.ProofReuseError, match="receipt directory must be a local directory"
+    ):
+        proof_reuse.ingest_harness_heal(tmp_path, _heal(tmp_path))
+    assert not list(neighbor.iterdir())

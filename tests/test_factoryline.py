@@ -244,7 +244,13 @@ def test_factory_verify_strict_release_requires_oracle_bound_release_contract(tm
     assert result["release_contract"]["marker"] == "RELEASE_CONTRACT_INVALID"
 
 
-def test_factory_verify_strict_release_does_not_skip_a_declared_design_gate(tmp_path):
+@pytest.mark.parametrize(
+    "stage_id",
+    ["prestige:score", "hsf:compile", "hsf:harness-check", "specline:evidence"],
+)
+def test_factory_verify_strict_release_does_not_skip_a_declared_gate(
+    tmp_path, stage_id
+):
     for stage in ("strict", "verify-validators", "gate-spec", "tasks", "gate-plan"):
         Receipt("specline", stage, "f", True).write(tmp_path)
     for stage in ("architect", "review", "arch-gate", "verify-tests", "smoke"):
@@ -258,15 +264,13 @@ def test_factory_verify_strict_release_does_not_skip_a_declared_design_gate(tmp_
     ).write(tmp_path)
     contract = tmp_path / ".factory/release-contracts/f.json"
     contract.parent.mkdir(parents=True)
-    contract.write_text(
-        json.dumps({"required_stages": ["prestige:score"]}), encoding="utf-8"
-    )
+    contract.write_text(json.dumps({"required_stages": [stage_id]}), encoding="utf-8")
     from factoryline.verification import verify_feature
 
     result = verify_feature(tmp_path, "f", strict_release=True)
 
     assert any(
-        item["detail"] == "prestige:score receipt is missing or non-passing"
+        item["detail"] == f"{stage_id} receipt is missing or non-passing"
         for item in result["blockers"]
     )
 

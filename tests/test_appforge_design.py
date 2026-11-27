@@ -283,6 +283,10 @@ def test_appforge_next_reports_a_blocked_stage_and_all_done(
         and step["state"] == "blocked"
         and "contrast below 4.5" in step["why"]
     )
+    statuses["quality_audit"] = {"current_count": 1, "latest": None}
+    step = design.appforge_next(tmp_path)
+    assert step["stage"] == "quality-audit" and step["state"] == "missing"
+
     statuses["quality_audit"] = {
         "current_count": 1,
         "latest": {"ok": True, "marker": "OK"},
@@ -323,7 +327,111 @@ def test_new_build_number_marks_downstream_receipts_stale(
         "--json",
     )
     capsys.readouterr()
-    assert "evidence-kit" in appforge_next(tmp_path)["stale_for_candidate"]
+    occupied = tmp_path / ".factory/appforge/evidence"
+    occupied.mkdir()
+    step = appforge_next(tmp_path)
+    assert "evidence-kit" in step["stale_for_candidate"]
+    assert step["stage"] == "evidence-kit" and step["state"] == "missing"
+    assert ".factory/appforge/init-43/release-candidate.json" in step["argv"]
+    assert ".factory/appforge/evidence_001" in step["argv"]
+    assert _cli(*step["argv"][1:]) == 0
+    capsys.readouterr()
+    step = appforge_next(tmp_path)
+    assert step["stage"] == "native-surface"
+    assert "evidence-kit" not in step["stale_for_candidate"]
+    assert ".factory/appforge/evidence_001/release-candidate.json" in step["argv"]
+
+
+@pytest.mark.parametrize(
+    ("stage", "inputs"),
+    [
+        ("surface_matrix", {"--native-surface": "native_surface"}),
+        ("storefront_story", {"--store-media": "store_media"}),
+        (
+            "fastlane_capture",
+            {
+                "--surface-matrix": "surface_matrix",
+                "--storefront-story": "storefront_story",
+            },
+        ),
+        (
+            "submission_assurance",
+            {
+                "--app-review": "app_review",
+                "--store-media": "store_media",
+                "--quality-audit": "quality_audit",
+            },
+        ),
+        ("release_rehearsal", {"--submission-assurance": "submission_assurance"}),
+    ],
+)
+def test_appforge_next_uses_selected_receipt_paths(
+    tmp_path: Path, monkeypatch, stage, inputs
+) -> None:
+    import factoryline.appforge_design as design
+
+    statuses = {
+        name: {
+            "current_count": 1,
+            "latest": {
+                "ok": True,
+                "path": f".factory/appforge/{name.replace('_', '-')}-build-42.json",
+            },
+        }
+        for name, *_ in design._NEXT_CHAIN
+    }
+    statuses[stage] = {"current_count": 0}
+    monkeypatch.setattr(
+        design,
+        "_receipt_only_status",
+        lambda _root, pattern, _inventory: statuses[
+            "store_media" if pattern.startswith("store-media") else "evidence_kit"
+        ],
+    )
+    step = design.appforge_next(tmp_path, projection={**statuses["design"], **statuses})
+    assert step["stage"] == stage.replace("_", "-")
+    for flag, producer in inputs.items():
+        assert (
+            step["argv"][step["argv"].index(flag) + 1]
+            == statuses[producer]["latest"]["path"]
+        )
+
+
+@pytest.mark.parametrize(
+    ("stage", "filename"),
+    [
+        ("oracle_authority", "oracle-authority"),
+        ("eas_preflight", "eas-preflight"),
+    ],
+)
+def test_appforge_next_uses_fresh_discoverable_output(
+    tmp_path: Path, monkeypatch, stage, filename
+) -> None:
+    import factoryline.appforge_design as design
+
+    statuses = {
+        name: {"current_count": 1, "latest": {"ok": True}}
+        for name, *_ in design._NEXT_CHAIN
+    }
+    statuses[stage] = {"current_count": 0}
+    monkeypatch.setattr(
+        design, "_receipt_only_status", lambda *_: statuses["evidence_kit"]
+    )
+    destination = tmp_path / ".factory/appforge" / f"{filename}.json"
+    destination.parent.mkdir(parents=True)
+    projection = {**statuses["design"], **statuses}
+    step = design.appforge_next(tmp_path, projection=projection)
+    assert step["stage"] == stage.replace("_", "-")
+    assert (
+        step["argv"][step["argv"].index("--out") + 1]
+        == destination.relative_to(tmp_path).as_posix()
+    )
+    destination.write_text("previous receipt", encoding="utf-8")
+    retry = design.appforge_next(tmp_path, projection=projection)
+    assert retry["argv"][retry["argv"].index("--out") + 1] == (
+        f".factory/appforge/{filename}_001.json"
+    )
+    assert destination.read_text(encoding="utf-8") == "previous receipt"
 
 
 def test_status_after_kit_has_no_stale_lines_and_a_next_line(

@@ -2015,7 +2015,17 @@ def rollup_receipts(root: Path, feature: str) -> dict:
             key=lambda item: (item[1]["receipt_mtime_ns"], item[1]["receipt_path"]),
         )
     ]
-    return rollup_attributions(stages) | {
+    historical = []
+    current = []
+    for row in stages:
+        destination = (
+            historical
+            if (row["module"], row["stage"]) == ("hsf", "harness-heal")
+            else current
+        )
+        destination.append(row)
+    return rollup_attributions(current) | {
+        "historical_stages": historical,
         "receipt_snapshot": {
             "schema": "factory.receipt-snapshot.v1",
             "feature": feature,

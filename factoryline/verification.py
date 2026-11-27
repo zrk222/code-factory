@@ -37,22 +37,6 @@ BASE_REQUIRED = {
 }
 
 
-def _release_declares(root: Path, feature: str, path: Path | None, stage: str) -> bool:
-    """Read one declared required stage without treating the file as valid.
-
-    Strict verification subsequently validates the whole Oracle-bound release
-    contract.  This early, bounded read only ensures a declared UI/compiler
-    gate cannot be silently omitted while that validation is underway.
-    """
-    source = path or root / ".factory" / "release-contracts" / f"{feature}.json"
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    stages = value.get("required_stages") if isinstance(value, dict) else None
-    return isinstance(stages, list) and stage in stages
-
-
 def _declares_ui(
     root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]
 ) -> bool:
@@ -331,13 +315,27 @@ def _stage_evidence_audit(by_module, rows, required):
 
 
 def _declared_release_stages(workspace, feature, contract_path, strict_release):
+    """Identify conditional gates before validating the Oracle-bound policy."""
     if not strict_release:
         return set()
-    return {
-        stage
-        for stage in ("prestige:score", "hsf:compile")
-        if _release_declares(workspace, feature, contract_path, stage)
+    source = (
+        contract_path
+        or workspace / ".factory" / "release-contracts" / f"{feature}.json"
+    )
+    try:
+        policy = json.loads(source.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    declared = policy.get("required_stages") if isinstance(policy, dict) else None
+    if not isinstance(declared, list):
+        return set()
+    conditional = {
+        "prestige:score",
+        "hsf:compile",
+        "hsf:harness-check",
+        "specline:evidence",
     }
+    return {stage for stage in conditional if stage in declared}
 
 
 def _verify_selected_run(

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 import hashlib
 import json
+from os.path import lexists
 from collections.abc import Callable, Iterator
 
 from . import canonical_sha, compat_sha
@@ -503,14 +504,19 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
         {
             "--candidate": "init:candidate",
             "--design-input": "init:user_design_input",
-            "--out-dir": f"out:{_O}evidence",
+            "--out-dir": f"fresh:{_O}evidence",
         },
         False,
     ),
     (
         "native_surface",
         "appforge-native-surface",
-        {"--candidate": "kit:candidate", "--contract": None, "--evidence": None},
+        {
+            "--candidate": "kit:candidate",
+            "--contract": None,
+            "--evidence": None,
+            "--out": f"fresh:{_O}native-surface.json",
+        },
         True,
     ),
     (
@@ -518,7 +524,7 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
         "appforge-surface-matrix",
         {
             "--candidate": "kit:candidate",
-            "--native-surface": f"out:{_O}native-surface.json",
+            "--native-surface": "receipt:native_surface",
         },
         False,
     ),
@@ -545,7 +551,7 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
         "appforge-storefront-story",
         {
             "--candidate": "kit:candidate",
-            "--store-media": f"out:{_O}store-media.json",
+            "--store-media": "receipt:store_media",
             "--contract": None,
             "--evidence": None,
         },
@@ -556,9 +562,10 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
         "appforge-fastlane-capture",
         {
             "--candidate": "kit:candidate",
-            "--surface-matrix": f"out:{_O}surface-matrix.json",
-            "--storefront-story": f"out:{_O}storefront-story.json",
+            "--surface-matrix": "receipt:surface_matrix",
+            "--storefront-story": "receipt:storefront_story",
             "--contract": None,
+            "--out": f"fresh:{_O}fastlane-capture.json",
         },
         True,
     ),
@@ -577,7 +584,10 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
     (
         "oracle_authority",
         "appforge-oracle",
-        {"--authority": "kit:oracle_authority"},
+        {
+            "--authority": "kit:oracle_authority",
+            "--out": f"fresh:{_O}oracle-authority.json",
+        },
         True,
     ),
     (
@@ -588,6 +598,7 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
             "--eas-json": None,
             "--build-profile": None,
             "--submit-profile": None,
+            "--out": f"fresh:{_O}eas-preflight.json",
         },
         False,
     ),
@@ -596,10 +607,11 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
         "submission-assurance",
         {
             "--contract": "kit:assurance_contract",
-            "--app-review": f"out:{_O}app-review.json",
-            "--store-media": f"out:{_O}store-media.json",
+            "--app-review": "receipt:app_review",
+            "--store-media": "receipt:store_media",
             "--saas-proof": None,
-            "--quality-audit": f"out:{_O}quality-audit.json",
+            "--quality-audit": "receipt:quality_audit",
+            "--out": f"fresh:{_O}submission-assurance.json",
         },
         True,
     ),
@@ -608,7 +620,8 @@ _NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
         "appforge-rehearse",
         {
             "--candidate": "kit:candidate",
-            "--submission-assurance": f"out:{_O}submission-assurance.json",
+            "--submission-assurance": "receipt:submission_assurance",
+            "--out": f"fresh:{_O}release-rehearsal.json",
             "--profile": None,
         },
         False,
@@ -634,7 +647,11 @@ def _sealed_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
 
 
 def _receipt_only_status(
-    workspace: Path, pattern: str, inventory: tuple[Path, ...] | None = None
+    workspace: Path,
+    pattern: str,
+    inventory: tuple[Path, ...] | None = None,
+    *,
+    candidate: dict | None = None,
 ) -> dict[str, Any]:
     current = [
         (path, value)
@@ -643,7 +660,8 @@ def _receipt_only_status(
     ]
     if not current:
         return {"current_count": 0}
-    path, value = current[-1]
+    matching = [item for item in current if item[1].get("candidate") == candidate]
+    path, value = (matching or current)[-1] if candidate is not None else current[-1]
     latest = {
         "path": path.relative_to(workspace).as_posix(),
         "ok": value.get("ok"),
@@ -657,29 +675,47 @@ def _receipt_only_status(
 
 def _stage_state(status: dict[str, Any]) -> str:
     latest = status.get("latest") or {}
-    if not status.get("current_count"):
+    if not status.get("current_count") or not latest:
         return "missing"
     if latest.get("ok") is False or "BLOCKED" in str(latest.get("marker", "")):
         return "blocked"
     return "done"
 
 
-def _flag_value(source: str | None, artifacts: dict[str, dict[str, Any]]) -> str | None:
+def _fresh_output(workspace: Path, value: str) -> str | None:
+    path = Path(value)
+    if not lexists(workspace / path):
+        return value
+    for attempt in range(1, 101):
+        retry = path.with_name(f"{path.stem}_{attempt:03d}{path.suffix}")
+        if not lexists(workspace / retry):
+            return retry.as_posix()
+    return None
+
+
+def _flag_value(
+    workspace: Path, source: str | None, artifacts: dict[str, dict[str, Any]]
+) -> str | None:
     if source is None:
         return None
     kind, _, value = source.partition(":")
     if kind == "out":
         return value
+    if kind == "fresh":
+        return _fresh_output(workspace, value)
     path = (artifacts.get(kind) or {}).get(value)
     return path if isinstance(path, str) else None
 
 
 def _next_argv(
-    command: str, flags: dict[str, str | None], artifacts: dict[str, dict[str, Any]]
+    workspace: Path,
+    command: str,
+    flags: dict[str, str | None],
+    artifacts: dict[str, dict[str, Any]],
 ):
     argv, missing = ["factory", "revenue", command, "--root", "."], []
     for flag, source in flags.items():
-        value = _flag_value(source, artifacts)
+        value = _flag_value(workspace, source, artifacts)
         if value is None:
             missing.append(flag)
         else:
@@ -700,9 +736,15 @@ def _candidate_drift(statuses: dict[str, dict[str, Any]], current: object) -> li
 def _next_statuses(
     workspace: Path, projection: dict[str, Any], inventory: tuple[Path, ...]
 ) -> dict[str, dict]:
+    candidate = ((projection.get("init") or {}).get("latest") or {}).get("candidate")
+
     def status(name: str) -> dict[str, Any]:
         if name == "design":
             return projection
+        if name == "evidence_kit" and isinstance(candidate, dict):
+            return _receipt_only_status(
+                workspace, _RECEIPT_ONLY[name], inventory, candidate=candidate
+            )
         if name in _RECEIPT_ONLY:
             return _receipt_only_status(workspace, _RECEIPT_ONLY[name], inventory)
         return projection.get(name, {})
@@ -718,14 +760,25 @@ def _next_artifacts(
     return {
         "init": (receipt or {}).get("artifacts") or {},
         "kit": (statuses["evidence_kit"].get("latest") or {}).get("artifacts") or {},
+        "receipt": {
+            name: (status.get("latest") or {}).get("path")
+            for name, status in statuses.items()
+            if _stage_state(status) == "done"
+        },
     }
 
 
 def _next_step(
-    name: str, command: str, flags: dict, human: bool, status: dict, artifacts: dict
+    workspace: Path,
+    name: str,
+    command: str,
+    flags: dict,
+    human: bool,
+    status: dict,
+    artifacts: dict,
 ) -> dict:
     state = _stage_state(status)
-    argv, missing = _next_argv(command, flags, artifacts)
+    argv, missing = _next_argv(workspace, command, flags, artifacts)
     findings = "; ".join(
         _repair_messages((status.get("latest") or {}).get("findings"))
     )[:500]
@@ -758,20 +811,23 @@ def appforge_next(
         workspace, inventory=inventory
     )
     statuses = _next_statuses(workspace, projection, inventory)
+    stale = _candidate_drift(
+        statuses, (statuses["init"].get("latest") or {}).get("candidate")
+    )
+    for name in stale:
+        statuses[name.replace("-", "_")] = {}
     artifacts = _next_artifacts(workspace, statuses)
     result: dict[str, Any] = {
         "schema": "factory.appforge.next.v1",
         "marker": "APPFORGE_NEXT_READ_ONLY",
-        "stale_for_candidate": _candidate_drift(
-            statuses, (statuses["init"].get("latest") or {}).get("candidate")
-        ),
+        "stale_for_candidate": stale,
         "authority": "none",
         "runs_nothing": True,
     }
     for name, command, flags, human in _NEXT_CHAIN:
         if _stage_state(statuses[name]) != "done":
             return result | _next_step(
-                name, command, flags, human, statuses[name], artifacts
+                workspace, name, command, flags, human, statuses[name], artifacts
             )
     return result | {
         "stage": "complete",

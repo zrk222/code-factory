@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import tempfile
@@ -253,6 +254,9 @@ def _command_digest(command: object) -> str:
 
 
 def _proof_key(facts: dict[str, Any]) -> str:
+    # Older harness keys cannot distinguish direct observations from historic heal imports.
+    if str(facts.get("gate", "")).startswith("harness:"):
+        return _sha_bytes(_canonical(["harness-observation-v2", facts]))
     return _sha_bytes(_canonical(facts))
 
 
@@ -909,7 +913,6 @@ def challenge_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
 
 HARNESS_HEAL_SCHEMAS = frozenset({"hsf.harness-heal.v1", "hsf.harness-heal.v2"})
 HARNESS_RECEIPT_LIMIT = 1_048_576
-HARNESS_PROOF_MANIFEST = ".factory/proof-requests/harness.json"
 
 
 def _load_heal_receipt(root: Path, heal_path: Path) -> tuple[str, dict[str, Any], str]:
@@ -947,23 +950,6 @@ def _load_heal_receipt(root: Path, heal_path: Path) -> tuple[str, dict[str, Any]
     return relative, receipt, hashlib.sha256(raw).hexdigest()
 
 
-def _final_green_gates(receipt: dict[str, Any]) -> list[dict[str, Any]]:
-    """Gates of the last round that ran fresh and passed: no cached, reused, skipped or flaky results."""
-    rounds = [
-        row
-        for row in receipt["rounds"]
-        if isinstance(row, dict) and isinstance(row.get("gates"), list)
-    ]
-    last = rounds[-1]["gates"] if rounds else []
-    return [
-        gate
-        for gate in last
-        if isinstance(gate, dict)
-        and gate.get("passed") is True
-        and gate.get("classification") == "ok"
-    ]
-
-
 def _existing_heal_ingest(root: Path, feature: str, digest: str) -> str | None:
     for path in sorted(
         (Path(root) / "receipts").glob(f"hsf-{feature}-harness-heal-*.json")
@@ -981,40 +967,39 @@ def _existing_heal_ingest(root: Path, feature: str, digest: str) -> str | None:
     return None
 
 
-def _record_harness_proofs(root: Path, gates: list[dict[str, Any]]) -> list[str]:
-    """Record a proof receipt per fresh green gate that the harness proof manifest declares read-only."""
-    manifest_path = Path(root) / HARNESS_PROOF_MANIFEST
-    if not manifest_path.is_file():
-        return []
-    declared = {
-        gate.get("name"): gate
-        for gate in load_manifest(manifest_path).get("gates", [])
-        if isinstance(gate, dict) and gate.get("read_only") is True
-    }
-    recorded = []
-    for run in gates:
-        request = declared.get(f"harness:{run.get('gate')}")
-        if request is None:
-            continue
-        elapsed = max(0, round(float(run.get("duration_s") or 0) * 1000))
-        try:
-            record_proof(Path(root), request, elapsed_ms=elapsed, replace=True)
-        except ProofReuseError:
-            continue  # e.g. a request without declared outputs cannot be reused, so it is not recorded
-        recorded.append(request["name"])
-    return recorded
+def _validate_heal_destination(root: Path, name: object) -> None:
+    if not isinstance(name, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name
+    ):
+        raise ProofReuseError(
+            "PROOF_HARNESS_FEATURE_INVALID", "feature must be a safe identifier"
+        )
+    directory = root / "receipts"
+    try:
+        info = directory.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise ProofReuseError(
+            "PROOF_PATH_ESCAPE", "cannot validate receipt directory"
+        ) from error
+    if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+        raise ProofReuseError(
+            "PROOF_PATH_ESCAPE", "receipt directory must be a local directory"
+        )
 
 
 def ingest_harness_heal(
     root: Path, heal_path: Path, *, feature: str | None = None
 ) -> dict[str, Any]:
-    """Turn an HSF heal receipt into a standard hsf:harness-heal receipt (idempotent) and, for a healthy run,
-    proof receipts for its fresh, green, read-only gates. Output tails are never copied."""
+    """Import historical heal evidence. The supported schemas lack execution-time proof fingerprints."""
     from .contract import Receipt
 
-    relative, receipt, digest = _load_heal_receipt(Path(root), heal_path)
-    name = feature or str(receipt.get("harness") or "harness")
-    existing = _existing_heal_ingest(Path(root), name, digest)
+    root = Path(root).resolve()
+    relative, receipt, digest = _load_heal_receipt(root, heal_path)
+    name = feature if feature is not None else receipt.get("harness", "harness")
+    _validate_heal_destination(root, name)
+    existing = _existing_heal_ingest(root, name, digest)
     if existing is not None:
         return {
             "schema": "factory.harness-ingest.v1",
@@ -1045,16 +1030,11 @@ def ingest_harness_heal(
         attribution=receipt.get("attribution")
         if isinstance(receipt.get("attribution"), dict)
         else None,
-    ).write(Path(root))
-    proofs = (
-        _record_harness_proofs(Path(root), _final_green_gates(receipt))
-        if healthy
-        else []
-    )
+    ).write(root)
     return {
         "schema": "factory.harness-ingest.v1",
-        "receipt": written.relative_to(Path(root)).as_posix(),
+        "receipt": written.relative_to(root).as_posix(),
         "ok": healthy,
-        "proofs": proofs,
+        "proofs": [],
         "already_ingested": False,
     }
