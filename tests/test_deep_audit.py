@@ -2825,6 +2825,7 @@ def test_codeql_worker_builds_compile_only_the_python_suite():
     }
     parent, bundle = stages["codeql-bundle"]
     assert parent == "sdk"
+    assert "ENV LANG=C.UTF-8 LC_ALL=C.UTF-8" in stages["sdk"][1]
     assert "ADD --checksum=sha256:" in bundle
     assert (
         'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
