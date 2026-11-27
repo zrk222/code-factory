@@ -348,6 +348,7 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   };
   const linked = reuse(alias);
   const wrongFamily = reuse(unobserved);
+  const noWorker = reuse(unsupported);
   const wrongSource = reuse(divergent, { ...binding.source_packets,
     old: [{ ...binding.source_packets.old[0], sha256: 'f'.repeat(64) }] });
   const cases = [row, unobserved, unsupported, alias, divergent];
@@ -355,8 +356,7 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   const previous = JSON.parse(readFileSync(join(root, value.reference.path), 'utf8'));
   const reference = json('registered-reference.json', { ...previous, candidate: { registered: 5, hunk_hits: 0 },
     manifest_sha256: manifest.sha256, manifest_cases_sha256: caseDigest(cases),
-    cases: [...previous.cases, { advisory: unsupported.ghsa, after: 'miss' },
-      ...[wrongFamily, linked, wrongSource].map(item => item.observation)] });
+    cases: [...previous.cases, ...[noWorker, wrongFamily, linked, wrongSource].map(item => item.observation)] });
   const extra = { id: 'test/other-family',
     source: write('extra.ql', '/**\n * @id test/other-family\n * @tags external/cwe/cwe-079\n */\n') };
   const queries = [{ id: pair.query_id, source: pair.query }, extra];
@@ -450,6 +450,28 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   assert.deepEqual(combined.unscored_advisories, [unobserved.ghsa, unsupported.ghsa, divergent.ghsa]);
   assert.deepEqual(combined.cases.map(row => row.native_bundle_sha256), [registered.sha256, supplemental.sha256]);
   assert.equal(combined.bundles[0].plan_sha256, plan.sha256);
+  const supplied = new Map([[row.ghsa, binding], ...[noWorker, wrongFamily, linked, wrongSource].map(item =>
+    [item.observation.advisory, JSON.parse(readFileSync(join(root, item.row.prepared.path), 'utf8'))])]);
+  const pattern = json('routing-pattern.json', {
+    schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: manifest.sha256,
+    manifest_cases_sha256: caseDigest(cases), ruleset_sha256: 'c'.repeat(64), profile_sha256: 'd'.repeat(64),
+    engine: { executable_sha256: 'e'.repeat(64) }, summary: { cases: 5, hunk_hits: 0, file_hits: 0 },
+    cases: cases.map(entry => {
+      const input = supplied.get(entry.ghsa);
+      return { ...input, ...entry, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false,
+        hunk_findings: [], fix_side_residual: [], file_coverage: { fixed: input.source_packets.fixed.map(packet =>
+          ({ ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' })) } };
+    }),
+  });
+  const routed = run({ ...cohort, schema: 'factory.recall-codeql-cohort.v2' }, { ...pattern, path: join(root, pattern.path) });
+  assert.equal(routed.pattern_join.combined_hunk_hits, 2);
+  assert.equal(routed.pattern_join.observed_union_hunk_hits, 2);
+  assert.deepEqual(routed.pattern_join.follow_up.map(({ advisory, next, plan_sha256s }) => [advisory, next, plan_sha256s]), [
+    [unobserved.ghsa, 'native_family_unmapped', []],
+    [unsupported.ghsa, 'no_registered_native_plan', []],
+    [divergent.ghsa, 'capture_registered_pair', [plan.sha256]],
+  ]);
+  assert.equal(routed.pattern_join.follow_up.at(-1).input_sha256, wrongSource.observation.input_sha256);
   assert.throws(() => run({ ...cohort, bundles: [registered, { ...supplemental, sha256: 'a'.repeat(64) }] }),
     /Artifact fingerprint differs/);
   assert.throws(() => run({ ...cohort, bundles: [registered, json('other-cohort.json', value)] }),
@@ -513,6 +535,8 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(twoSignals.scored_pairs, 1);
   assert.equal(twoSignals.scored_arm_pairs, 2);
   assert.equal(twoSignals.pattern_join.eligible_native_additions, 0);
+  assert.equal(twoSignals.pattern_join.follow_up[0].next, 'resolve_native_extraction');
+  assert.equal(evaluate([negative]).pattern_join.follow_up[0].next, 'completed_native_search');
   const twoHits = evaluate([incomplete, complete]);
   assert.equal(twoHits.strict_hunk_hits, 1);
   assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
@@ -521,6 +545,7 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(anchored.strict_hunk_hits, 0);
   assert.equal(anchored.cross_file_trace_hits, 0);
   assert.equal(anchored.pattern_join.eligible_native_additions, 0);
+  assert.equal(anchored.pattern_join.follow_up[0].next, 'review_bound_path');
   assert.deepEqual(anchored.cases[0].anchored_trace_matches, [{
     rule: 'test/off-hunk', sink: { path: 'sample.py', line: 2 }, anchor: { path: 'sample.py', line: 1 },
     source_paths: ['sample.py'], fixed_sink_residual: false,
