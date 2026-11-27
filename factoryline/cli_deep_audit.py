@@ -908,6 +908,7 @@ def _coordinator_worker_event(root, directory, config, event):
 
 def _coordinator_heartbeat(root, request, owner, context, job):
     import time
+    from .agentic_control import AgenticControlError
     from .assembly_process import CLEANUP_TIMEOUT_SECONDS
 
     try:
@@ -920,7 +921,18 @@ def _coordinator_heartbeat(root, request, owner, context, job):
         if not (directory / "handshake.json").exists():
             return True
         return _coordinator_handshake(root, request, owner, context, job)
-    except (ValueError, OSError, KeyError, TypeError):
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        # Retained-state readers can briefly hold the metadata lock. Retry
+        # before ACK only, within the current lease, without authorizing work.
+        if (
+            isinstance(error, AgenticControlError)
+            and error.code == "E_COORDINATOR_BUSY"
+            and not job["acknowledged"]
+            and not job["cancel"].is_set()
+            and not context["stop"]
+            and time.monotonic() < context["expires_at"]
+        ):
+            return True
         _coordinator_begin_cancel(root, job, CLEANUP_TIMEOUT_SECONDS)
         return _coordinator_cancel_grace(job, time.monotonic())
 
