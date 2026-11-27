@@ -1059,12 +1059,14 @@ def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path, shard):
         "deploy/deep-adapters/rules/semgrep-pattern-limited.yml"
     ).read_bytes()
     original = yaml.safe_load(baseline)
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    assert yaml.load(baseline, Loader=loader) == original
     for rule in original["rules"][shard::8]:
         target = rule["id"]
         effective = _semgrep_disable_rule(baseline, target)
         expected = deepcopy(original)
         expected["rules"] = [r for r in expected["rules"] if r["id"] != target]
-        assert yaml.safe_load(effective) == expected
+        assert yaml.load(effective, Loader=loader) == expected
         assert _semgrep_mutation_valid(baseline, effective, target)
         assert not _semgrep_mutation_valid(baseline, baseline, target)
         lane = {"mutation_config_sha256": {target: sha256_bytes(effective)}}
