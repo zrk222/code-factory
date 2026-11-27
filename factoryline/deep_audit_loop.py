@@ -2584,6 +2584,8 @@ def _codeql_replay_fresh(profile, source, scratch, inventory, lane, deadline):
 
 
 def _codeql_replay_queries(profile, coverage, fresh, source, scratch, deadline):
+    from concurrent.futures import ThreadPoolExecutor
+
     expected = {
         row["rule_id"]: row for row in coverage["codeql_query_execution"]["rules"]
     }
@@ -2593,24 +2595,29 @@ def _codeql_replay_queries(profile, coverage, fresh, source, scratch, deadline):
             "E_CODEQL_REPLAY", "independent query records differ"
         )
     decoded, total = {}, 0
-    for index, rule_id in enumerate(sorted(expected)):
-        old, new = expected[rule_id], actual[rule_id]
-        directory = scratch / f"replay-values-{index}"
-        directory.mkdir()
-        left = _deep_audit_io._codeql_replay_decode(
-            profile, old, source, directory, "worker", deadline
-        )
-        right = _deep_audit_io._codeql_replay_decode(
-            profile, new, source, directory, "fresh", deadline
-        )
-        total += len(_deep_audit_io.canonical_bytes(left)) + len(
-            _deep_audit_io.canonical_bytes(right)
-        )
-        if total > 536_870_912:
-            raise _deep_audit_io.RuntimeAuditError(
-                "E_CODEQL_REPLAY", "decoded replay budget exceeded"
+    decode = _deep_audit_io._codeql_replay_decode
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for index, rule_id in enumerate(sorted(expected)):
+            old, new = expected[rule_id], actual[rule_id]
+            directory = scratch / f"replay-values-{index}"
+            directory.mkdir()
+            worker = pool.submit(
+                decode, profile, old, source, directory, "worker", deadline
             )
-        decoded[rule_id] = _codeql_replay_query_digest(old, new, left, right, coverage)
+            verifier = pool.submit(
+                decode, profile, new, source, directory, "fresh", deadline
+            )
+            left, right = worker.result(), verifier.result()
+            total += len(_deep_audit_io.canonical_bytes(left)) + len(
+                _deep_audit_io.canonical_bytes(right)
+            )
+            if total > 536_870_912:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_CODEQL_REPLAY", "decoded replay budget exceeded"
+                )
+            decoded[rule_id] = _codeql_replay_query_digest(
+                old, new, left, right, coverage
+            )
     return decoded
 
 
