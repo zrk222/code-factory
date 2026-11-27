@@ -66,6 +66,7 @@ def test_keyless_review_decodes_lossless_bounded_input():
         "obligation_gap",
         "no_indicator",
         "conflicting_assessment",
+        "status_only_rationale",
         "omitted",
         "out_of_scope",
         "truncated",
@@ -383,6 +384,12 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                         "remediation": "Inspect the recorded indicator",
                     }
                 ]
+        if mode == "status_only_rationale" and payload["family"] == "dependencies":
+            result["path_assessments"][assigned[0]]["reason"] = "REVIEWED"
+            result["path_assessments"][assigned[1]] = {
+                "state": "REVIEWED_NO_INDICATOR",
+                "reason": "  reviewed_no_indicator  ",
+            }
         if mode == "obligation_gap" and payload["family"] == "dependencies":
             result["coverage_gaps"] = [
                 "The ledger lacks evidence for a declared dependency obligation"
@@ -465,6 +472,16 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         assert result["coverage_gaps"][0].endswith("Manifest has insufficient evidence")
         assert [finding["id"] for finding in result["findings"]] == ["fixture-finding"]
         assert "| dependencies | 3 | 2 | 1 | 0 | 1 |" in summary
+    elif mode == "status_only_rationale":
+        assert result["decision"] == "INCOMPLETE"
+        assert len(result["coverage_gaps"]) == 2
+        assert all(
+            gap.endswith("missing rationale beyond the assessment status")
+            for gap in result["coverage_gaps"]
+        )
+        dependencies = next(row for row in coverage if row["family"] == "dependencies")
+        assert len(dependencies["result"]["reviewed_paths"]) == 1
+        assert "REVIEWED" in dependencies["raw_response"]
     elif mode == "conflicting_assessment":
         assert result["decision"] == "INCOMPLETE"
         assert len(result["coverage_gaps"]) == 1

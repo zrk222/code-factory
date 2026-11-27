@@ -198,6 +198,10 @@ jobs:
           DECISIONS = ("ACCEPT", "FINDINGS", "INCOMPLETE")
           SEVERITIES = ("critical", "high", "medium", "low")
           PATH_STATES = ("REVIEWED", "REVIEWED_NO_INDICATOR", "UNRESOLVED")
+          RATIONALE_GUIDANCE = (
+              " In each reason, identify what you inspected in the assigned file or native record. "
+              "A reason that only repeats an assessment status leaves the path unresolved."
+          )
           REVIEW_TIMEOUT_SECONDS = 1200
           CHALLENGE_SUMMARY_SHA256 = "f24940c66e8a8c14f731ece54f03bf47cacf5c78986dbeaa05f0b2b48f7a494e"
           INSTRUCTIONS = (
@@ -214,7 +218,7 @@ jobs:
               "for missing evidence about a declared obligation beyond individual path assessments. Identify "
               "the missing observation. Report "
               "unexpected defects or contradictions as findings with a source line or recorded observation."
-          )
+          ) + RATIONALE_GUIDANCE
 
 
           def bound_challenge_observations(plan, packet, observations):
@@ -391,11 +395,15 @@ jobs:
                       "a source line or concrete conflicting observation. Report actual coverage gaps against a specific "
                       "unassessed requirement and explain why its observed controls are insufficient. "
                       "Return empty coverage_gaps and findings when you find none."
-                  )
+                  ) + RATIONALE_GUIDANCE
               return [
                   {"role": "system", "content": instructions},
                   {"role": "user", "content": canonical_bytes(payload).decode()},
               ]
+
+
+          def has_assessment_rationale(assessment):
+              return assessment["reason"].strip().upper() not in PATH_STATES
 
 
           def checked_response(raw, payload):
@@ -407,7 +415,8 @@ jobs:
               result = strict_json(choice["message"]["content"].encode())
               validate_response(result, payload["sources"].keys())
               result["reviewed_paths"] = sorted(
-                  path for path, row in result["path_assessments"].items() if row["state"] != "UNRESOLVED"
+                  path for path, row in result["path_assessments"].items()
+                  if row["state"] != "UNRESOLVED" and has_assessment_rationale(row)
               )
               return result
 
@@ -492,7 +501,9 @@ jobs:
                       for path in sorted(conflicts)
                   )
                   for path in sorted(set(row["assigned_paths"]) - set(result["reviewed_paths"])):
-                      reason = result["path_assessments"][path]["reason"]
+                      assessment = result["path_assessments"][path]
+                      reason = (assessment["reason"] if has_assessment_rationale(assessment)
+                                else "missing rationale beyond the assessment status")
                       gaps.append(f"{family}: unresolved review for {path}: {reason}")
                   if result["decision"] == "INCOMPLETE" and not result["coverage_gaps"] and (
                       len(row["assigned_paths"]) == len(result["reviewed_paths"])
