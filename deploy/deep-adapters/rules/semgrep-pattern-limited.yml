@@ -4673,10 +4673,7 @@ rules:
       - pattern: pq.QuoteIdentifier(...)
       - pattern: pq.QuoteLiteral(...)
       # sqlx.In over a constant statement only expands IN (?) and binds the arguments.
-      - patterns:
-          - pattern: sqlx.In($Q, ...)
-          - pattern-not: sqlx.In($A + $B, ...)
-          - pattern-not: sqlx.In(fmt.Sprintf(...), ...)
+      - pattern: sqlx.In("...", ...)
       - patterns:
           - pattern-either:
               - pattern: $F(...)
