@@ -10,7 +10,7 @@
     "deploy/deep-adapters/rules/semgrep-pattern-limited.yml": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd",
     "deploy/deep-adapters/profiles/semgrep-pattern-limited.json": "281cbc17e6317d0ba65347f1b90bea604e380ef0612623b16f1c12c911289c09",
     "docs/evidence/recall-registered-exposed-161-profile.json": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
-    "docs/evidence/precision-tier-prereg-20261127/prereg.json": "62273f14e14319a130253e28ab7c5845dfd42541166347f6c3b78b4ba8a5052f",
+    "docs/evidence/precision-tier-prereg-20261127/prereg.json": "e1c0361c3531429c3d43508eb0765e69f7ba1b06bb81502212fec08ad62c0622",
     "docs/evidence/precision-tier-prereg-20261127/triage_prompt_v3.txt": "18d3bd04e856e90be3e56889ea832c3e9aedb0a99613db347ef6f02aaed5c419",
     "docs/evidence/precision-tier-prereg-20261127/triage_agent_prompt.txt": "f2f9d01e30ceb0445ca27ccde24833cbf896ec2466a759d27ffdb613f6608978",
     "docs/evidence/precision-tier-prereg-20261127/labeler_prompt.txt": "e732a32f03ce0527d4378cc3b2a345ecf5e5574da652e805e774b8e1bd35baf1",

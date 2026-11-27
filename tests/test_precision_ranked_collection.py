@@ -829,3 +829,9 @@ def test_arm_g_scoring_refuses_a_score_from_another_run(tmp_path, capsys):
 
     assert arm_g_main(["score", str(tmp_path), str(different_score), _sha(key)]) == 2
     assert "sealed key bindings differ" in capsys.readouterr().err
+
+
+def test_arm_g_source_pins_match_the_checkout():
+    from scripts.precision_cohort_preflight import arm_g_lock
+
+    arm_g_lock(Path(__file__).resolve().parents[1])
