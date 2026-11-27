@@ -9,6 +9,7 @@ include mcp/server.json
 include factoryline/studio_audit.js
 recursive-include docs *.md *.gif *.png *.svg *.json
 recursive-exclude docs *.gif *.png
+recursive-exclude docs/evidence recall-evaluation-*.json
 recursive-include editors *.md *.svg
 recursive-include plugins *
 recursive-include factoryline/builtin_packs *
