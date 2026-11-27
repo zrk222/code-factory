@@ -6286,14 +6286,20 @@ def test_coordinator_renewal_contention_retries_and_direct_api_never_renews():
     assert direct["store"].calls == []
 
 
-def test_coordinator_defers_pre_ack_worker_during_metadata_contention(tmp_path):
+def test_coordinator_defers_pre_ack_worker_during_metadata_contention(
+    tmp_path, monkeypatch
+):
     import threading
     import time
 
     import factoryline.cli_deep_audit as module
+    from factoryline import assembly_process
     from factoryline.agentic_control import CoordinatorRequestStore
     from factoryline.graph_authorization import _authorization_lock
 
+    monkeypatch.setattr(
+        assembly_process, "_process_creation_identity", lambda pid: f"fixture:{pid}"
+    )
     root = tmp_path.resolve()
     store = CoordinatorRequestStore(root)
     nonce = "1" * 32
