@@ -90,11 +90,11 @@ function appendHunk(files, match, oldPath, newPath, keep) {
   const [oldStart, oldCount, newStart, newCount] = [match[1], match[2] ?? '1', match[3], match[4] ?? '1'].map(Number);
   if (keep(oldPath)) {
     const entry = files[oldPath] ??= { old: [], new: [], new_path: newPath };
-    for (let i = oldStart; i < oldStart + Math.max(oldCount, 1); i++) entry.old.push(i);
+    for (let i = oldStart; i < oldStart + oldCount; i++) entry.old.push(i);
   }
   if (keep(newPath) && keep(oldPath ?? newPath)) {
     const entry = files[oldPath ?? newPath] ??= { old: [], new: [], new_path: newPath };
-    for (let i = newStart; i < newStart + Math.max(newCount, 1); i++) entry.new.push(i);
+    for (let i = newStart; i < newStart + newCount; i++) entry.new.push(i);
   }
 }
 
@@ -2398,10 +2398,11 @@ export function reviewCapturePath(root, name) {
   return target;
 }
 
-function capturedFindings(report, packets) {
+function capturedFindings(report, packets, sarifCache = null, verifiedDigest = null) {
   const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
-  const sarif = JSON.parse(utf8(report));
+  const sarif = sarifCache?.get(verifiedDigest) ?? JSON.parse(utf8(report));
   if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Review SARIF has no run');
+  sarifCache?.set(verifiedDigest, sarif);
   const findings = sarifFindings(sarif, new Set(hashes.keys()));
   if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
   return { hashes, findings, diagnostics: scanNotes(sarif) };
@@ -2423,7 +2424,7 @@ function reviewFindings(root, row, side) {
   return { source, ...capturedFindings(report, packets) };
 }
 
-function replayCaseSide(row, side, retained, preparedSource, pathPolicy) {
+function replayCaseSide(row, side, retained, preparedSource, pathPolicy, sarifCache) {
   const notes = row.scan_sides?.[side];
   if (!preparedSource && !retained.source && notes == null) {
     return { findings: [], submitted: false };
@@ -2432,7 +2433,8 @@ function replayCaseSide(row, side, retained, preparedSource, pathPolicy) {
     || !retained.sarif || retained.source !== realpathSync(preparedSource)) {
     throw new Error('Replay has no successful capture of the prepared source');
   }
-  const { hashes, findings, diagnostics } = capturedFindings(retained.sarif, row.source_packets[side]);
+  const { hashes, findings, diagnostics } = capturedFindings(
+    retained.sarif, row.source_packets[side], sarifCache, notes.report_sha256);
   const coverage = retained.native_report ? engineCoverage(JSON.parse(utf8(retained.native_report))) : null;
   diagnostics.timeouts = Math.max(diagnostics.timeouts, coverage?.timeouts ?? 0);
   if (Object.entries(diagnostics).some(([key, value]) => value !== notes[key])) {
@@ -2449,7 +2451,7 @@ function replayCaseSide(row, side, retained, preparedSource, pathPolicy) {
   return { findings, coverage, submitted: true, verified: true };
 }
 
-export function replayCaseScore(root, input, row, retained, rules, scope, pathPolicy = null) {
+export function replayCaseScore(root, input, row, retained, rules, scope, pathPolicy = null, sarifCache = null) {
   const key = caseDigest([input]);
   const directory = preparedCaseDirectory(root, key, scope);
   const recordPath = reviewCapturePath(root, relative(root, join(directory, 'case.json')));
@@ -2461,8 +2463,8 @@ export function replayCaseScore(root, input, row, retained, rules, scope, pathPo
     || bindings.some(field => caseDigest([prepared[field]]) !== caseDigest([row[field]]))) {
     throw new Error('Replay inputs differ from the manifest or prepared case');
   }
-  const old = replayCaseSide(row, 'old', retained.old, prepared.old, pathPolicy);
-  const fixed = replayCaseSide(row, 'fixed', retained.fixed, prepared.new, pathPolicy);
+  const old = replayCaseSide(row, 'old', retained.old, prepared.old, pathPolicy, sarifCache);
+  const fixed = replayCaseSide(row, 'fixed', retained.fixed, prepared.new, pathPolicy, sarifCache);
   const families = familiesFor(input.cwes);
   const file_coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
     scans: { old, fixed }, extensions: scopeExtensions(input.ecosystem, scope), isTestPath });
