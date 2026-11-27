@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -288,6 +289,24 @@ def _coordinator_payload_shape(payload):
         relative_path(payload[name])
 
 
+def _coordinator_python_executable():
+    if os.name == "nt" and sys.prefix != sys.base_prefix:
+        return sys._base_executable
+    return sys.executable
+
+
+def _coordinator_worker_launch():
+    executable = _coordinator_python_executable()
+    # A Windows venv redirector spawns a second PID. Start the real interpreter
+    # with Python's own venv marker so the observed PID is the signed worker.
+    env = (
+        {**os.environ, "__PYVENV_LAUNCHER__": sys.executable}
+        if executable != sys.executable
+        else None
+    )
+    return executable, env
+
+
 def _coordinator_runtime_identity():
     # Bind loaded bodies, not merely a source file which could change after import.
     # Marshal encodings can change reference flags after first execution; only
@@ -321,8 +340,12 @@ def _coordinator_runtime_identity():
         ops_telemetry,
     )
     loaded = [_coordinator_loaded_identity(module) for module in modules]
-    executable = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
-    identity = [str(Path(sys.executable).resolve()), sys.version, executable, loaded]
+    paths = dict.fromkeys((sys.executable, _coordinator_python_executable()))
+    executables = [
+        [str(Path(path).resolve()), hashlib.sha256(Path(path).read_bytes()).hexdigest()]
+        for path in paths
+    ]
+    identity = [sys.version, executables, loaded]
     return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
 
@@ -713,11 +736,13 @@ def _coordinator_execute_job(root, request, owner, context, job):
         if remaining <= 0:
             raise ValueError("coordinator lease expired before launch")
         job["launch_attempted"] = True
+        executable, child_env = _coordinator_worker_launch()
         result = run_cli_detailed(
-            sys.executable,
+            executable,
             args,
             root,
             timeout=remaining + CLEANUP_TIMEOUT_SECONDS,
+            env=child_env,
             started_observer=lambda facts: _coordinator_launched(
                 request, context, job, facts
             ),

@@ -844,6 +844,38 @@ def _coordinator_cli_argv(root, *extra):
     ]
 
 
+def test_coordinator_windows_venv_launch_retains_worker_pid(tmp_path):
+    import os
+    import subprocess
+    import venv
+
+    if os.name != "nt":
+        pytest.skip("Windows venv redirector behavior")
+    from factoryline import cli_deep_audit
+
+    env_root = tmp_path / "worker-venv"
+    venv.EnvBuilder(with_pip=False).create(env_root)
+    package = str(Path(cli_deep_audit.__file__).resolve().parent.parent)
+    bootstrap = """
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+from factoryline.cli_deep_audit import _coordinator_worker_launch
+executable, env = _coordinator_worker_launch()
+assert executable == sys._base_executable and executable != sys.executable
+source = "import json, os, sys; print(json.dumps([os.getpid(), sys.prefix, sys.executable]))"
+with subprocess.Popen([executable, "-I", "-c", source], env=env, stdout=subprocess.PIPE, text=True) as worker:
+    raw, _ = worker.communicate(timeout=25)
+    assert worker.returncode == 0
+    pid, prefix, interpreter = json.loads(raw)
+    assert pid == worker.pid and prefix == sys.prefix and interpreter == sys.executable
+"""
+    subprocess.run(
+        [str(env_root / "Scripts" / "python.exe"), "-I", "-c", bootstrap, package],
+        check=True,
+        timeout=40,
+    )
+
+
 def test_coordinator_public_cli_status_stop_ndjson(tmp_path):
     import subprocess
     import sys
