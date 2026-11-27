@@ -599,17 +599,30 @@ def _osv_challenge_rows(report, lane, sources, obligation, kind):
     """Check native package/advisory semantics; this is not execution authority."""
     if kind not in {"positive", "negative", "mutation"}:
         raise RuntimeAuditError("E_OSV_CHALLENGE", "unknown OSV control kind")
-    account = _osv_source_accounting(report, sources, lane["mode"])
-    if account["state"] != "COMPLETE":
-        raise RuntimeAuditError(
-            "E_OSV_CHALLENGE", "complete manifest reporting required"
-        )
-    _execution_osv(report, lane, sources)
     target = obligation["osv_target"]
     control = next(item for item in obligation["challenges"] if item["kind"] == kind)
     anchor = relative_path(control["fixture_path"])
     version = target["fixed_version" if kind == "negative" else "vulnerable_version"]
     expected = {"name": target["package"], "version": version, "ecosystem": "PyPI"}
+    suppression = (
+        (canonical_bytes(expected), anchor, target["aliases"])
+        if kind == "mutation"
+        else None
+    )
+    account = _osv_source_accounting(
+        report, sources, lane["mode"], suppression=suppression
+    )
+    if account["state"] != "COMPLETE":
+        raise RuntimeAuditError(
+            "E_OSV_CHALLENGE", "complete manifest reporting required"
+        )
+    lookup = account.get("lookup_execution", {})
+    policy = lane.get("native_policy")
+    if policy and lookup.get("database_sha256") != policy["database_sha256"]:
+        raise RuntimeAuditError(
+            "E_OSV_LOOKUPS", "challenge lookup ledger or database binding is missing"
+        )
+    _execution_osv(report, lane, sources)
     packages = account["sources"].get(anchor, {}).get("packages", [])
     if sum(item == expected for item in packages) != 1:
         raise RuntimeAuditError(
@@ -634,6 +647,9 @@ def _osv_challenge_rows(report, lane, sources, obligation, kind):
         "inventory": sorted(inventory, key=canonical_bytes),
         "target_rows": sorted(targeted, key=canonical_bytes),
         "unrelated_rows": sorted(unrelated, key=canonical_bytes),
+        "lookup_decisions": [
+            row["decision_sha256"] for row in lookup.get("queries", [])
+        ],
         "report_sha256": digest(report),
     }
 
@@ -736,7 +752,7 @@ def _native_osv_accounting(report, required):
         )
 
 
-def _osv_source_accounting(report, required, mode):
+def _osv_source_accounting(report, required, mode, *, suppression=None):
     """Bind observed manifest/package reporting, not undisclosed dependency completeness."""
     report = _object(report)
     if report.get("errors") or report.get("error"):
@@ -760,7 +776,9 @@ def _osv_source_accounting(report, required, mode):
         }
     accounting = _osv_accounting_result(report, required, sources, errors)
     if "factory_lookup_execution" in report:
-        accounting["lookup_execution"] = _osv_lookup_execution(report, sources)
+        accounting["lookup_execution"] = _osv_lookup_execution(
+            report, sources, suppression
+        )
     return accounting
 
 
@@ -808,7 +826,7 @@ def _osv_lookup_extractors(runs):
             raise RuntimeAuditError("E_OSV_LOOKUPS", "extractor execution set differs")
 
 
-def _osv_lookup_query(row, ledger, targets):
+def _osv_lookup_query(row, ledger, targets, suppression):
     row = _osv_lookup_fields(
         row,
         "name version ecosystem locations state evaluated_advisories "
@@ -838,9 +856,19 @@ def _osv_lookup_query(row, ledger, targets):
     )
     if require_digest(row["decision_sha256"], "decision hash") != expected_decision:
         raise RuntimeAuditError("E_OSV_LOOKUPS", "native decision hash differs")
+    visible = matched
+    if suppression and (key, paths) == (suppression[0], [suppression[1]]):
+        # The lookup ledger records pre-filter decisions; the report applies the signed suppression.
+        visible = [advisory for advisory in matched if advisory not in suppression[2]]
+        if len(visible) == len(matched):
+            raise RuntimeAuditError(
+                "E_OSV_LOOKUPS",
+                "mutated lookup did not match the bound advisory family",
+            )
     if (
         paths != sorted(targets[key]["locations"])
-        or matched != sorted(targets[key]["matched"])
+        or matched != sorted(set(matched))
+        or visible != sorted(targets[key]["matched"])
         or evaluated != ledger["catalog_advisories"]
         or row["evaluated_sha256"] != ledger["catalog_sha256"]
     ):
@@ -848,7 +876,7 @@ def _osv_lookup_query(row, ledger, targets):
     return key, row
 
 
-def _osv_lookup_execution(report, sources):
+def _osv_lookup_execution(report, sources, suppression):
     ledger = _osv_lookup_fields(
         report["factory_lookup_execution"],
         "schema upstream_commit database_sha256 catalog_advisories catalog_sha256 "
@@ -866,7 +894,7 @@ def _osv_lookup_execution(report, sources):
     targets = _osv_lookup_targets(report)
     observed = {}
     for row in _list(ledger["queries"], 1, 20_000):
-        key, row = _osv_lookup_query(row, ledger, targets)
+        key, row = _osv_lookup_query(row, ledger, targets, suppression)
         if key in observed:
             raise RuntimeAuditError("E_OSV_LOOKUPS", "duplicate native package query")
         observed[key] = row
@@ -949,6 +977,12 @@ def _native_syft_accounting(report, required):
             "E_DEPENDENCY_COVERAGE",
             "native SBOM locations must account for every dependency input",
         )
+    return {
+        "state": "COMPLETE",
+        "required_paths": sorted(required),
+        "measured_paths": sorted(paths),
+        "missing_paths": [],
+    }
 
 
 def _native_runtime_accounting(report, required):
@@ -1911,7 +1945,17 @@ def _coverage_gaps(
     gaps.extend(accounting_gaps)
     expected = _covered_obligation_ids(obligations, lane, required)
     observed = _list(coverage.get("obligations"), 0, 4096)
-    if _obligation_coverage_missing(observed, expected):
+    inventory_only = lane["engine"] == "syft" and lane.get("native_artifact_roles") == [
+        "sbom_json"
+    ]
+    missing = _obligation_coverage_missing(observed, expected)
+    if inventory_only:
+        # Inventory supports the dependency lane only with a bound lookup control.
+        lookup = _covered_obligation_ids(
+            obligations, {**lane, "engine": "osv"}, required
+        )
+        missing = bool(observed or expected) or not lookup
+    if missing:
         gaps.append("OBLIGATION_COVERAGE_MISSING")
     return gaps, expected, observed
 

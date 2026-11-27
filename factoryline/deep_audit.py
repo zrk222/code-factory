@@ -407,10 +407,14 @@ def _status_action_coverage(directory, state, events):
     return coverage
 
 
+class _DockerEngineUnavailable(RuntimeAuditError):
+    """The common local endpoint failed before an adapter image was inspected."""
+
+
 def _docker_base() -> list[str]:
     executable = shutil.which("docker")
     if executable is None:
-        raise RuntimeAuditError(
+        raise _DockerEngineUnavailable(
             "E_DOCKER_UNAVAILABLE",
             "Install and start a local Linux Docker engine; host execution is disabled",
         )
@@ -444,14 +448,25 @@ def _docker_control(base: list, args: list, timeout: int = 15) -> tuple[dict, by
         return facts, raw
 
 
+def _check_docker_engine(control, base: list, control_args: tuple) -> None:
+    try:
+        facts, raw = control(
+            base, ["info", "--format", "{{json .OSType}}"], *control_args
+        )
+    except RuntimeAuditError as exc:
+        if control_args or exc.code != "E_DOCKER_CONTROL":
+            raise
+        raise _DockerEngineUnavailable(exc.code, exc.message) from exc
+    if facts["exit_code"] != 0 or raw.strip() != b'"linux"':
+        raise _DockerEngineUnavailable(
+            "E_DOCKER_UNAVAILABLE", "A running local Linux Docker engine is required"
+        )
+
+
 def _docker_preflight(base: list, lane: dict, deadline=None) -> None:
     control = _docker_control if deadline is None else _zap_docker_control
     control_args = () if deadline is None else (deadline,)
-    facts, raw = control(base, ["info", "--format", "{{json .OSType}}"], *control_args)
-    if facts["exit_code"] != 0 or raw.strip() != b'"linux"':
-        raise RuntimeAuditError(
-            "E_DOCKER_UNAVAILABLE", "A running local Linux Docker engine is required"
-        )
+    _check_docker_engine(control, base, control_args)
     local_id = lane["image"].startswith("sha256:")
     field = ".Id" if local_id else ".RepoDigests"
     facts, raw = control(
@@ -2038,7 +2053,9 @@ def has_fuzz_controls(lane, inventory, obligations):
     )
 
 
-def _validate_fuzz_host_replay(replay, lane, validate_facts, validate_digest):
+def _validate_fuzz_host_replay(
+    replay, lane, validate_facts, validate_digest, *, error_code="E_FUZZ_REPLAY"
+):
     facts = replay.get("execution", {})
     validate_facts(facts, facts["timeout_seconds"])
     if (
@@ -2046,9 +2063,7 @@ def _validate_fuzz_host_replay(replay, lane, validate_facts, validate_digest):
         or replay.get("cleanup_confirmed") is not True
         or not _osv_replay_process_valid_for_review(facts)
     ):
-        raise RuntimeAuditError(
-            "E_FUZZ_REPLAY", "control replay execution is incomplete"
-        )
+        raise RuntimeAuditError(error_code, "control replay execution is incomplete")
     for key in ("native_execution_sha256", "runtime_sha256", "command_sha256"):
         validate_digest(replay.get(key), key)
 
@@ -2210,22 +2225,27 @@ def _completion_replay_binding(
 ):
     from .runtime_audit_common import _validate_runner_facts, require_digest
 
-    _validate_fuzz_host_replay(replay, lane, _validate_runner_facts, require_digest)
-    if lane["engine"] == "atheris":
-        expected = _deep_audit_io._fuzz_replay_expected(
-            {
-                "lane": lane,
-                "inventory": inventory,
-                "coverage": coverage,
-                "report": report,
-                "challenges": bundle["artifacts"][lane["challenge_report"]],
-                "obligations": obligations,
-            }
+    engine = lane["engine"]
+    _validate_fuzz_host_replay(
+        replay,
+        lane,
+        _validate_runner_facts,
+        require_digest,
+        error_code="E_OSV_REPLAY" if engine == "osv" else "E_FUZZ_REPLAY",
+    )
+    request = {"lane": lane, "inventory": inventory, "coverage": coverage}
+    if engine in {"atheris", "osv"}:
+        request.update(
+            report=report,
+            challenges=bundle["artifacts"][lane["challenge_report"]],
+            obligations=obligations,
         )
+    if engine == "atheris":
+        expected = _deep_audit_io._fuzz_replay_expected(request)
+    elif engine == "osv":
+        expected = _osv_replay_expected(request)
     else:
-        expected = _codeql_replay_expected(
-            {"lane": lane, "inventory": inventory, "coverage": coverage}
-        )
+        expected = _codeql_replay_expected(request)
     if any(replay.get(key) != value for key, value in expected.items()):
         raise RuntimeAuditError("E_NATIVE_COMPLETION", "host replay binding differs")
 
@@ -2235,15 +2255,16 @@ def apply_retained_native_completion(
 ):
     """Reapply independently bound host replay when reading the original bundle."""
     engine = lane["engine"]
-    if engine == "codeql" and saved.get("codeql_replay"):
-        replay = saved["codeql_replay"]
+    if engine in {"codeql", "osv"} and (replay := saved.get(f"{engine}_replay")):
         coverage = bundle["artifacts"][lane["coverage"]]
         report = bundle["artifacts"][lane["report"]]
         _completion_replay_binding(
             replay, lane, inventory, coverage, report, bundle, obligations
         )
         result["gaps"] = [
-            gap for gap in result["gaps"] if gap != "CODEQL_NATIVE_REPLAY_REQUIRED"
+            gap
+            for gap in result["gaps"]
+            if gap != f"{engine.upper()}_NATIVE_REPLAY_REQUIRED"
         ]
     elif (
         engine == "atheris"
@@ -2611,6 +2632,54 @@ def _osv_replay_controls(obligations, lane, required):
     return rows
 
 
+def _record_lane_result(root, directory, state, lane, plan, action, result, emit):
+    result.update(
+        action_id=action["action_id"], engine=lane["engine"], family=lane["family"]
+    )
+    state["lanes"].append(result)
+    _record_failures(
+        directory,
+        state,
+        lane["id"],
+        result["gaps"],
+        emit,
+        execution=result.get("execution", {}),
+    )
+    for finding in result["findings"]:
+        finding["rerun"] = [
+            "factory",
+            "deep-audit",
+            "scan",
+            "--root",
+            str(root),
+            "--manifest",
+            "<operator-manifest>",
+            "--manifest-sha256",
+            state["manifest_sha256"],
+            "--authorization",
+            "<fresh-coordinator-authorization>",
+            "--trust-root",
+            "<operator-trust-root>",
+            "--trust-root-sha256",
+            plan["trust_root_sha256"],
+        ]
+        _event(directory, state, "finding_observed", finding, emit)
+    _event(
+        directory,
+        state,
+        "lane_completed",
+        {
+            **action,
+            **_action_terminal(result),
+            "lane_id": lane["id"],
+            "finding_ids": sorted(
+                item.get("finding_id", "") for item in result["findings"]
+            ),
+        },
+        emit,
+    )
+
+
 def _run_lanes(
     root: Path,
     directory: Path,
@@ -2624,6 +2693,7 @@ def _run_lanes(
     actions = {
         item["lane_id"]: item for item in _action_enrollment(state, plan)["actions"]
     }
+    docker_failure = None
     for lane in plan["lanes"]:
         if (directory / "cancel.json").exists():
             state["gaps"].append(
@@ -2646,62 +2716,24 @@ def _run_lanes(
         )
         try:
             authorize()
+            if docker_failure is not None and "runner_binding" not in lane:
+                raise RuntimeAuditError(
+                    docker_failure, "Local Docker engine failed in this run"
+                )
             result = _execute_lane(
                 root, directory, state, snapshot, lane, inventory, plan, emit
             )
         except (OSError, ValueError, KeyError, TypeError) as exc:
             code = getattr(exc, "code", "E_WORKER_EVIDENCE")
+            if isinstance(exc, _DockerEngineUnavailable):
+                docker_failure = code
             result = {
                 "lane_id": lane["id"],
                 "state": "INCOMPLETE",
                 "findings": [],
                 "gaps": [code],
             }
-        result.update(
-            action_id=action["action_id"], engine=lane["engine"], family=lane["family"]
-        )
-        state["lanes"].append(result)
-        _record_failures(
-            directory,
-            state,
-            lane["id"],
-            result["gaps"],
-            emit,
-            execution=result.get("execution", {}),
-        )
-        for finding in result["findings"]:
-            finding["rerun"] = [
-                "factory",
-                "deep-audit",
-                "scan",
-                "--root",
-                str(root),
-                "--manifest",
-                "<operator-manifest>",
-                "--manifest-sha256",
-                state["manifest_sha256"],
-                "--authorization",
-                "<fresh-coordinator-authorization>",
-                "--trust-root",
-                "<operator-trust-root>",
-                "--trust-root-sha256",
-                plan["trust_root_sha256"],
-            ]
-            _event(directory, state, "finding_observed", finding, emit)
-        _event(
-            directory,
-            state,
-            "lane_completed",
-            {
-                **action,
-                **_action_terminal(result),
-                "lane_id": lane["id"],
-                "finding_ids": sorted(
-                    item.get("finding_id", "") for item in result["findings"]
-                ),
-            },
-            emit,
-        )
+        _record_lane_result(root, directory, state, lane, plan, action, result, emit)
         if "E_CONTAINER_CLEANUP" in result["gaps"]:
             state["gaps"].append(
                 _execution_gap(

@@ -4264,6 +4264,99 @@ def test_docker_preflight_missing_local_image_never_pulls(monkeypatch):
     assert [args[0] for args in calls] == ["info", "image"]
 
 
+@pytest.mark.parametrize("failed_command", ["info", "image"])
+def test_docker_preflight_distinguishes_engine_from_image_timeout(
+    monkeypatch, failed_command
+):
+    import factoryline.deep_audit as module
+
+    def control(base, args):
+        if args[0] == failed_command:
+            raise RuntimeAuditError("E_DOCKER_CONTROL", "timed out")
+        return {"exit_code": 0}, b'"linux"'
+
+    monkeypatch.setattr(module, "_docker_control", control)
+    with pytest.raises(RuntimeAuditError, match="E_DOCKER_CONTROL") as caught:
+        module._docker_preflight(["docker"], {"image": "sha256:" + "a" * 64})
+    assert isinstance(caught.value, module._DockerEngineUnavailable) == (
+        failed_command == "info"
+    )
+
+
+@pytest.mark.parametrize("common_endpoint_failure", [True, False])
+def test_unavailable_docker_engine_does_not_repeat_shared_timeout(
+    tmp_path, monkeypatch, common_endpoint_failure
+):
+    import factoryline.deep_audit as module
+
+    lanes = [
+        {"id": "first", "engine": "codeql", "family": "static"},
+        {"id": "second", "engine": "trivy", "family": "configuration"},
+        {
+            "id": "local",
+            "engine": "osv",
+            "family": "dependencies",
+            "runner_binding": {},
+        },
+    ]
+    actions = [{"lane_id": lane["id"], "action_id": lane["id"]} for lane in lanes]
+    monkeypatch.setattr(module, "_action_enrollment", lambda *_: {"actions": actions})
+    events, calls, authorizations = [], [], []
+    monkeypatch.setattr(
+        module, "_event", lambda _, state, name, row, emit: events.append(name)
+    )
+    monkeypatch.setattr(module, "_record_failures", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module, "_action_terminal", lambda result: {"state": result["state"]}
+    )
+
+    def execute(root, directory, state, snapshot, lane, inventory, plan, emit):
+        calls.append(lane["id"])
+        if lane["id"] == "first":
+            error = (
+                module._DockerEngineUnavailable
+                if common_endpoint_failure
+                else RuntimeAuditError
+            )
+            raise error("E_DOCKER_CONTROL", "timed out")
+        return {"lane_id": lane["id"], "state": "OBSERVED", "findings": [], "gaps": []}
+
+    monkeypatch.setattr(module, "_execute_lane", execute)
+    plan = {"lanes": lanes}
+    for _ in range(2):
+        state = {"lanes": [], "gaps": []}
+        module._run_lanes(
+            tmp_path,
+            tmp_path,
+            state,
+            tmp_path,
+            {},
+            plan,
+            None,
+            lambda: authorizations.append(state["active_lane"]),
+        )
+        assert [lane["state"] for lane in state["lanes"]] == [
+            "INCOMPLETE",
+            "INCOMPLETE" if common_endpoint_failure else "OBSERVED",
+            "OBSERVED",
+        ]
+        assert state["lanes"][0]["gaps"] == ["E_DOCKER_CONTROL"]
+        assert state["lanes"][1]["gaps"] == (
+            ["E_DOCKER_CONTROL"] if common_endpoint_failure else []
+        )
+    assert (
+        calls
+        == (
+            ["first", "local"]
+            if common_endpoint_failure
+            else ["first", "second", "local"]
+        )
+        * 2
+    )
+    assert authorizations == ["first", "second", "local"] * 2
+    assert events == ["lane_started", "lane_completed"] * 6
+
+
 def test_missing_nested_source_has_typed_error(tmp_path: Path) -> None:
     from factoryline.deep_audit_io import local_file
 
@@ -4733,6 +4826,22 @@ def test_syft_native_metadata_source_is_exactly_bound(target):
                 report, {"tool_version": "1.33.0"}, {"requirements.txt": "a" * 64}
             )
             == []
+        )
+
+
+def test_syft_native_accounting_rejects_an_unmeasured_manifest():
+    from factoryline.deep_audit_sarif import _native_syft_accounting
+
+    observed = {"artifacts": [{"locations": [{"path": "/src/requirements.txt"}]}]}
+    assert _native_syft_accounting(observed, {"requirements.txt": "a" * 64}) == {
+        "state": "COMPLETE",
+        "required_paths": ["requirements.txt"],
+        "measured_paths": ["requirements.txt"],
+        "missing_paths": [],
+    }
+    with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
+        _native_syft_accounting(
+            observed, {"requirements.txt": "a" * 64, "extra/requirements.txt": "b" * 64}
         )
 
 
@@ -7706,6 +7815,104 @@ def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
         )
 
 
+@pytest.fixture
+def codeql_extracted_file_rows():
+    from factoryline.deep_audit_loop import (
+        _CODEQL_EXTRACTED_FILES_COLUMNS,
+        _CODEQL_EXTRACTED_FILES_QUERY,
+    )
+
+    def row(index, path):
+        return [
+            {
+                "id": index,
+                "label": path,
+                "url": {
+                    "uri": f"file:///src/{path}",
+                    "startLine": 0,
+                    "startColumn": 0,
+                    "endLine": 0,
+                    "endColumn": 0,
+                },
+            },
+            "fixture",
+        ]
+
+    paths = ("a.py", "b.py")
+    record = dict(
+        zip(("rule_id", "query_path", "query_sha256"), _CODEQL_EXTRACTED_FILES_QUERY)
+    )
+    decoded = {
+        "#select": {
+            "columns": deepcopy(_CODEQL_EXTRACTED_FILES_COLUMNS),
+            "tuples": [row(index, path) for index, path in enumerate(paths)],
+        }
+    }
+    return record, decoded, {"sources": dict.fromkeys(paths, "a" * 64)}
+
+
+def test_codeql_extracted_files_replay_has_stable_digest_across_ids(
+    codeql_extracted_file_rows,
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    rows = fresh["#select"]["tuples"]
+    rows.reverse()
+    rows[0][0]["id"] = 50
+    rows[1][0]["id"] = 51
+    expected = _codeql_replay_query_digest(record, record, worker, worker, coverage)
+    assert (
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage) == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (("tuples", 0, 0, "id"), 1),
+        (("tuples", 0, 0, "id"), True),
+        (("tuples", 0, 0, "id"), -1),
+        (("tuples", 0, 0, "label"), "other"),
+        (("tuples", 0, 0, "url", "uri"), "file:///src/b.py"),
+        (("tuples", 0, 0, "url", "uri"), "file:///other/a.py"),
+        (("tuples", 0, 0, "url", "startLine"), 1),
+        (("tuples", 0, 1), "other"),
+        (("columns", 0, "name"), "other"),
+    ],
+)
+def test_codeql_extracted_files_replay_rejects_difference(
+    codeql_extracted_file_rows, path, replacement
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    element = fresh["#select"]
+    for key in path[:-1]:
+        element = element[key]
+    element[path[-1]] = replacement
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage)
+
+
+def test_codeql_extracted_files_replay_rejects_unpinned_query_or_inventory(
+    codeql_extracted_file_rows,
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    fresh["#select"]["tuples"][0][0]["id"] = 8
+    other = {**record, "query_sha256": "b" * 64}
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, other, worker, fresh, coverage)
+    coverage["sources"]["c.py"] = "c" * 64
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage)
+
+
 def test_codeql_steps_runner_defaults_to_three_steps_and_rejects_two(
     tmp_path, monkeypatch
 ):
@@ -8005,6 +8212,58 @@ def test_osv_replay_receipt_accepts_source_database_and_all_control_bindings():
         for kind in ("mutation", "negative", "positive")
     ]
     assert expected["source_paths"] == ["requirements.txt"]
+
+
+@pytest.mark.parametrize("changed", [None, "database", "controls", "cleanup"])
+def test_retained_osv_replay_revalidates_before_closing_review_gap(changed):
+    from factoryline.deep_audit import apply_retained_native_completion
+
+    _, facts, request, receipt = _osv_replay_receipt_inputs()
+    lane = request["lane"]
+    replay = {
+        **receipt,
+        "execution": facts,
+        "image": lane["image"],
+        "cleanup_confirmed": True,
+        "runtime_sha256": "a" * 64,
+        "command_sha256": "b" * 64,
+    }
+    artifacts = {
+        lane[field]: request[key]
+        for field, key in (
+            ("coverage", "coverage"),
+            ("report", "report"),
+            ("challenge_report", "challenges"),
+        )
+    }
+    result = {
+        "state": "INCOMPLETE",
+        "gaps": ["OSV_NATIVE_REPLAY_REQUIRED", "OTHER_GAP"],
+    }
+    if changed is not None:
+        replay.update(
+            {
+                "database": {"database_sha256": "0" * 64},
+                "controls": {"controls": []},
+                "cleanup": {"cleanup_confirmed": False},
+            }[changed]
+        )
+    args = (
+        result,
+        {"osv_replay": replay},
+        lane,
+        {"artifacts": artifacts},
+        request["inventory"],
+        request["obligations"],
+        "run-id",
+    )
+    if changed:
+        with pytest.raises(RuntimeAuditError):
+            apply_retained_native_completion(*args)
+        assert result["gaps"] == ["OSV_NATIVE_REPLAY_REQUIRED", "OTHER_GAP"]
+    else:
+        apply_retained_native_completion(*args)
+        assert result == {"state": "INCOMPLETE", "gaps": ["OTHER_GAP"]}
 
 
 @pytest.mark.parametrize(

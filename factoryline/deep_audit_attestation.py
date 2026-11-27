@@ -34,6 +34,14 @@ PAYLOAD_TYPE = "application/vnd.factory.deep-audit-attestation.v1+json"
 RESULT_SCHEMA = "factory.deep-audit-attestation-verification.v1"
 DEFAULT_MAX_AGE_SECONDS = 3600
 MAX_VALIDITY_SECONDS = 86400
+_KEYLESS_TRUST = "factory.deep-audit-sigstore-trust.v1"
+_KEYLESS_ENVELOPE = "factory.deep-audit-sigstore-envelope.v1"
+_GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+_EXECUTION_ROLES = {
+    "implementer": "implementer_id",
+    "reviewer": "reviewer_identity",
+    "coordinator": "coordinator_identity",
+}
 
 
 def _execution_bytes(path: Path) -> bytes:
@@ -63,6 +71,30 @@ def _execution_document(
     if sha256_bytes(trust) != trust_pin:
         raise RuntimeAuditError("E_TRUST_ROOT_PIN", "trust root changed")
     envelope, trust_value = strict_json(raw), strict_json(trust)
+    if trust_value.get("schema") == _KEYLESS_TRUST:
+        parsed = _keyless_execution_payload(
+            envelope, trust_value, identity, keyid, schema
+        )
+    else:
+        parsed = _dsse_execution_payload(
+            path, trust_root, envelope, trust_value, identity, keyid, schema
+        )
+    if _execution_bytes(path) != raw or _execution_bytes(trust_root) != trust:
+        raise RuntimeAuditError(
+            "E_REVIEW_DRIFT", "signed inputs changed during verification"
+        )
+    _execution_freshness(parsed)
+    if return_envelope_sha256:
+        # Run artifacts add a self-integrity field outside the signed envelope.
+        return parsed, digest(
+            {key: value for key, value in envelope.items() if key != "sha256"}
+        )
+    return parsed
+
+
+def _dsse_execution_payload(
+    path, trust_root, envelope, trust_value, identity, keyid, schema
+):
     try:
         encoded = envelope["payload"]
         parsed = strict_json(
@@ -79,22 +111,122 @@ def _execution_document(
         trust_root_path=trust_root,
     )
     _execution_signer(verified["signature"], trust_value, identity, keyid)
+    if verified["payload"] != parsed:
+        raise RuntimeAuditError(
+            "E_REVIEW_DRIFT", "signed payload changed during verification"
+        )
+    return parsed
+
+
+def _keyless_roles(trust):
+    roles = trust.get("roles")
     if (
-        verified["payload"] != parsed
-        or _execution_bytes(path) != raw
-        or _execution_bytes(trust_root) != trust
+        set(trust) != {"schema", "roles"}
+        or not isinstance(roles, dict)
+        or roles.keys() != _EXECUTION_ROLES.keys()
     ):
         raise RuntimeAuditError(
-            "E_REVIEW_DRIFT", "signed inputs changed during verification"
+            "E_REVIEW_TRUST", "exactly three keyless roles are required"
         )
-    _execution_freshness(parsed)
-    if return_envelope_sha256:
-        # Run artifacts add a self-integrity field outside the signed envelope.
-        signed_envelope = {
-            key: value for key, value in envelope.items() if key != "sha256"
-        }
-        return parsed, digest(signed_envelope)
-    return parsed
+    workflow_paths = set()
+    for row in roles.values():
+        if not isinstance(row, dict) or set(row) != {
+            "keyid",
+            "identity",
+            "workflow_digest",
+        }:
+            raise RuntimeAuditError(
+                "E_REVIEW_TRUST", "keyless roles require exact workload pins"
+            )
+        require_str(row["keyid"], "keyless workload id", maximum=256)
+        identity = require_str(row["identity"], "certificate identity", maximum=512)
+        workflow, separator, ref = identity.rpartition("@")
+        if not (
+            workflow.startswith("https://github.com/")
+            and "/.github/workflows/" in workflow
+            and separator
+            and ref.startswith(("refs/heads/", "refs/tags/"))
+        ):
+            raise RuntimeAuditError(
+                "E_REVIEW_IDENTITY", "GitHub workflow identity is required"
+            )
+        workflow_paths.add(workflow.casefold())
+        sha = row["workflow_digest"]
+        if (
+            not isinstance(sha, str)
+            or len(sha) != 40
+            or set(sha) - set("0123456789abcdef")
+        ):
+            raise RuntimeAuditError(
+                "E_REVIEW_TRUST", "exact workflow commit SHA is required"
+            )
+    if len(workflow_paths) != len(_EXECUTION_ROLES) or len(
+        {row["keyid"] for row in roles.values()}
+    ) != len(_EXECUTION_ROLES):
+        raise RuntimeAuditError(
+            "E_REVIEW_IDENTITY", "keyless roles require distinct workflow paths and ids"
+        )
+    return roles
+
+
+def _keyless_execution_payload(envelope, trust, identity, keyid, schema):
+    fields = set(envelope) - {"sha256"}
+    if (
+        fields != {"schema", "payload", "bundle"}
+        or envelope["schema"] != _KEYLESS_ENVELOPE
+    ):
+        raise RuntimeAuditError("E_REVIEW_PAYLOAD", "invalid keyless envelope")
+    payload = envelope["payload"]
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != schema
+        or not isinstance(envelope["bundle"], dict)
+    ):
+        raise RuntimeAuditError("E_REVIEW_PAYLOAD", "invalid keyless signed document")
+    role = next(
+        (
+            row
+            for row in _keyless_roles(trust).values()
+            if (row["identity"], row["keyid"]) == (identity, keyid)
+        ),
+        None,
+    )
+    if role is None:
+        raise RuntimeAuditError(
+            "E_REVIEW_IDENTITY", "keyless signer is outside the pinned role"
+        )
+    _verify_keyless_artifact(
+        _deep_audit_io.canonical_bytes(payload), envelope["bundle"], role
+    )
+    return payload
+
+
+def _verify_keyless_artifact(payload, bundle, role):
+    try:
+        from sigstore.errors import Error
+        from sigstore.models import Bundle
+        from sigstore.verify import Verifier, policy
+    except ImportError as error:
+        raise RuntimeAuditError(
+            "E_SIGSTORE_UNAVAILABLE",
+            "the Sigstore extra is required for keyless audit trust",
+        ) from error
+    pins = policy.AllOf(
+        [
+            policy.Identity(identity=role["identity"], issuer=_GITHUB_OIDC_ISSUER),
+            policy.OIDCBuildSignerURI(role["identity"]),
+            policy.OIDCBuildSignerDigest(role["workflow_digest"]),
+            policy.OIDCRunnerEnvironment("github-hosted"),
+        ]
+    )
+    try:
+        Verifier.production(offline=True).verify_artifact(
+            payload, Bundle.from_json(_deep_audit_io.canonical_bytes(bundle)), pins
+        )
+    except (Error, ValueError, TypeError) as error:
+        raise RuntimeAuditError(
+            "E_REVIEW_KEYLESS_SIGNATURE", "keyless artifact verification failed"
+        ) from error
 
 
 def _execution_signer(signature, trust_value, identity, keyid):
@@ -131,12 +263,19 @@ def _execution_freshness(parsed):
 
 def _execution_keys(plan: dict, trust_root: Path) -> None:
     trust = strict_json(_execution_bytes(trust_root))
+    if trust.get("schema") == _KEYLESS_TRUST:
+        roles = _keyless_roles(trust)
+        if any(
+            (roles[role]["identity"], roles[role]["keyid"])
+            != (plan[identity], plan[f"{role}_keyid"])
+            for role, identity in _EXECUTION_ROLES.items()
+        ):
+            raise RuntimeAuditError(
+                "E_REVIEW_TRUST", "manifest role differs from the keyless trust pin"
+            )
+        return
     keys = []
-    for role, identity in (
-        ("implementer", "implementer_id"),
-        ("reviewer", "reviewer_identity"),
-        ("coordinator", "coordinator_identity"),
-    ):
+    for role, identity in _EXECUTION_ROLES.items():
         found = [
             key
             for key in trust.get("keys", [])
@@ -2502,8 +2641,16 @@ def _native_profile_coverage(
             execution["invocations"],
             execution["raw_report"],
         )
-    errors = ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"]
-    complete = False
+    errors = (
+        []
+        if lane["engine"] == "syft"
+        and lane.get("native_artifact_roles") == ["sbom_json"]
+        and not (
+            covered_obligations or challenges["observations"] or challenges.get("gaps")
+        )
+        else ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"]
+    )
+    complete = not errors
     if lane["engine"] == "gitleaks":
         errors = _deep_audit_io._gitleaks_coverage_errors(
             rule_accounting, challenges, covered_obligations
@@ -3212,6 +3359,14 @@ def _codeql_steps_facts(invocations, streams, started, budget, expected_steps=3)
 def _native_source_accounting(
     execution, report, inventory, lane, *, execution_context=None
 ):
+    if lane.get("engine") == "syft":
+        from .deep_audit_sarif import _execution_syft, _native_syft_accounting
+
+        sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+        _execution_syft(report, lane, sources)
+        return _native_syft_accounting(
+            report, _deep_audit_io._trivy_source_map(inventory, lane)
+        )
     if lane.get("engine") == "osv":
         from .deep_audit_sarif import _osv_source_accounting
 

@@ -563,6 +563,28 @@ coordinator. It must not be cited as a penetration-test receipt.
    <review.dsse.json> --invocation <invocation.dsse.json> --trust-root <trust.json>
    --trust-root-sha256 <sha256>`.
 
+#### Managed keyless audit signing
+
+Install the optional Sigstore extra on the verification host. Select an
+operator-pinned `factory.deep-audit-sigstore-trust.v1` document with a
+`roles` object containing `implementer`, `reviewer`, and `coordinator`.
+Each entry carries its distinct `keyid`, full GitHub Actions certificate
+`identity`, and exact 40-character `workflow_digest`. Use separately controlled,
+reviewed workflows and GitHub-hosted runners. The execution manifest binds
+the trust-document hash and the matching role identities and IDs.
+
+Have each trusted workflow sign the exact canonical UTF-8 JSON payload with
+Sigstore. Package its decoded payload object and Sigstore verification bundle
+as `payload` and `bundle` in a `factory.deep-audit-sigstore-envelope.v1`
+document. Offline verification checks the signature, transparency evidence,
+GitHub OIDC issuer, pinned workflow certificate identity and signer digest,
+and hosted runner. The execution authorization still binds the candidate,
+manifest and images within its one-hour validity window. The separate
+read-only review workflow and coordinator invocation bind the actual review
+to its source and execution evidence.
+Pass the coordinator's `review-envelope.json` to `--attestation` and
+its `invocation-envelope.json` to `--invocation`.
+
 ### Adapter evidence contract
 
 The worker endpoint is implemented in `factoryline.deep_audit_io.adapter_main`.
