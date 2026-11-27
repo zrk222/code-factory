@@ -305,31 +305,41 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             schema["required"] == assigned and schema["additionalProperties"] is False
         )
         if "path_evidence" in payload:
-            assert mode == "challenge_receipts" and payload["family"] in {"fuzz", "runtime"}
+            assert mode == "challenge_receipts"
             assert set(payload["path_evidence"]) == set(assigned)
-            family_obligation = next(
+            family_obligations = [
                 row for row in plan["obligations"] if row["family"] == payload["family"]
-            )
+            ]
+            family_obligation = family_obligations[0]
             observed = receipts["lanes"][lane_ids[family_obligation["engine"]]]["observations"]
             for path in assigned:
                 source = packet["sources"][path]
                 assert payload["sources"][path] == source
                 path_evidence = payload["path_evidence"][path]
                 assert path_evidence["source_sha256"] == sha256_bytes(source.encode())
-                assert bool(path_evidence.get("requirements")) == (path in family_obligation["requirements"])
+                assert path_evidence.get("requirements", []) == [
+                    row["id"] for row in family_obligations if path in row["requirements"]
+                ]
                 controls = {
-                    control["kind"]: control for control in family_obligation["challenges"]
+                    (row["id"], control["kind"]): (row, control)
+                    for row in family_obligations for control in row["challenges"]
                     if control["fixture_path"] == path
                 }
-                supplied = {control["role"]: control for control in path_evidence.get("entrypoint_controls", [])}
+                supplied = {
+                    (control["obligation"], control["role"]): control
+                    for control in path_evidence.get("entrypoint_controls", [])
+                }
                 assert set(supplied) == set(controls)
-                for role, control in supplied.items():
-                    receipt = next(row for row in observed if row["role"] == role)
-                    assert control["exit_code"] == controls[role]["expected_exit_code"] == receipt["exit_code"]
+                for (identity, role), control in supplied.items():
+                    obligation, registered = controls[(identity, role)]
+                    lane_receipts = receipts["lanes"][lane_ids[obligation["engine"]]]["observations"]
+                    receipt = next(row for row in lane_receipts
+                                   if row["role"] == role and row["obligation_id"] == identity)
+                    assert control["exit_code"] == registered["expected_exit_code"] == receipt["exit_code"]
                     assert control["observation_sha256"] == receipt["observation_sha256"]
                 assert path_evidence.get("supporting_controls", []) == [
-                    [family_obligation["id"], control["kind"]]
-                    for control in family_obligation["challenges"]
+                    [row["id"], control["kind"]]
+                    for row in family_obligations for control in row["challenges"]
                     if path in control["fixture_manifest"] and path != control["fixture_path"]
                 ]
             assert "They do not establish execution" in body["messages"][0]["content"]
@@ -342,10 +352,13 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert retry["sources"] == {assigned[0]: packet["sources"][assigned[0]]}
             assert retry["path_evidence"] == {assigned[0]: payload["path_evidence"][assigned[0]]}
             expected_coverage.update(assigned)
-            assert "decision" not in body["response_format"]["schema"]["properties"]
+            assert {"decision", "coverage_gaps"}.isdisjoint(body["response_format"]["schema"]["properties"])
             positive = next(item for item in family_obligation["challenges"] if item["kind"] == "positive")
             positive_path = positive["fixture_path"]
-            positive_receipt = next(item for item in observed if item["role"] == "positive")
+            positive_receipt = next(
+                item for item in observed
+                if item["role"] == "positive" and item["obligation_id"] == family_obligation["id"]
+            )
             claim = {
                 "kind": "exit_mismatch", "obligation": family_obligation["id"], "path": positive_path,
                 "role": "positive", "observation_sha256": positive_receipt["observation_sha256"],
@@ -358,7 +371,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                 "source_line": 1, "source_excerpt": source,
             }
             result = {
-                "findings": [finding], "coverage_gaps": [],
+                "findings": [finding],
                 "control_claims": [claim, {**claim, "kind": "missing_observation", "observation_sha256": ""}],
                 "path_assessments": {
                     path: {"state": "REVIEWED", "reason": "Inspected the native control and path source"}
@@ -371,6 +384,38 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             genuine = {**finding, "id": "fixture-source-defect"}
             grounded, _ = review.ground_observed_response({**result, "findings": [genuine]}, family_input)
             assert grounded["findings"][0]["id"] == genuine["id"]
+            native = {
+                **family_input,
+                "observations": [{"engine": "fixture", "findings": [{
+                    "path": positive_path, "line": 1, "rule_id": "native-rule", "suppressed": False,
+                }]}],
+            }
+            for identity in ("native-rule", "fixture:native-rule", "fixture-native-rule"):
+                grounded, rejected = review.ground_observed_response(
+                    {**result, "findings": [{**genuine, "id": identity}, genuine]}, native
+                )
+                assert [row["id"] for row in grounded["findings"]] == [genuine["id"]]
+                assert rejected[0]["kind"] == "existing_native_finding"
+                assert rejected[0]["native"]["line"] == 1
+            different_line = {**genuine, "id": "native-rule", "source_line": 2}
+            native["sources"] = {**native["sources"], positive_path: f"{source}\n{source}"}
+            grounded, _ = review.ground_observed_response(
+                {**result, "findings": [different_line]}, native
+            )
+            assert [row["id"] for row in grounded["findings"]] == ["native-rule"]
+            unresolved = {**result, "path_assessments": {
+                **result["path_assessments"],
+                positive_path: {"state": "UNRESOLVED", "reason": "Specific source evidence missing"},
+            }}
+            raw = json.dumps({"choices": [{"message": {"content": json.dumps(unresolved)}, "finish_reason": "stop"}]})
+            recorded = review.recorded_response(raw.encode(), family_input)
+            disposition = review.disposition([{"family": payload["family"], "result": recorded, "assigned_paths": assigned}])
+            assert disposition["decision"] == "INCOMPLETE"
+            assert disposition["coverage_gaps"] == [
+                f"{payload['family']}: unresolved review for {positive_path}: Specific source evidence missing"
+            ]
+            with pytest.raises(ValueError, match="invalid grounded review response"):
+                review.ground_observed_response({**result, "coverage_gaps": []}, family_input)
             for echo in ("", "\t\n", "a" * 161, f"{source}\nseparate line"):
                 grounded, _ = review.ground_observed_response(
                     {**result, "findings": [{**genuine, "source_excerpt": echo}]}, family_input
@@ -426,45 +471,13 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             )
             assert inventory["artifact_roles"] == ["sbom_json"]
             assert inventory["findings"] == []
-        if mode == "challenge_receipts":
-            for obligation in payload["obligations"]:
-                registered = next(
-                    row for row in plan["obligations"] if row["id"] == obligation["id"]
-                )
-                lane_id = lane_ids[registered["engine"]]
-                observed = {
-                    row["role"]: {
-                        key: value
-                        for key, value in row.items()
-                        if key not in {"obligation_id", "role"}
-                    }
-                    for row in receipts["lanes"][lane_id]["observations"]
-                    if row["obligation_id"] == obligation["id"]
-                }
-                controls = {row["kind"]: row for row in registered["challenges"]}
-                for control in obligation["controls"]:
-                    role = control["role"]
-                    assert control["observed_challenge"] == observed[role]
-                    assert control["fixture_path"] == controls[role]["fixture_path"]
-                    assert (
-                        control["expected_exit_code"]
-                        == controls[role]["expected_exit_code"]
-                    )
-            assert (
-                "verified execution record covers all registered positive, negative and mutation controls."
-                in body["messages"][0]["content"]
-            )
-            assert (
-                "A mutation that exits zero when zero is expected satisfies its control."
-                in body["messages"][0]["content"]
-            )
-        else:
-            assert all(
-                {"observed_challenge", "expected_exit_code"}.isdisjoint(control)
-                for obligation in payload["obligations"]
-                for control in obligation["controls"]
-            )
-            assert body["messages"][0]["content"] == review.INSTRUCTIONS
+        assert mode != "challenge_receipts"
+        assert all(
+            {"observed_challenge", "expected_exit_code"}.isdisjoint(control)
+            for obligation in payload["obligations"]
+            for control in obligation["controls"]
+        )
+        assert body["messages"][0]["content"] == review.INSTRUCTIONS
         expected_coverage.update(assigned)
         result = {
             "decision": "ACCEPT",
