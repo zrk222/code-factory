@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -424,3 +424,111 @@ def test_agent_proposed_source_cannot_become_semantic_authority(tmp_path: Path) 
             tmp_path, input_path, Path(".factory/semantic-authority/handoffs/bad.json")
         )
     assert rejected.value.code == "E_SEMANTIC_AUTHORIZATION"
+
+
+def test_binding_with_extra_unapproved_field_is_rejected(tmp_path: Path) -> None:
+    handoff = _handoff(tmp_path, _contract(tmp_path))
+    lease = _lease(tmp_path, handoff)
+    binding = {
+        "lease_path": lease.relative_to(tmp_path).as_posix(),
+        "lease_sha256": json.loads(lease.read_text(encoding="utf-8"))["lease_sha256"],
+        "action_id": "check-restore",
+        "action": "test",
+        "context_urn": "urn:factory:subscription-restore:v1",
+        "forwarded_note": "an unapproved extra field",
+    }
+    with pytest.raises(SemanticAuthorityError):
+        verify_semantic_binding(tmp_path, binding, RECEIVER, ["tests"])
+
+
+def test_empty_evidence_lists_cannot_seal_a_handoff(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    _handoff(tmp_path, contract)  # writes the valid semantic-input.json payload
+    payload_path = tmp_path / "semantic-input.json"
+    pristine = json.loads(payload_path.read_text(encoding="utf-8"))
+    for field in ("known", "unknown", "uncertain"):
+        payload = json.loads(json.dumps(pristine))
+        payload["id"] = f"empty-{field}"
+        payload["epistemic"][field] = []
+        payload_path.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(SemanticAuthorityError) as exc:
+            seal_semantic_handoff(
+                tmp_path,
+                payload_path,
+                Path(f".factory/semantic-authority/handoffs/empty-{field}.json"),
+            )
+        assert exc.value.code == "SEMANTIC_EPISTEMIC_INVALID"
+
+
+def test_mixed_case_forbidden_action_never_enters_a_handoff(tmp_path: Path) -> None:
+    contract = _contract(tmp_path)
+    _handoff(tmp_path, contract)
+    payload_path = tmp_path / "semantic-input.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    for action in ("Merge", "PUBLISH", "Deploy"):
+        payload["id"] = f"sneaky-{action.lower()}"
+        payload["allowed_actions"] = [action]
+        payload_path.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(SemanticAuthorityError) as exc:
+            seal_semantic_handoff(
+                tmp_path,
+                payload_path,
+                Path(
+                    f".factory/semantic-authority/handoffs/sneaky-{action.lower()}.json"
+                ),
+            )
+        assert exc.value.code == "SEMANTIC_ACTION_FORBIDDEN"
+
+
+def test_sibling_prefix_is_not_inside_scope(tmp_path: Path) -> None:
+    handoff = _handoff(tmp_path, _contract(tmp_path))  # scope: src, tests
+    lease = _lease(tmp_path, handoff)
+    escaped = _request(scope_paths=["tests-evil"])
+    decision = authorize_semantic_action(tmp_path, lease, escaped)
+    assert decision["allowed"] is False
+    assert decision["reason"] == "scope_escape"
+    lease_payload_path = tmp_path / "lease-input.json"
+    lease_payload = json.loads(lease_payload_path.read_text(encoding="utf-8"))
+    lease_payload["id"] = "widened"
+    lease_payload["scope_paths"] = ["src2"]
+    lease_payload_path.write_text(json.dumps(lease_payload), encoding="utf-8")
+    with pytest.raises(SemanticAuthorityError) as exc:
+        seal_authority_lease(
+            tmp_path,
+            lease_payload_path,
+            Path(".factory/semantic-authority/leases/widened.json"),
+        )
+    assert exc.value.code == "E_SEMANTIC_AUTHORIZATION"
+
+
+def test_expired_lease_denies_action_and_decision_recording(
+    tmp_path: Path, monkeypatch
+) -> None:
+    handoff = _handoff(tmp_path, _contract(tmp_path))
+    lease = _lease(tmp_path, handoff)  # expires 20 minutes from real now
+    later = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=21)
+    monkeypatch.setattr("factoryline.semantic_authority._now", lambda: later)
+    decision = authorize_semantic_action(tmp_path, lease, _request())
+    assert decision["allowed"] is False
+    assert decision["reason"] == "SEMANTIC_LEASE_EXPIRED"
+    with pytest.raises(SemanticAuthorityError):
+        record_semantic_action_decision(
+            tmp_path,
+            lease,
+            _request(),
+            Path(".factory/semantic-authority/decisions/x.json"),
+        )
+
+
+def test_action_id_replay_under_same_lease_is_rejected(tmp_path: Path) -> None:
+    handoff = _handoff(tmp_path, _contract(tmp_path))
+    lease = _lease(tmp_path, handoff)
+    out = Path(
+        ".factory/semantic-authority/decisions/"
+        + json.loads(lease.read_text(encoding="utf-8"))["lease_sha256"]
+        + "-check-restore.json"
+    )
+    record_semantic_action_decision(tmp_path, lease, _request(), out)
+    with pytest.raises(SemanticAuthorityError) as exc:
+        record_semantic_action_decision(tmp_path, lease, _request(), out)
+    assert exc.value.code == "E_SEMANTIC_REPLAY"

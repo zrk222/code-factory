@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 from . import deep_audit_io as _deep_audit_io
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
-from hashlib import sha256
-from io import BytesIO
+from datetime import datetime
 from itertools import islice
-from os import fstat
 from pathlib import Path
 from typing import Any
 import re
 import stat
-from xml.etree import ElementTree
 
 from .deep_audit import _read_receipt
 from .deep_audit_attestation import (
@@ -598,370 +593,11 @@ def deep_scan_projection(root: Path) -> tuple[dict[str, Any], str | None]:
     return projection, None
 
 
-REPORT_PATH = Path(".factory/test-reports/pytest.xml")
-MAX_REPORT_BYTES = 8 * 1024 * 1024
-MAX_CASES = 10_000
-MAX_XML_DEPTH = 64
-
-
-class _DepthLimitError(ValueError):
-    """Raised when a report exceeds the bounded XML nesting depth."""
-
-
-class _CountMismatch(ValueError):
-    """Raised when declared suite outcomes omit or contradict parsed cases."""
-
-
-class _UnknownTestStatus(ValueError):
-    """Raised when a runner supplies an outcome this reader cannot classify."""
-
-
-def _base_snapshot() -> dict:
-    return {
-        "state": "NOT_RUN",
-        "counts": {"passed": 0, "failed": 0, "error": 0, "skipped": 0},
-        "total_count": 0,
-        "cases": [],
-        "source": REPORT_PATH.as_posix(),
-        "source_sha256": None,
-        "report_time": None,
-        "source_mtime_utc": None,
-        "truncated": False,
-        "limits": {
-            "max_bytes": MAX_REPORT_BYTES,
-            "max_cases": MAX_CASES,
-            "max_xml_depth": MAX_XML_DEPTH,
-        },
-        "candidate_binding": "UNBOUND",
-        "reason": "No test report was found at the documented path.",
-    }
-
-
-def _bounded(value: object, limit: int) -> str:
-    return " ".join(str(value or "").split())[:limit]
-
-
-def _local_tag(tag: object) -> str:
-    return str(tag).rsplit("}", 1)[-1]
-
-
-def _duration(value: object) -> float | None:
-    try:
-        duration = float(str(value))
-    except (TypeError, ValueError):
-        return None
-    if duration != duration or duration < 0 or duration == float("inf"):
-        return None
-    return duration
-
-
-def _line(value: object) -> int | None:
-    try:
-        line = int(str(value))
-    except (TypeError, ValueError):
-        return None
-    return line if line > 0 else None
-
-
-def _case_result(
-    element: ElementTree.Element,
-) -> tuple[str, ElementTree.Element | None]:
-    markers = {_local_tag(child.tag): child for child in element}
-    if "error" in markers:
-        return "error", markers["error"]
-    elif "failure" in markers:
-        return "failed", markers["failure"]
-    elif "skipped" in markers:
-        return "skipped", markers["skipped"]
-    declared_status = str(element.get("status") or "passed").lower()
-    if declared_status not in {"passed", "failed", "error", "skipped"}:
-        raise _UnknownTestStatus
-    return declared_status, None
-
-
-def _case_failure_summary(result: ElementTree.Element | None) -> str | None:
-    if result is None:
-        return None
-    return _bounded(result.get("message") or result.text, 400) or None
-
-
-def _case(element: ElementTree.Element, suite_name: str) -> dict:
-    status, result = _case_result(element)
-    return {
-        "suite": _bounded(element.get("classname") or suite_name, 240),
-        "name": _bounded(element.get("name"), 300),
-        "status": status,
-        "file": _bounded(element.get("file"), 500) or None,
-        "line": _line(element.get("line")),
-        "duration_seconds": _duration(element.get("time")),
-        "failure_summary": _case_failure_summary(result),
-    }
-
-
-def _declared_count(value: object) -> int | None:
-    if value is None:
-        return None
-    try:
-        number = int(str(value))
-    except (TypeError, ValueError) as exc:
-        raise _CountMismatch from exc
-    if number < 0:
-        raise _CountMismatch
-    return number
-
-
-def _read_junit_content(root: Path, snapshot: dict) -> bytes | None:
-    """Read one bounded report from a path contained by the workspace."""
-    try:
-        workspace = root.resolve()
-        source = (workspace / REPORT_PATH).resolve()
-        source.relative_to(workspace)
-    except (OSError, RuntimeError, ValueError):
-        snapshot.update(
-            state="INCOMPLETE",
-            reason="The report path escapes the workspace or cannot be resolved.",
-        )
-        return None
-
-    try:
-        if not source.exists():
-            return None
-        if not source.is_file():
-            snapshot.update(
-                state="INCOMPLETE", reason="The report path is not a regular file."
-            )
-            return None
-        with source.open("rb") as handle:
-            content = handle.read(MAX_REPORT_BYTES + 1)
-            metadata = fstat(handle.fileno())
-    except OSError:
-        snapshot.update(state="INCOMPLETE", reason="The report could not be read.")
-        return None
-
-    snapshot["source_mtime_utc"] = (
-        datetime.fromtimestamp(metadata.st_mtime, timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
-    if len(content) > MAX_REPORT_BYTES:
-        snapshot.update(
-            state="INCOMPLETE",
-            truncated=True,
-            reason="The report exceeds the byte limit; no partial file was parsed.",
-        )
-        return None
-    snapshot["source_sha256"] = sha256(content).hexdigest()
-    return content
-
-
-def _validate_junit_content(content: bytes, snapshot: dict) -> bool:
-    """Reject unsupported encodings and entity expansion before XML parsing."""
-    try:
-        content.decode("utf-8-sig")
-    except UnicodeError:
-        snapshot.update(
-            state="INCOMPLETE", reason="The XML report must be UTF-8 encoded."
-        )
-        return False
-    if b"\x00" in content:
-        snapshot.update(state="INCOMPLETE", reason="The XML report contains NUL bytes.")
-        return False
-    if b"<!DOCTYPE" in content.upper() or b"<!ENTITY" in content.upper():
-        snapshot.update(
-            state="INCOMPLETE",
-            reason="XML declarations with entities or DTDs are not accepted.",
-        )
-        return False
-    return True
-
-
-@dataclass
-class _JUnitParseState:
-    """Declared counts and suite nesting observed while streaming one report."""
-
-    depth: int = 0
-    suite_names: list[str] = field(default_factory=list)
-    suite_checks: list[tuple[int, dict[str, int], dict[str, int | None]]] = field(
-        default_factory=list
-    )
-    declared: int | None = None
-    declared_results: dict[str, int] = field(default_factory=dict)
-    root_tag: str | None = None
-
-
-def _junit_suite_start(
-    element: ElementTree.Element, snapshot: dict, state: _JUnitParseState
-) -> None:
-    """Record a suite's declared outcomes before counting its cases."""
-    state.suite_names.append(_bounded(element.get("name"), 240))
-    state.suite_checks.append(
-        (
-            snapshot["total_count"],
-            dict(snapshot["counts"]),
-            {
-                "tests": _declared_count(element.get("tests")),
-                "failed": _declared_count(element.get("failures")),
-                "error": _declared_count(element.get("errors")),
-                "skipped": _declared_count(element.get("skipped")),
-            },
-        )
-    )
-    if snapshot["report_time"] is None:
-        snapshot["report_time"] = _bounded(element.get("timestamp"), 80) or None
-
-
-def _junit_start(
-    tag: str, element: ElementTree.Element, snapshot: dict, state: _JUnitParseState
-) -> None:
-    """Enforce nesting bounds and read root and suite declarations."""
-    state.depth += 1
-    if state.depth > MAX_XML_DEPTH:
-        raise _DepthLimitError
-    if state.depth == 1:
-        state.root_tag = tag
-        state.declared = _declared_count(element.get("tests"))
-        for attribute, status in (
-            ("failures", "failed"),
-            ("errors", "error"),
-            ("skipped", "skipped"),
-        ):
-            count = _declared_count(element.get(attribute))
-            if count is not None:
-                state.declared_results[status] = count
-        snapshot["report_time"] = _bounded(element.get("timestamp"), 80) or None
-    if tag == "testsuite":
-        _junit_suite_start(element, snapshot, state)
-
-
-def _junit_suite_end(
-    element: ElementTree.Element, snapshot: dict, state: _JUnitParseState
-) -> None:
-    """Require each suite's parsed cases to match its declared counts."""
-    before_total, before_counts, suite_declared = state.suite_checks.pop()
-    if suite_declared["tests"] is not None and (
-        snapshot["total_count"] - before_total != suite_declared["tests"]
-    ):
-        raise _CountMismatch
-    if any(
-        count is not None
-        and snapshot["counts"][status] - before_counts[status] != count
-        for status, count in suite_declared.items()
-        if status != "tests"
-    ):
-        raise _CountMismatch
-    if state.suite_names:
-        state.suite_names.pop()
-    element.clear()
-
-
-def _junit_end(
-    tag: str, element: ElementTree.Element, snapshot: dict, state: _JUnitParseState
-) -> None:
-    """Count test cases and close a suite after validating its declaration."""
-    if tag == "testcase":
-        case = _case(element, state.suite_names[-1] if state.suite_names else "")
-        snapshot["counts"][case["status"]] += 1
-        snapshot["total_count"] += 1
-        if len(snapshot["cases"]) < MAX_CASES:
-            snapshot["cases"].append(case)
-        else:
-            snapshot["truncated"] = True
-        element.clear()
-    elif tag == "testsuite":
-        _junit_suite_end(element, snapshot, state)
-    state.depth -= 1
-
-
-def _parse_junit_xml(content: bytes, snapshot: dict) -> _JUnitParseState:
-    """Stream bounded XML into a case snapshot and declaration state."""
-    state = _JUnitParseState()
-    for event, element in ElementTree.iterparse(
-        BytesIO(content), events=("start", "end")
-    ):
-        tag = _local_tag(element.tag)
-        if event == "start":
-            _junit_start(tag, element, snapshot, state)
-        else:
-            _junit_end(tag, element, snapshot, state)
-    return state
-
-
-def _junit_parse_failure(snapshot: dict, exc: Exception) -> None:
-    """Discard partial cases and explain the failed XML interpretation."""
-    snapshot.update(
-        state="INCOMPLETE",
-        counts={"passed": 0, "failed": 0, "error": 0, "skipped": 0},
-        total_count=0,
-        cases=[],
-        truncated=False,
-        reason=(
-            "The XML nesting depth exceeds the limit."
-            if isinstance(exc, _DepthLimitError)
-            else "Declared JUnit counts differ from parsed cases."
-            if isinstance(exc, _CountMismatch)
-            else "A JUnit test case has an unrecognized status."
-            if isinstance(exc, _UnknownTestStatus)
-            else "The XML report is malformed."
-        ),
-    )
-
-
-def _finalize_junit_snapshot(snapshot: dict, state: _JUnitParseState) -> None:
-    """Reconcile the parsed cases with root declarations and display limits."""
-    if state.root_tag not in {"testsuite", "testsuites"}:
-        snapshot.update(
-            state="INCOMPLETE",
-            reason="The XML root is not a JUnit testsuite or testsuites element.",
-        )
-    elif snapshot["truncated"]:
-        snapshot.update(
-            state="INCOMPLETE",
-            reason="Some cases exceed the display limit; the complete count remains visible.",
-        )
-    elif state.declared is not None and state.declared != snapshot["total_count"]:
-        snapshot.update(
-            state="INCOMPLETE",
-            reason="The declared test count differs from parsed test cases.",
-        )
-    elif any(
-        snapshot["counts"][status] != count
-        for status, count in state.declared_results.items()
-    ):
-        snapshot.update(
-            state="INCOMPLETE",
-            reason="Declared test outcomes differ from parsed case outcomes.",
-        )
-    else:
-        snapshot.update(
-            state="OBSERVED",
-            reason="Report cases were read; this report is not bound to the current candidate.",
-        )
-
-
 def read_junit_report(root: Path) -> dict:
-    """Read one local JUnit XML report and retain every case within limits.
+    """Read host test evidence without loading it into worker imports."""
+    from .runtime_coverage import read_junit_report as read_host_report
 
-    ``INCOMPLETE`` means the report is unreadable, malformed, inconsistent, or
-    exceeds a stated limit. The function never executes code or follows a
-    report path outside the resolved workspace. Case metadata is untrusted.
-    """
-    snapshot = _base_snapshot()
-    content = _read_junit_content(root, snapshot)
-    if content is None or not _validate_junit_content(content, snapshot):
-        return snapshot
-    try:
-        state = _parse_junit_xml(content, snapshot)
-    except (
-        _DepthLimitError,
-        _CountMismatch,
-        _UnknownTestStatus,
-        ElementTree.ParseError,
-        ValueError,
-    ) as exc:
-        _junit_parse_failure(snapshot, exc)
-        return snapshot
-    _finalize_junit_snapshot(snapshot, state)
-    return snapshot
+    return read_host_report(root)
 
 
 def _fuzz_snapshot(
@@ -2897,7 +2533,7 @@ def _codeql_replay_remaining(deadline):
 
 
 def _codeql_replay_selection(actual, expected):
-    for field in (  # noqa: F402 - preserve original audited function body
+    for field in (
         "queries",
         "query_ids",
         "suite_sha256",
@@ -3165,7 +2801,7 @@ def _codeql_replay_values(values, sets):
 
 
 def _codeql_replay_sources(expected, actual, inventory, lane):
-    for field in (  # noqa: F402 - preserve original audited function body
+    for field in (
         "query_sha256",
         "package_sha256",
         "rows",
@@ -4267,6 +3903,8 @@ def _semgrep_challenge_result(
 
 
 def _semgrep_challenge_command(profile, *, execution_context=None):
+    from .deep_audit_attestation import _PHP_INTERFILE_FLAGS
+
     if profile.get("engine") != "semgrep" or len(profile.get("commands", [])) != 1:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_PROFILE", "one pinned Semgrep command required"
@@ -4286,9 +3924,13 @@ def _semgrep_challenge_command(profile, *, execution_context=None):
         "{report}",
         "{source}",
     ]
-    if profile.get("tool_version") == "1.15.0":
+    tool_version = profile.get("tool_version")
+    if tool_version in {"1.15.0", "2.0.0"}:
         expected[0] = "/usr/bin/opengrep"
         expected.remove("--metrics=off")
+    if tool_version == "2.0.0":
+        config_index = expected.index("--config")
+        expected[config_index:config_index] = _PHP_INTERFILE_FLAGS
     if execution_context:
         expected[0] = execution_context["executable"]
         expected[expected.index("--config") + 1] = execution_context["rules_path"]

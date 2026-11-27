@@ -10,6 +10,7 @@ import signal
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,6 +27,94 @@ from .runtime_audit_common import (
 )
 
 MAX_OUTPUT = 8 * 1024 * 1024
+_GO_OFFLINE_BINARY = "/usr/local/go/bin/go"
+
+
+def _offline_go_roots(source: Path) -> list[Path]:
+    roots = []
+    for directory, children, files in os.walk(source):
+        children[:] = sorted(
+            name
+            for name in children
+            if not name.startswith(".") and name not in {"vendor", "testdata"}
+        )
+        path = Path(directory)
+        if "go.work" in files:
+            raise SystemExit("Go workspaces require a separately qualified profile")
+        if "go.mod" in files and not (path / "go.mod").is_symlink():
+            roots.append(path)
+            if len(roots) > 64:
+                raise SystemExit("Go module limit exceeded")
+    if not roots:
+        raise SystemExit("No offline Go module root found")
+    return roots
+
+
+def _offline_go_module_option(root: Path, source: Path) -> str:
+    module = json.loads(
+        subprocess.check_output(
+            [_GO_OFFLINE_BINARY, "mod", "edit", "-json"], cwd=root, encoding="utf-8"
+        )
+    )
+    for replacement in module.get("Replace") or ():
+        target = replacement["New"]
+        if not target.get("Version"):
+            resolved = (root / target["Path"]).resolve()
+            if not resolved.is_relative_to(source) or not resolved.is_dir():
+                raise SystemExit(
+                    "Local Go module replacement is missing or leaves the source"
+                )
+    mode = "vendor" if (root / "vendor/modules.txt").is_file() else "readonly"
+    return f"-mod={mode}"
+
+
+def _compile_offline_go() -> None:
+    """Compile packages and tests inside the worker without running them."""
+    source = Path("/src")
+    remaining = 2048
+    os.environ.update(
+        GOTOOLCHAIN="local",
+        GOPROXY="off",
+        GOSUMDB="off",
+        GOENV="off",
+        GOTELEMETRY="off",
+        CGO_ENABLED="0",
+        GOWORK="off",
+    )
+    os.environ.pop("GOFLAGS", None)
+    with tempfile.TemporaryDirectory() as scratch:
+        directory = Path(scratch)
+        os.environ.update(
+            GOPATH=str(directory / "gopath"), GOMODCACHE=str(directory / "modules")
+        )
+        target = str(directory / "compiled.test")
+        for root in _offline_go_roots(source):
+            option = _offline_go_module_option(root, source)
+            packages = subprocess.check_output(
+                [_GO_OFFLINE_BINARY, "list", option, "./..."],
+                cwd=root,
+                encoding="utf-8",
+            ).splitlines()
+            if not packages or len(packages) > remaining:
+                raise SystemExit("No Go packages or package limit exceeded")
+            remaining -= len(packages)
+            for package in packages:
+                if not package or package.startswith("-"):
+                    raise SystemExit("Invalid Go package path")
+                subprocess.run(
+                    [
+                        _GO_OFFLINE_BINARY,
+                        "test",
+                        "-c",
+                        option,
+                        "-buildvcs=false",
+                        "-o",
+                        target,
+                        package,
+                    ],
+                    cwd=root,
+                    check=True,
+                )
 
 
 def validate_production_mutation_process(facts: dict) -> bool:
@@ -1660,3 +1749,9 @@ def _validate_polyglot_request(
         raise RuntimeAuditError(
             "E_MUTATION_INPUT", "exact selector and assertion line required"
         )
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] != ["compile-offline-go"]:
+        raise SystemExit("Expected the worker's compile-offline-go command")
+    _compile_offline_go()

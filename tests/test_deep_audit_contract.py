@@ -141,6 +141,18 @@ def _keyless_review_fixture():
     assert jobs["sign"]["needs"] == "assemble"
     assert "id-token" not in jobs["assemble"]["permissions"]
     build, upload = jobs["prepare"]["steps"]
+    pin = "REVIEW_CHALLENGE_SUMMARY_SHA256"
+    assert (
+        build["env"][pin] == "${{ vars.CODE_FACTORY_NATIVE_REVIEW_CHALLENGE_SHA256 }}"
+    )
+    assert jobs["prepare"]["outputs"]["challenge_summary_sha256"] == (
+        "${{ steps.build.outputs.challenge_summary_sha256 }}"
+    )
+    assert (
+        jobs["analyze"]["env"][pin]
+        == jobs["assemble"]["env"][pin]
+        == ("${{ needs.prepare.outputs.challenge_summary_sha256 }}")
+    )
     assert "review_packet" not in build["run"] and "cmake --build" in build["run"]
     assert "keyless-review-runtime-%s" in build["run"]
     assert upload["with"]["path"] == "llama/build/bin/llama-server"
@@ -280,6 +292,43 @@ def _configure_challenge_receipts(review, plan, packet, mode):
                 review.family_inputs(plan, packet)
             return True
     return False
+
+
+def test_keyless_review_requires_the_independently_registered_control_summary(
+    monkeypatch,
+):
+    review, _plan_path, plan, _families, _paths, packet = _keyless_review_fixture()
+    historical = review.CHALLENGE_SUMMARY_SHA256
+    _configure_challenge_receipts(review, plan, packet, "challenge_receipts")
+    summary = packet["challenge_receipts"]
+    current = digest(summary)
+    assert current != historical
+    review.CHALLENGE_SUMMARY_SHA256 = historical
+    monkeypatch.setenv("REVIEW_CHALLENGE_SUMMARY_SHA256", current)
+
+    families = review.family_inputs(plan, packet)
+    assert sum(len(row["sources"]) for row in families) == 58
+    assert (
+        sum(
+            "observed_challenge" in control
+            for row in families
+            for obligation in row["obligations"]
+            for control in obligation["controls"]
+        )
+        == 27
+    )
+
+    packet["binding"]["run_id"] = "wrong-run"
+    with pytest.raises(ValueError, match="different analyzer evidence"):
+        review.family_inputs(plan, packet)
+    packet["binding"]["run_id"] = summary["run_id"]
+    monkeypatch.setenv("REVIEW_CHALLENGE_SUMMARY_SHA256", "0" * 64)
+    with pytest.raises(ValueError, match="registered receipt"):
+        review.family_inputs(plan, packet)
+    monkeypatch.setenv("REVIEW_CHALLENGE_SUMMARY_SHA256", current)
+    del packet["challenge_receipts"]
+    with pytest.raises(ValueError, match="registered challenge summary is missing"):
+        review.family_inputs(plan, packet)
 
 
 def _stage_family_review(tmp_path, monkeypatch, plan_path, packet):
@@ -6322,7 +6371,9 @@ def test_native_ram_binding_preserves_literal_report_path(codeql):
     assert result[0]["argv"] == expected
 
 
-@pytest.mark.parametrize("language", ["python", "javascript", "ruby", "actions"])
+@pytest.mark.parametrize(
+    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go"]
+)
 def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     profile = json.loads(
         (
