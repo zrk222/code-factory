@@ -119,6 +119,24 @@ def test_coordinator_store_corruption_and_concurrent_admission(tmp_path):
         store.read(args[0], args[1])
 
 
+def test_coordinator_store_serializes_metadata_path_validation(tmp_path, monkeypatch):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    original = store._paths
+    lock_observations = []
+
+    def checked_paths():
+        lock_observations.append(store._metadata_lock._is_owned())
+        original()
+
+    monkeypatch.setattr(store, "_paths", checked_paths)
+    lease = store.acquire(owner, 300, 10)
+    store._lease_cache = None
+    assert store.check_owner(owner, 20) == lease
+    assert lock_observations and all(lock_observations)
+
+
 def _absent_only(*dead):
     return lambda pid, creation: pid in dead
 

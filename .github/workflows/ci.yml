@@ -218,6 +218,7 @@ jobs:
             'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'
             'docs/evidence/recall-registered-exposed-161-manifest.json'
             'docs/evidence/recall-registered-exposed-161-profile.json'
+            'docs/evidence/recall-protected-exposed-161-63.json'
             'scripts/recall_coverage.mjs'
             'scripts/recall_harness.mjs'
             'scripts/recall_losses.mjs'
@@ -301,7 +302,7 @@ jobs:
           $bin = (Get-ChildItem (Join-Path $root engine) -Recurse -File -Filter opengrep.exe).FullName
           RequireHash $bin 'fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a'
           RecordElapsed 'Engine archive verification and extraction'
-          node scripts/recall_harness.mjs score --manifest $manifest --rules $rules --profile $profile --opengrep $bin --workdir (Join-Path $root work) --checkpoint-dir (Join-Path $root checkpoints) --jobs 3 --extra-arg '--timeout=15' --extra-arg '--jobs=1' --out $score
+          node scripts/recall_harness.mjs score --manifest $manifest --rules $rules --profile $profile --opengrep $bin --workdir (Join-Path $root work) --checkpoint-dir (Join-Path $root checkpoints) --jobs 3 --extra-arg '--timeout=15' --extra-arg '--jobs=1' --scanner-path-policy true --out $score
           $status = $LASTEXITCODE
           RecordElapsed 'Source preparation and scoring with any serial retry'
           if ($status -ne 0) { exit $status }

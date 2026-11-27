@@ -18,7 +18,7 @@ from typing import Any
 
 from .assembly import rollup_receipts
 from .contract import Receipt
-from .protocol import ASSEMBLY_STAGE_KEYS, BASE_REQUIRED_MODULES
+from .protocol import ASSEMBLY_STAGE_KEYS, BASE_REQUIRED_MODULES, CONDITIONAL_STAGE_KEYS
 
 
 LABELS = {
@@ -28,25 +28,13 @@ LABELS = {
     "prestige": "DESIGN",
 }
 BASE_REQUIRED = {
-    owner: frozenset(stage for module, stage in ASSEMBLY_STAGE_KEYS if module == owner)
+    owner: frozenset(
+        stage
+        for module, stage in ASSEMBLY_STAGE_KEYS
+        if module == owner and (module, stage) not in CONDITIONAL_STAGE_KEYS
+    )
     for owner in BASE_REQUIRED_MODULES
 }
-
-
-def _release_declares(root: Path, feature: str, path: Path | None, stage: str) -> bool:
-    """Read one declared required stage without treating the file as valid.
-
-    Strict verification subsequently validates the whole Oracle-bound release
-    contract.  This early, bounded read only ensures a declared UI/compiler
-    gate cannot be silently omitted while that validation is underway.
-    """
-    source = path or root / ".factory" / "release-contracts" / f"{feature}.json"
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    stages = value.get("required_stages") if isinstance(value, dict) else None
-    return isinstance(stages, list) and stage in stages
 
 
 def _declares_ui(
@@ -62,10 +50,31 @@ def _declares_ui(
 def _declares_hsf(
     root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]
 ) -> bool:
+    """A legacy decision spec, a compile receipt, or a release contract makes hsf:compile required. A SpecLine
+    decision table alone does not: assembly compiles it when present (and pauses for goldens), but verify does
+    not add a requirement the feature never declared."""
     return (
         (root / "specs" / f"{feature}.yaml").is_file()
-        or any(row["module"] == "hsf" for row in rows)
+        or any(row["module"] == "hsf" and row["stage"] == "compile" for row in rows)
         or "hsf:compile" in declared
+    )
+
+
+def _declares_harness(
+    root: Path, rows: list[dict[str, Any]], declared: set[str]
+) -> bool:
+    return (
+        root / "harness" / "harness.yaml"
+    ).is_file() or "hsf:harness-check" in declared
+
+
+def _declares_evidence(
+    root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]
+) -> bool:
+    """An evidence receipt or a release contract makes specline:evidence required; the contract file alone does not."""
+    return (
+        any(row["module"] == "specline" and row["stage"] == "evidence" for row in rows)
+        or "specline:evidence" in declared
     )
 
 
@@ -81,6 +90,10 @@ def _required_stages(
         required["prestige"] = frozenset({"score"})
     if _declares_hsf(root, feature, rows, declared):
         required["hsf"] = frozenset({"compile"})
+    if _declares_harness(root, rows, declared):
+        required["hsf"] = required.get("hsf", frozenset()) | {"harness-check"}
+    if _declares_evidence(root, feature, rows, declared):
+        required["specline"] = required["specline"] | {"evidence"}
     return required
 
 
@@ -302,13 +315,27 @@ def _stage_evidence_audit(by_module, rows, required):
 
 
 def _declared_release_stages(workspace, feature, contract_path, strict_release):
+    """Identify conditional gates before validating the Oracle-bound policy."""
     if not strict_release:
         return set()
-    return {
-        stage
-        for stage in ("prestige:score", "hsf:compile")
-        if _release_declares(workspace, feature, contract_path, stage)
+    source = (
+        contract_path
+        or workspace / ".factory" / "release-contracts" / f"{feature}.json"
+    )
+    try:
+        policy = json.loads(source.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    declared = policy.get("required_stages") if isinstance(policy, dict) else None
+    if not isinstance(declared, list):
+        return set()
+    conditional = {
+        "prestige:score",
+        "hsf:compile",
+        "hsf:harness-check",
+        "specline:evidence",
     }
+    return {stage for stage in conditional if stage in declared}
 
 
 def _verify_selected_run(
@@ -828,19 +855,42 @@ def _assembly_scope_requirements(root, feature):
     }
 
 
+def _conditional_inputs_present(root, feature, stage) -> bool | None:
+    """Whether an input-gated stage has its input; None for stages that are not input-gated."""
+    from .assembly import decision_source
+
+    checks = {
+        ("specline", "evidence"): lambda: (
+            root / ".factory" / "workflow-audit-contract.json"
+        ).is_file(),
+        ("prestige", "score"): lambda: (root / "smoke" / f"{feature}.ui").is_file(),
+        ("hsf", "compile"): lambda: decision_source(root, feature) is not None,
+        ("hsf", "harness-check"): lambda: (root / "harness" / "harness.yaml").is_file(),
+    }
+    check = checks.get((stage.module, stage.name))
+    return None if check is None else check()
+
+
+def _stage_applies(root, feature, stage) -> bool:
+    from .assembly import forge_stage_skippable
+
+    if forge_stage_skippable(root, feature, stage)[0]:
+        return (
+            False  # assembly skips it; it is not part of this run's declared sequence
+        )
+    if stage.required:
+        return True
+    present = _conditional_inputs_present(root, feature, stage)
+    if present is not None:
+        return stage.present and present
+    return stage.module in BASE_REQUIRED_MODULES or stage.present
+
+
 def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
     """Declare required and applicable native stages before assembly runs them."""
-
-    def applies(stage):
-        if stage.required or stage.module in BASE_REQUIRED_MODULES:
-            return True
-        if stage.module == "prestige":
-            return stage.present and (root / "smoke" / f"{feature}.ui").is_file()
-        if stage.module == "hsf" and stage.name == "compile":
-            return stage.present and (root / "specs" / f"{feature}.yaml").is_file()
-        return stage.present
-
-    planned = [stage.stage_id for stage in stages if applies(stage)]
+    planned = [
+        stage.stage_id for stage in stages if _stage_applies(root, feature, stage)
+    ]
     report["sequence_run_id"] = run_id
     report["sequence_recorded"] = False
     if not planned:

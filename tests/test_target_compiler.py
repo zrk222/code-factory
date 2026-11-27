@@ -476,3 +476,143 @@ def test_direct_app_scaffold_restores_empty_output_on_publish_failure(
         app_builder.app_from_prompt("Demo app", out_dir=dest)
     assert dest.is_dir() and not list(dest.iterdir())
     assert list(tmp_path.iterdir()) == [dest]
+
+
+def _forge_ssat_api():
+    ssat = pytest.importorskip("forgeline.ssat")
+    if not hasattr(ssat, "parse_ssat"):
+        pytest.skip("installed ForgeLine predates parse_ssat")
+    return ssat
+
+
+@pytest.mark.parametrize("target", sorted(TARGETS))
+def test_generated_ssat_parses_and_has_no_erosion(tmp_path: Path, target: str):
+    import yaml
+
+    output = tmp_path / target
+    create_target_from_prompt(
+        "Build a receipt review workspace with explicit approval boundaries.",
+        target=target,
+        out_dir=output,
+        name=f"review-{target}",
+        purpose="developer",
+    )
+    raw = (output / f"review-{target}.ssat.yaml").read_bytes()
+    document = yaml.safe_load(raw)
+    assert all(invariant["scopes"] for invariant in document["invariants"])
+    assert not (output / ".forge").exists()
+    receipt = json.loads(
+        (output / ".factory" / "target-compile-receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert receipt["forge"]["state"] == "not_started"
+    ssat = _forge_ssat_api()
+    assert ssat.check_erosion(ssat.parse_ssat(raw), output) == []
+
+
+@pytest.mark.parametrize("target", ["web", "worker"])
+def test_documented_forge_commands_reach_scaffolded(tmp_path: Path, target: str):
+    import re
+    import subprocess
+    import sys
+
+    _forge_ssat_api()
+    output = tmp_path / target
+    name = f"review-{target}"
+    create_target_from_prompt(
+        "Build a receipt review workspace with explicit approval boundaries.",
+        target=target,
+        out_dir=output,
+        name=name,
+        purpose="developer",
+    )
+    workflow = (output / "docs" / "TARGET_WORKFLOW.md").read_text(encoding="utf-8")
+    commands = re.findall(r"^forge (.+)$", workflow, flags=re.M)
+    assert [command.split()[0] for command in commands] == [
+        "expand",
+        "gate",
+        "architect",
+        "status",
+    ]
+    for command in commands:
+        done = subprocess.run(
+            [sys.executable, "-m", "forgeline.cli", *command.split()],
+            cwd=output,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert done.returncode == 0, (command, done.stdout[-400:], done.stderr[-400:])
+    assert json.loads(done.stdout)["state"] == "scaffolded"
+    assert f"hsf harness init {name} --target {target}" in workflow
+    assert f"hsf harness seed --from all --feature {name}" in workflow
+
+
+def test_ssat_yaml_scopes_every_invariant_to_every_function():
+    import yaml
+
+    from factoryline.app_builder import NO_EVAL, NO_SECRET, ssat_module, ssat_yaml
+
+    module = ssat_module(
+        "svc",
+        "svc/main.py",
+        ["json"],
+        [("run", ["x: int"], "int", "Run."), ("stop", [], "None", "Stop.")],
+    )
+    assert module["functions"][1] == {
+        "name": "stop",
+        "args": [],
+        "returns": "None",
+        "doc": "Stop.",
+    }
+    document = yaml.safe_load(ssat_yaml("svc", [module], [NO_EVAL, NO_SECRET]))
+    assert [invariant["forbid_pattern"] for invariant in document["invariants"]] == [
+        NO_EVAL[1],
+        NO_SECRET[1],
+    ]
+    assert all(
+        [scope["symbol"] for scope in invariant["scopes"]] == ["run", "stop"]
+        for invariant in document["invariants"]
+    )
+    assert "&id" not in ssat_yaml("svc", [module], [NO_EVAL, NO_SECRET])
+
+
+def test_mobile_workflow_prints_a_runnable_appforge_init(
+    tmp_path: Path, monkeypatch, capsys
+):
+    import os
+    import re
+    import shlex
+    import subprocess
+
+    output = tmp_path / "mobile"
+    create_target_from_prompt(
+        "Build a receipt review workspace with explicit approval boundaries.",
+        target="mobile",
+        out_dir=output,
+        name="review-mobile",
+        purpose="developer",
+    )
+    workflow = (output / "docs" / "TARGET_WORKFLOW.md").read_text(encoding="utf-8")
+    line = re.search(r"^factory (appforge init .+)$", workflow, flags=re.M).group(1)
+    app = json.loads((output / "mobile" / "app.json").read_text(encoding="utf-8"))[
+        "expo"
+    ]
+    assert app["ios"]["bundleIdentifier"] in line and app["version"] in line
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@e",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@e",
+    }
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "target"]):
+        subprocess.run(["git", *args], cwd=output, check=True, env=env)
+    monkeypatch.chdir(output)
+    assert main(shlex.split(line)) == 0, capsys.readouterr()
+    receipt = json.loads(capsys.readouterr().out)
+    assert (
+        receipt["source_commit_derived"] is True
+        and receipt["candidate"]["build_number"] == "1"
+    )

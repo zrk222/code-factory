@@ -7,19 +7,22 @@ templates, and a worklist. It never turns placeholders into a pass.
 
 For a first-time project, start with `appforge-init`. It records the user’s
 mission and candidate once, then writes the `release-candidate.json` and
-`user-design-input.md` consumed by this kit:
+`user-design-input.md` consumed by this kit. Omit `--source-commit` in a clean
+git checkout to record `HEAD` (the receipt then says `source_commit_derived: true`);
+an explicit value must be the full 40-character SHA and is checked before
+anything is written:
 
 ```powershell
 factory revenue appforge-init --root . --out-dir .factory/appforge/init-42 `
   --app-name "My app" --bundle-identifier com.example.app --version 2.4.0 `
-  --build-number 42 --source-commit <commit-sha> --audience "Who it serves" `
+  --build-number 42 --source-commit <40-character-commit-sha> --audience "Who it serves" `
   --primary-job "What they need to do" --desired-emotion "How it should feel" --json
 ```
 
 ```powershell
 factory revenue evidence-kit --root . `
-  --candidate appforge/release-candidate.json `
-  --design-input appforge/user-design-input.md `
+  --candidate .factory/appforge/init-42/release-candidate.json `
+  --design-input .factory/appforge/init-42/user-design-input.md `
   --out-dir .factory/appforge/ios-2.4.0-42 `
   --json
 ```

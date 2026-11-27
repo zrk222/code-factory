@@ -3,6 +3,9 @@
 FROM python:3.11.17-slim-trixie@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce AS python-source
 FROM debian:forky-slim@sha256:3c80e257eff6274d593eb33a94bda5174ccd619836e6a728a73e11c97f2213e3 AS sdk
 USER 0:0
+# Every worker inherits UTF-8: CodeQL's Java extractors otherwise mangle non-ASCII
+# source paths before the TypeScript parser reads them (exit 1 during database create).
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # The signed immutable archive supplies fixes absent from Bookworm/Trixie.
 # Valid-Until is disabled only for this historical snapshot; signature and
 # package hash verification remain enforced by apt.

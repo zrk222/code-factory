@@ -7,8 +7,10 @@ import { completeFixedCoverage, scannerPathPolicy } from './recall_coverage.mjs'
 import { caseDigest, checkpointArtifactsIntact, outcomeOf, replayCaseScore, ruleFamilies, sha256, sortKeys, validateRecallManifest } from './recall_harness.mjs';
 
 const referenceSha256 = '0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf';
+const protectedSha256 = '6d0de3bbebeebb3999516807bbb6e3699137bcda88dbc5e3470bbd38fe541e0c';
 const engineSha256 = 'fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a';
 const engineVersion = '2.1.0';
+const pathPolicyProof = 'opengrep-2.1.0-target-inventory-v1';
 const engineArgs = ['--timeout=15', '--jobs=1'];
 const scoringPins = {
   manifest_sha256: 'bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60',
@@ -67,11 +69,12 @@ function readCandidateCases(cases, failures) {
   return rows;
 }
 
-function compareCases(reference, candidate, summary, failures) {
+function compareCases(reference, candidate, summary, failures, protectedHitIds, pairedPathPolicy) {
+  const remainingProtected = new Set(protectedHitIds);
   const expected = new Set(reference.map(row => row.advisory));
   const rows = readCandidateCases(candidate, failures);
   const missing = [], unexpected = [], bindings = [], invalid = [], fixedGaps = [];
-  const lost = [], gained = [], unresolved = [];
+  const lost = [], gained = [], unresolved = [], incompleteCoverage = [];
   for (const id of rows.keys()) if (!expected.has(id)) unexpected.push(id);
   for (const row of reference) {
     const id = row.advisory;
@@ -86,25 +89,30 @@ function compareCases(reference, candidate, summary, failures) {
     const outcome = candidateOutcome(current);
     if (outcome === null) { invalid.push(id); continue; }
     summary.candidate_outcomes[outcome]++;
+    if (outcome === 'hit') remainingProtected.delete(id);
     if (scored(outcome)) {
       summary.candidate_fixed_side_residual_alerts += current.fix_side_residual.length;
-      if (!completeFixedCoverage(current.file_coverage?.fixed, current.source_packets?.fixed)) fixedGaps.push(id);
+      const oldCoverage = current.file_coverage?.old;
+      const oldFiles = pairedPathPolicy && Array.isArray(oldCoverage) ? oldCoverage : [];
+      if (!completeFixedCoverage(current.file_coverage?.fixed, current.source_packets?.fixed, oldFiles)) fixedGaps.push(id);
     }
     if (row.after === 'hit' && outcome !== 'hit') lost.push(id);
     if (row.after === 'hit' && outcome === 'hit') summary.retained_hunk_hits++;
     if (row.after !== 'hit' && outcome === 'hit') gained.push(id);
-    if (outcome === 'timeout' || outcome === 'error' || (!scored(outcome) && outcome !== row.after)) unresolved.push(id);
+    if (protectedHitIds.length && outcome === 'coverage_incomplete') incompleteCoverage.push(id);
+    else if (outcome === 'timeout' || outcome === 'error' || (!scored(outcome) && outcome !== row.after)) unresolved.push(id);
   }
   const issueIds = {
     MISSING_CANDIDATE_ADVISORY: missing, UNEXPECTED_CANDIDATE_ADVISORY: unexpected,
     CASE_INPUT_MISMATCH: bindings, INVALID_CANDIDATE_OUTCOME: invalid,
-    FIXED_SIDE_COVERAGE_INCOMPLETE: fixedGaps,
-    LOST_REFERENCE_HIT: lost, NEW_UNRESOLVED_CASE: unresolved,
+    CANDIDATE_COVERAGE_INCOMPLETE: incompleteCoverage, FIXED_SIDE_COVERAGE_INCOMPLETE: fixedGaps,
+    LOST_REFERENCE_HIT: lost, LOST_PROTECTED_HIT: [...remainingProtected], NEW_UNRESOLVED_CASE: unresolved,
   };
   for (const [code, ids] of Object.entries(issueIds)) {
     if (ids.length) failures.push({ code, advisory_ids: ids.sort() });
   }
-  return { lost, gained: gained.sort(), new_unresolved: unresolved };
+  return { lost, gained: gained.sort(), new_unresolved: unresolved,
+    ...(protectedHitIds.length ? { lost_protected: [...remainingProtected].sort() } : {}) };
 }
 
 function candidateValidationFailures(candidate, candidateRulesSha256, cases) {
@@ -131,7 +139,7 @@ function reportedSummaryMatches(reported, summary) {
 }
 
 // CLI callers authenticate the immutable reference bytes before using this comparison.
-export function verifyRegisteredRecall(reference, candidate, candidateRulesSha256) {
+export function verifyRegisteredRecall(reference, candidate, candidateRulesSha256, protectedHitIds = []) {
   if (!validReference(reference)) return { decision: 'REJECT', failures: [{ code: 'REFERENCE_METADATA_MISMATCH' }] };
   const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
   const failures = candidateValidationFailures(candidate, candidateRulesSha256, cases);
@@ -141,7 +149,15 @@ export function verifyRegisteredRecall(reference, candidate, candidateRulesSha25
     reference_fixed_side_residual_alerts: reference.fix_side_residual_alerts[1],
     candidate_fixed_side_residual_alerts: 0,
   };
-  const changes = compareCases(reference.cases, cases, summary, failures);
+  const pairedPathPolicy = protectedHitIds.length > 0 && candidate?.scanner_path_policy === pathPolicyProof;
+  const changes = compareCases(reference.cases, cases, summary, failures, protectedHitIds, pairedPathPolicy);
+  if (protectedHitIds.length) {
+    summary.protected_hunk_hits = protectedHitIds.length;
+    summary.retained_protected_hunk_hits = protectedHitIds.length - changes.lost_protected.length;
+    if (!pairedPathPolicy) {
+      failures.push({ code: 'CANDIDATE_PATH_POLICY_MISMATCH' });
+    }
+  }
   summary.candidate_hunk_hits = summary.candidate_outcomes.hit;
   if (!reportedSummaryMatches(candidate?.summary, summary)) {
     failures.push({ code: 'CANDIDATE_SUMMARY_MISMATCH' });
@@ -161,6 +177,7 @@ export function replayRegisteredCaptures(candidate, captureRoot, manifest, rules
   if (pathPolicy?.proof !== candidate.scanner_path_policy) throw new Error('Replay scanner path policy differs from the engine');
   const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
   const invalid = [], unreproduced = [];
+  const sarifCache = new Map();
   let verified_capture_cases = 0;
   for (const row of cases) {
     const retained = {};
@@ -170,7 +187,8 @@ export function replayRegisteredCaptures(candidate, captureRoot, manifest, rules
     }
     if (row.source_packets?.old?.length || row.source_packets?.fixed?.length) verified_capture_cases++;
     try {
-      const replay = replayCaseScore(root, inputs.get(row.ghsa), row, retained, rules, candidate.scope, pathPolicy);
+      // Every capture has already been re-read and hashed. Resolve source paths per side.
+      const replay = replayCaseScore(root, inputs.get(row.ghsa), row, retained, rules, candidate.scope, pathPolicy, sarifCache);
       if (caseDigest([replay]) !== caseDigest([Object.fromEntries(Object.keys(replay).map(key => [key, row[key]]))])) {
         throw new Error('Case score differs from replay');
       }
@@ -190,8 +208,14 @@ function evidenceFrom(paths, captureRoot) {
     if (evidence.reference_sha256 !== referenceSha256) {
       return { ...evidence, decision: 'REJECT', failures: [{ code: 'REFERENCE_BYTES_MISMATCH' }] };
     }
+    const protectedBytes = readFileSync(new URL('../docs/evidence/recall-protected-exposed-161-63.json', import.meta.url));
+    evidence.protected_hits_sha256 = sha256(protectedBytes);
+    if (evidence.protected_hits_sha256 !== protectedSha256) {
+      return { ...evidence, decision: 'REJECT', failures: [{ code: 'PROTECTED_HIT_SET_BYTES_MISMATCH' }] };
+    }
+    const protectedHits = JSON.parse(protectedBytes).required_hit_ids;
     const candidate = JSON.parse(candidateBytes);
-    const result = verifyRegisteredRecall(JSON.parse(referenceBytes), candidate, evidence.candidate_rules_sha256);
+    const result = verifyRegisteredRecall(JSON.parse(referenceBytes), candidate, evidence.candidate_rules_sha256, protectedHits);
     const manifestBytes = readFileSync(new URL('../docs/evidence/recall-registered-exposed-161-manifest.json', import.meta.url));
     const manifest = JSON.parse(manifestBytes);
     if (sha256(manifestBytes) !== scoringPins.manifest_sha256

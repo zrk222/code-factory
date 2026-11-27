@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import tempfile
@@ -253,6 +254,9 @@ def _command_digest(command: object) -> str:
 
 
 def _proof_key(facts: dict[str, Any]) -> str:
+    # Older harness keys cannot distinguish direct observations from historic heal imports.
+    if str(facts.get("gate", "")).startswith("harness:"):
+        return _sha_bytes(_canonical(["harness-observation-v2", facts]))
     return _sha_bytes(_canonical(facts))
 
 
@@ -904,4 +908,133 @@ def challenge_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
         "mutated_valid": mutated["valid"],
         "disposition_after_mutation": "RUN" if not mutated["valid"] else "REUSE",
         "mutation": "append bytes to one isolated declared input",
+    }
+
+
+HARNESS_HEAL_SCHEMAS = frozenset({"hsf.harness-heal.v1", "hsf.harness-heal.v2"})
+HARNESS_RECEIPT_LIMIT = 1_048_576
+
+
+def _load_heal_receipt(root: Path, heal_path: Path) -> tuple[str, dict[str, Any], str]:
+    """Read one HSF heal receipt: workspace-contained, no symlinked ancestor, at most 1 MiB, known schema."""
+    try:
+        relative, path = _relative_file(Path(root), str(heal_path), "heal receipt")
+        if (
+            _path_has_symlink(Path(root).resolve(), str(heal_path))
+            or path.stat().st_size > HARNESS_RECEIPT_LIMIT
+        ):
+            raise ProofReuseError(
+                "PROOF_HARNESS_RECEIPT_INVALID",
+                "heal receipt is linked or larger than 1 MiB",
+            )
+        raw = path.read_bytes()
+        receipt = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, ProofReuseError) as error:
+        raise ProofReuseError(
+            "PROOF_HARNESS_RECEIPT_INVALID", f"heal receipt is unreadable: {error}"
+        ) from error
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") not in HARNESS_HEAL_SCHEMAS
+    ):
+        raise ProofReuseError(
+            "PROOF_HARNESS_RECEIPT_INVALID", "not an hsf.harness-heal.v1/v2 receipt"
+        )
+    if not isinstance(receipt.get("rounds"), list) or receipt.get("status") not in {
+        "healthy",
+        "unhealthy",
+    }:
+        raise ProofReuseError(
+            "PROOF_HARNESS_RECEIPT_INVALID", "heal receipt lacks status or rounds"
+        )
+    return relative, receipt, hashlib.sha256(raw).hexdigest()
+
+
+def _existing_heal_ingest(root: Path, feature: str, digest: str) -> str | None:
+    for path in sorted(
+        (Path(root) / "receipts").glob(f"hsf-{feature}-harness-heal-*.json")
+    ):
+        try:
+            if (
+                json.loads(path.read_text(encoding="utf-8"))["inputs"]["heal_receipt"][
+                    "sha256"
+                ]
+                == digest
+            ):
+                return path.relative_to(Path(root)).as_posix()
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
+
+
+def _validate_heal_destination(root: Path, name: object) -> None:
+    if not isinstance(name, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name
+    ):
+        raise ProofReuseError(
+            "PROOF_HARNESS_FEATURE_INVALID", "feature must be a safe identifier"
+        )
+    directory = root / "receipts"
+    try:
+        info = directory.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise ProofReuseError(
+            "PROOF_PATH_ESCAPE", "cannot validate receipt directory"
+        ) from error
+    if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+        raise ProofReuseError(
+            "PROOF_PATH_ESCAPE", "receipt directory must be a local directory"
+        )
+
+
+def ingest_harness_heal(
+    root: Path, heal_path: Path, *, feature: str | None = None
+) -> dict[str, Any]:
+    """Import historical heal evidence. The supported schemas lack execution-time proof fingerprints."""
+    from .contract import Receipt
+
+    root = Path(root).resolve()
+    relative, receipt, digest = _load_heal_receipt(root, heal_path)
+    name = feature if feature is not None else receipt.get("harness", "harness")
+    _validate_heal_destination(root, name)
+    existing = _existing_heal_ingest(root, name, digest)
+    if existing is not None:
+        return {
+            "schema": "factory.harness-ingest.v1",
+            "receipt": existing,
+            "proofs": [],
+            "already_ingested": True,
+        }
+    healthy = receipt["status"] == "healthy"
+    rounds = [
+        {key: row.get(key) for key in ("round", "action", "guard_ok", "changed")}
+        for row in receipt["rounds"]
+        if isinstance(row, dict)
+    ]
+    written = Receipt(
+        module="hsf",
+        stage="harness-heal",
+        feature=name,
+        ok=healthy,
+        inputs={"heal_receipt": {"path": relative, "sha256": digest}},
+        outputs={
+            "stop_reason": receipt.get("stop_reason"),
+            "repair_attempts": receipt.get("repair_attempts"),
+            "remaining_failures": receipt.get("remaining_failures"),
+            "rounds": rounds,
+            "kept_changes": receipt.get("kept_changes"),
+            "authority": "none",
+        },
+        attribution=receipt.get("attribution")
+        if isinstance(receipt.get("attribution"), dict)
+        else None,
+    ).write(root)
+    return {
+        "schema": "factory.harness-ingest.v1",
+        "receipt": written.relative_to(root).as_posix(),
+        "ok": healthy,
+        "proofs": [],
+        "already_ingested": False,
     }

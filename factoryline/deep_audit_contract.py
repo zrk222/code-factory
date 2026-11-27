@@ -699,6 +699,41 @@ def _validate_lane_languages(lane: dict) -> None:
     _unique(lane["languages"])
 
 
+# Available signed profile names, not installed or executed worker claims.
+_STATIC_PROFILES = {
+    "python": "python",
+    "javascript": "javascript",
+    "typescript": "javascript",
+    "ruby": "ruby",
+    "java": "java",
+    "csharp": "csharp",
+    "go": "go",
+}
+
+
+def _gap_repair(family: str, language: str, path: str) -> str:
+    repair = f"Add a {family} analyzer and source-bound obligation for {language}."
+    if family != "static":
+        return repair
+    if language == "php" and path.lower().endswith(".blade.php"):
+        return (
+            f"{repair} For Blade syntax evidence, run "
+            "factory deep-audit blade-structure <template> --grammar-dir <pinned-grammars>."
+        )
+    if language == "php":
+        return (
+            f"{repair} Supported profiles for a signed lane include "
+            "semgrep-pattern-limited.json and semgrep-php-interfile.json (bounded cross-file)."
+        )
+    codeql = _STATIC_PROFILES.get(language)
+    profiles = [f"codeql-{codeql}-full.json"] if codeql else []
+    if language in _deep_audit_io.SEMGREP_SOURCE_LANGUAGES:
+        profiles.append("semgrep-pattern-limited.json")
+    if profiles:
+        return f"{repair} Supported profiles for a signed lane include {', '.join(profiles)}."
+    return f"{repair} Configure a native profile that supports {language} extraction."
+
+
 def _validate_lane_mode(lane: dict) -> None:
     require_str(lane["mode"], "mode", maximum=64)
     full_static = lane["mode"] == "interprocedural-full"
@@ -2034,20 +2069,18 @@ def _codeql_ram_mib(lane: dict) -> int:
 
 
 def _native_argv(commands: list, bindings: dict, lane: dict | None = None) -> list:
-    if lane is not None and any(
-        "{ram_mib}" in value for command in commands for value in command["argv"]
-    ):
-        bindings = {**bindings, "ram_mib": _codeql_ram_mib(lane)}
     result = []
     for command in commands:
         argv = []
         for value in command["argv"]:
+            if "{ram_mib}" in value:
+                if lane is None or value != "--ram={ram_mib}":
+                    raise _deep_audit_io.RuntimeAuditError(
+                        "E_ADAPTER_PROFILE", "lane memory binding required"
+                    )
+                value = f"--ram={_codeql_ram_mib(lane)}"
             for name, bound in bindings.items():
                 value = value.replace("{" + name + "}", str(bound))
-            if "{ram_mib}" in value:
-                raise _deep_audit_io.RuntimeAuditError(
-                    "E_ADAPTER_PROFILE", "lane memory binding required"
-                )
             argv.append(value)
         _deep_audit_io._adapter_command_shape(
             {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}
