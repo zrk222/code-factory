@@ -24,7 +24,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from .deep_audit_contract import verify_deep_audit_plan
+from .deep_audit_contract import _gap_repair, verify_deep_audit_plan
 from .deep_audit_io import LIMIT, digest, local_file, strict_json
 from .deep_audit_sarif import normalize_sarif
 from .runtime_audit_common import RuntimeAuditError, canonical_bytes, sha256_bytes
@@ -78,31 +78,6 @@ def _source_families(language: str) -> set[str]:
     return families
 
 
-# Available signed profile names, not installed or executed worker claims.
-_STATIC_PROFILES = {
-    "python": "python",
-    "javascript": "javascript",
-    "typescript": "javascript",
-    "ruby": "ruby",
-}
-
-
-def _gap_repair(family: str, language: str) -> str:
-    repair = f"Add a {family} analyzer and source-bound obligation for {language}."
-    if family != "static":
-        return repair
-    codeql = _STATIC_PROFILES.get(language)
-    profile = (
-        f"codeql-{codeql}-full.json and semgrep-pattern-limited.json"
-        if codeql
-        else "semgrep-pattern-limited.json (no offline interprocedural worker)"
-    )
-    return (
-        f"{repair} Supported profiles for a signed lane: {profile}; "
-        "naming a profile does not install, run or complete its worker."
-    )
-
-
 def _source_gaps(
     files: dict[str, dict],
     language_lanes: dict[str, set[str]],
@@ -119,7 +94,7 @@ def _source_gaps(
                 gaps.append(
                     _execution_gap(
                         "UNCOVERED_SOURCE",
-                        _gap_repair(family, language),
+                        _gap_repair(family, language, path),
                         path,
                     )
                 )

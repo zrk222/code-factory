@@ -20,7 +20,7 @@ from . import canonical_json_compat_bytes as _guided_canonical
 from .capability_packs import builtin_packs, validate_pack
 from .continuation import ContinuationError, continue_assembly, discover_features
 from .deep_audit import pause_deep_run
-from .deep_audit_loop import deep_scan_projection, read_junit_report
+from .deep_audit_loop import deep_scan_projection
 from .developer_memory import developer_memory_brief
 from .failure_guidance import explain_failure
 from .graph_authorization import (
@@ -47,7 +47,7 @@ from .repair_sandbox import (
     create_repair_scope,
     write_repair_scope_artifacts,
 )
-from .runtime_coverage import read_runtime_coverage_report
+from .runtime_coverage import read_junit_report, read_runtime_coverage_report
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .target_compiler import TARGETS, TargetCompileError, create_target_from_prompt
 from . import sha256_hex as _guided_digest
