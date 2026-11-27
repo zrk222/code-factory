@@ -4035,12 +4035,6 @@ rules:
       - pattern: shellescape(...)
       - pattern: parseInt(...)
       - pattern: Number(...)
-      # Sanitizing, escaping and shell-quoting helpers return a value the caller has vetted.
-      - patterns:
-          - pattern-either:
-              - pattern: $F(...)
-              - pattern: $O.$F(...)
-          - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(sanitiz|escape|shellquote)\w*$'}
     pattern-sinks:
       - patterns:
           - pattern-either:

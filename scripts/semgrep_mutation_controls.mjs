@@ -185,7 +185,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 4,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 6,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
-  'opt.factory.rules.javascript.parameter-shell-command': 8,
+  'opt.factory.rules.javascript.parameter-shell-command': 9,
   'opt.factory.rules.javascript.parameter-sql-text': 11,
   'opt.factory.rules.javascript.request-command-injection': 5,
   'opt.factory.rules.javascript.request-html-injection': 12,
@@ -281,8 +281,8 @@ export function javascriptControlManifest() {
     // Values inside inline event-handler attributes.
     ...[4, 9].map(line => ({ rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
       path: 'typescript-html-event-handler.ts', line })),
-    // A sanitizing helper clears the parameter; the raw parameter stays reported.
-    { rule: 'opt.factory.rules.javascript.parameter-shell-command', path: 'typescript-shell-sanitizer.ts', line: 10 },
+    // A transparent helper and the raw parameter both retain dataflow.
+    ...[6, 11].map(line => ({ rule, path: 'typescript-shell-sanitizer.ts', line })),
     { rule: 'opt.factory.rules.javascript.request-command-injection', path: 'report-cli-markup.tsx', line: 4 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 11 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 24 },
@@ -299,7 +299,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 369;
+const REVIEWED_FINDINGS = 370;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

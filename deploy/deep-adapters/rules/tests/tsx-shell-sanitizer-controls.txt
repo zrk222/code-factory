@@ -1,11 +1,17 @@
 import { execSync } from "child_process";
+const util = { sanitizeString(value: string) { return value; } };
 
 export function profiles(iface: string): string {
-  // ok: javascript.parameter-shell-command
+  // ruleid: javascript.parameter-shell-command
   return execSync(`netsh wlan show profiles "${util.sanitizeString(iface)}"`).toString();
 }
 
 export function rawProfiles(iface: string): string {
   // ruleid: javascript.parameter-shell-command
   return execSync(`netsh wlan show profiles "${iface}"`).toString();
+}
+
+export function numericProfiles(iface: string): string {
+  // ok: javascript.parameter-shell-command
+  return execSync(`netsh wlan show profiles "${Number(iface)}"`).toString();
 }
