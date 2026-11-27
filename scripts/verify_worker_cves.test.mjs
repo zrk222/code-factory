@@ -77,6 +77,43 @@ test('compiled fixture parity ignores known timing fields and detects native evi
   assert.throws(() => verifyStructuralBundle(bundle, 'candidate', expected, pins), /exact native file coverage/);
 });
 
+test('compiled Go parity accepts enumeration order without hiding indexed binding or payload changes', () => {
+  const files = ['compute.go', 'compute_test.go', 'go.mod'];
+  const capture = (order) => ({
+    sarif: { runs: [{
+      artifacts: order.map((uri, index) => ({ location: { uri, index, uriBaseId: '%SRCROOT%' } })),
+      invocations: [{ toolExecutionNotifications: order.map(uri => ({
+        descriptor: { id: 'go/diagnostics/successfully-extracted-files', index: 0 },
+        locations: [{ physicalLocation: { artifactLocation: { uri } } }],
+      })) }],
+      results: [],
+    }] },
+    coverage: {},
+  });
+  const first = capture(files), repeat = capture([...files].reverse());
+  const raw = structuredClone(repeat);
+  assertStructuralParity(first, repeat);
+  assert.deepEqual(repeat, raw);
+
+  for (const change of [
+    run => { run.artifacts[0].location.index = 2; },
+    run => { run.artifacts[0].location.uriBaseId = '%OTHER%'; },
+    run => { run.invocations[0].toolExecutionNotifications.pop(); },
+    run => { run.invocations[0].toolExecutionNotifications[0].level = 'error'; },
+  ]) {
+    const changed = structuredClone(repeat);
+    change(changed.sarif.runs[0]);
+    assert.throws(() => assertStructuralParity(first, changed), /changed on repeat/);
+  }
+  for (const input of [first, repeat]) {
+    input.sarif.runs[0].results.push({
+      ruleId: 'fixture-control',
+      locations: [{ physicalLocation: { artifactLocation: { index: 0 } } }],
+    });
+  }
+  assert.throws(() => assertStructuralParity(first, repeat), /changed on repeat/);
+});
+
 test('worker workflow path filters cover every Docker build input without framework scope', () => {
   const workflow = readFileSync('.github/workflows/worker-verification.yml', 'utf8').replace(/\r\n/g, '\n');
   const dockerfile = readFileSync('deploy/deep-adapters/Dockerfile', 'utf8').replace(/\r\n/g, '\n');

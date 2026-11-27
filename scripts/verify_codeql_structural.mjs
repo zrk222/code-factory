@@ -49,17 +49,54 @@ const stableJson = value => JSON.stringify(value, (_, item) =>
   item && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 
+function compareRecords(a, b) {
+  const left = stableJson(a), right = stableJson(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function hasArtifactIndex(value, field) {
+  return value !== null && typeof value === 'object' && (
+    Object.hasOwn(value, 'parentIndex')
+    // These indexes refer to tool descriptors, not the artifact array.
+    || (Object.hasOwn(value, 'index') && field !== 'descriptor' && field !== 'rule')
+    || Object.entries(value).some(([key, child]) => hasArtifactIndex(child, key))
+  );
+}
+
+function normalizeArtifactOrder({ artifacts, ...run }) {
+  // Only URI declarations whose indexes describe their own positions can move.
+  if (!Array.isArray(artifacts) || !artifacts.every((row, index) =>
+    row?.location?.index === index && typeof row.location.uri === 'string'
+    && Object.keys(row).length === 1
+    && Object.keys(row.location).every(key => ['index', 'uri', 'uriBaseId'].includes(key)))) return;
+  if (hasArtifactIndex(run)) return;
+
+  artifacts.sort((a, b) => compareRecords(
+    [a.location.uriBaseId ?? null, a.location.uri],
+    [b.location.uriBaseId ?? null, b.location.uri]));
+  artifacts.forEach((row, index) => { row.location.index = index; });
+}
+
 export function assertStructuralParity(first, repeat) {
   const semantics = ({ sarif, coverage, challenges }) => {
     const report = structuredClone(sarif);
     // The raw digest includes CodeQL telemetry timestamps. Keep it in the stored bundle.
     delete report.properties?.factory_native_raw_sha256;
     for (const run of report.runs) {
+      normalizeArtifactOrder(run);
       for (const invocation of run.invocations ?? []) {
         for (const notification of invocation.toolExecutionNotifications ?? []) {
           delete notification.timeUtc;
           if (['cli/file-coverage-baseline', 'cli/platform'].includes(notification.descriptor?.id)) {
             delete notification.properties?.attributes?.durationMilliseconds;
+          }
+        }
+        const notifications = invocation.toolExecutionNotifications ?? [];
+        // File-level diagnostics can arrive in any order within the same group.
+        for (const id of ['go/diagnostics/successfully-extracted-files', 'go/baseline/expected-extracted-files']) {
+          const fileRows = notifications.filter(row => row.descriptor?.id === id).sort(compareRecords).values();
+          for (const [index, row] of notifications.entries()) {
+            if (row.descriptor?.id === id) notifications[index] = fileRows.next().value;
           }
         }
       }
