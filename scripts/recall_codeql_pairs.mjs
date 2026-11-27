@@ -22,12 +22,15 @@ const ARM_COHORT = 'factory.recall-codeql-cohort.v2';
 const extractionDiagnostics = new Map([
   ['Go', 'go/diagnostics/successfully-extracted-files'],
   ['Maven', 'java/diagnostics/successfully-extracted-files'],
+  ['NuGet', 'cs/diagnostics/successfully-extracted-files'],
   ['npm', 'factory/js/diagnostics/parsed-source-files'],
   ['PyPI', 'py/diagnostics/successfully-extracted-files'],
   ['RubyGems', 'rb/diagnostics/successfully-extracted-files'],
+  ['crates.io', 'rust/diagnostics/successfully-extracted-files'],
 ]);
 const digest = /^[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
+const extractionErrors = new Set(['cs/diagnostics/extraction-errors', 'rust/diagnostics/extraction-errors']);
 const relativeEntry = path => typeof path === 'string' && !path.includes('\\')
   && path.split('/').every(part => part && part !== '.' && part !== '..');
 const json = bytes => JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
@@ -188,26 +191,34 @@ function captureFingerprints(capture, revision, policy, packets, findings, flows
 function nativeExtractionCoverage(invocations, packetPaths, resolvePath, extractionId) {
   const extracted = new Set();
   const parseFailed = new Set();
+  let unlocatedErrors = 0;
   for (const invocation of invocations) {
     for (const note of invocation.toolExecutionNotifications ?? []) {
       const id = note.descriptor?.id ?? '';
+      // Rust can report extracted syntax even when semantic analysis failed.
+      const extractionError = extractionErrors.has(id)
+        || (extractionId === extractionDiagnostics.get('crates.io') && id === 'rust/diagnostics/extraction-warnings');
       const paths = id === extractionId ? extracted
-        : /(?:parse|syntax)[_-]?(?:error|failure)/i.test(id) ? parseFailed : null;
+        : extractionError || /(?:parse|syntax)[_-]?(?:error|failure)/i.test(id) ? parseFailed : null;
       if (!paths) continue;
+      let located = false;
       for (const entry of note.locations ?? []) {
         const location = entry.physicalLocation?.artifactLocation;
         if (!location) continue;
         // A whole-repo extraction can also report files outside the bound packets.
         let path;
         try { path = resolvePath(location); } catch { continue; }
+        located = true;
         if (packetPaths.has(path)) paths.add(path);
       }
+      if (extractionError && !located) unlocatedErrors++;
     }
   }
   const expected = [...packetPaths].sort();
   const missing = expected.filter(path => !extracted.has(path));
   return { expected, extracted: [...extracted].sort(), parse_failed: [...parseFailed].sort(),
-    missing, complete: !missing.length && !parseFailed.size };
+    ...(unlocatedErrors ? { unlocated_extraction_errors: unlocatedErrors } : {}),
+    missing, complete: !missing.length && !parseFailed.size && !unlocatedErrors };
 }
 
 function nativeCapture(root, capture, side, input, engineVersion, policy, extractionId) {

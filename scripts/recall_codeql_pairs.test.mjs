@@ -11,9 +11,11 @@ import { scoreCodeqlPairs } from './recall_codeql_pairs.mjs';
 const nativeFixtures = {
   Go: ['sample.go', 'go/diagnostics/successfully-extracted-files'],
   Maven: ['Sample.java', 'java/diagnostics/successfully-extracted-files'],
+  NuGet: ['Sample.cs', 'cs/diagnostics/successfully-extracted-files'],
   npm: ['sample.js', 'factory/js/diagnostics/parsed-source-files'],
   PyPI: ['sample.py', 'py/diagnostics/successfully-extracted-files'],
   RubyGems: ['sample.rb', 'rb/diagnostics/successfully-extracted-files'],
+  'crates.io': ['sample.rs', 'rust/diagnostics/successfully-extracted-files'],
 };
 
 function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI', trailingSource = '') {
@@ -86,11 +88,48 @@ test('JavaScript needs parsed content evidence in addition to archive membership
 });
 
 test('each registered native lane accepts its own exact extraction diagnostic', t => {
-  for (const ecosystem of ['Go', 'Maven', 'RubyGems']) {
+  for (const ecosystem of ['Go', 'Maven', 'NuGet', 'RubyGems', 'crates.io']) {
     const { value, run } = stagedPair(t, 'src', ecosystem);
     const [scored] = run(value).cases;
     assert.equal(scored.native_coverage.old.complete, true, ecosystem);
     assert.equal(scored.native_coverage.fixed.complete, true, ecosystem);
+  }
+});
+
+test('C# and Rust extraction errors without file locations block complete coverage', t => {
+  for (const ecosystem of ['NuGet', 'crates.io']) {
+    const [uri, success] = nativeFixtures[ecosystem];
+    const { value, capture, run } = stagedPair(t, 'src', ecosystem);
+    const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [
+      { descriptor: { id: success }, locations: [{ physicalLocation: { artifactLocation: { uri } } }] },
+      { descriptor: { id: success.replace('successfully-extracted-files', 'extraction-errors') }, level: 'warning' },
+    ] }]);
+    const [scored] = run({ ...value, cases: [{ ...value.cases[0], fixed }] }).cases;
+    assert.deepEqual(scored.native_coverage.fixed.extracted, [uri], ecosystem);
+    assert.equal(scored.native_coverage.fixed.unlocated_extraction_errors, 1, ecosystem);
+    assert.equal(scored.native_coverage.fixed.complete, false, ecosystem);
+  }
+});
+
+test('Rust semantic extraction warnings block coverage even when both sides report extracted files', t => {
+  for (const ecosystem of ['crates.io', 'PyPI']) {
+    const [uri, extractionId] = nativeFixtures[ecosystem];
+    const { value, capture, run } = stagedPair(t, 'src', ecosystem);
+    const file = uri => [{ physicalLocation: { artifactLocation: { uri, uriBaseId: '%SRCROOT%' } } }];
+    for (const warningPath of [uri, 'unrelated.rs', null]) {
+      const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [
+        { descriptor: { id: extractionId }, level: 'none', locations: file(uri) },
+        { descriptor: { id: 'rust/diagnostics/extraction-warnings' },
+          message: { text: 'Extraction warning with message semantic analyzer unavailable (no manifest found)' },
+          ...(warningPath && { locations: file(warningPath) }) },
+      ] }]);
+      const [scored] = run({ ...value, cases: [{ ...value.cases[0], fixed }] }).cases;
+      const coverage = scored.native_coverage.fixed;
+      assert.deepEqual(coverage.extracted, [uri]);
+      assert.equal(coverage.complete, ecosystem !== 'crates.io' || warningPath === 'unrelated.rs');
+      assert.deepEqual(coverage.parse_failed, ecosystem === 'crates.io' && warningPath === uri ? [uri] : []);
+      assert.equal(coverage.unlocated_extraction_errors, ecosystem === 'crates.io' && !warningPath ? 1 : undefined);
+    }
   }
 });
 

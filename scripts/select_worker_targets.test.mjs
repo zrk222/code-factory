@@ -53,13 +53,13 @@ test('shared Semgrep rules also rebuild their PHP derivative', () => {
   assert.deepEqual(JSON.parse(result.matrix), ['php-interfile-worker']);
 });
 
-test('compiled verifier-only changes select Java, C# and Go on PR and push', () => {
+test('compiled verifier-only changes select Java, C#, Go and Rust on PR and push', () => {
   const git = gitFor({ diffPaths: paths('scripts/verify_codeql_structural.mjs') });
   for (const [name, input] of [['pull_request', prEvent()], ['push', pushEvent()]]) {
     const result = selectWorkerTargets(name, input, git);
     assert.equal(result.sdk, 'true');
     assert.equal(result.reason, 'compiled-codeql-only');
-    assert.deepEqual(JSON.parse(result.matrix), ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker']);
+    assert.deepEqual(JSON.parse(result.matrix), ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker', 'codeql-rust-worker']);
   }
 });
 
@@ -186,14 +186,14 @@ test('trusted planner admits the compiled matrix for a verifier-only diff', () =
         GITHUB_EVENT_NAME: 'push', GITHUB_EVENT_JSON: JSON.stringify({ before, after }) },
     });
     assert.equal(result.status, 0, result.stderr);
-    const expected = ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker'];
+    const expected = ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker', 'codeql-rust-worker'];
     assert.deepEqual(readFileSync(output, 'utf8').trim().split('\n'),
       ['sdk=true', 'matrix=' + JSON.stringify(expected), 'reason=compiled-codeql-only']);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 for (const target of ['osv-worker', 'semgrep-worker', 'codeql-python-worker', 'codeql-java-worker',
-  'codeql-csharp-worker', 'codeql-go-worker', 'php-interfile-worker', 'unknown-target', { target: 'codeql-python-worker' }]) {
+  'codeql-csharp-worker', 'codeql-go-worker', 'codeql-rust-worker', 'php-interfile-worker', 'unknown-target', { target: 'codeql-python-worker' }]) {
 test(`manual ${target} selection cannot narrow a PR or push matrix`, () => {
   for (const name of ['workflow_dispatch', 'pull_request', 'push']) {
     const directory = mkdtempSync(join(tmpdir(), 'factory-manual-osv-'));

@@ -60,7 +60,7 @@ on:
       target:
         description: Manual worker selection; automatic PR/push checks are unchanged
         type: choice
-        options: [all, osv-worker, semgrep-worker, codeql-python-worker, codeql-java-worker, codeql-csharp-worker, codeql-go-worker, php-interfile-worker]
+        options: [all, osv-worker, semgrep-worker, codeql-python-worker, codeql-java-worker, codeql-csharp-worker, codeql-go-worker, codeql-rust-worker, php-interfile-worker]
         default: all
 
 permissions:
@@ -96,7 +96,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { appendFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
           import { join } from 'node:path';
-          const targets = ['codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker', 'codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker', 'php-interfile-worker', 'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker'];
+          const targets = ['codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker', 'codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker', 'codeql-rust-worker', 'php-interfile-worker', 'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker'];
           let result = { sdk: 'true', matrix: JSON.stringify(targets), reason: 'trusted-baseline-unavailable' };
           let temporary;
           try {
@@ -118,7 +118,7 @@ jobs:
             const selected = JSON.parse(execFileSync(process.execPath, [path], { encoding: 'utf8', timeout: 30000, env: { ...process.env, GITHUB_OUTPUT: '' } }));
             const sharedPhpRules = selected.sdk === 'true' && selected.reason === 'shared-php-rules' &&
               selected.matrix === JSON.stringify(['php-interfile-worker']);
-            const compiledTargets = targets.filter(target => /^codeql-(java|csharp|go)-worker$/.test(target));
+            const compiledTargets = targets.filter(target => /^codeql-(java|csharp|go|rust)-worker$/.test(target));
             const compiledOnly = selected.sdk === 'true' && selected.reason === 'compiled-codeql-only'
               && selected.matrix === JSON.stringify(compiledTargets);
             const fullMatrix = selected.matrix === JSON.stringify(targets);
@@ -315,10 +315,10 @@ jobs:
           path: worker-verification.json
           if-no-files-found: error
       - name: Verify native compiled-language source accounting
-        if: contains(fromJSON('["codeql-java-worker", "codeql-csharp-worker", "codeql-go-worker"]'), matrix.target)
+        if: contains(fromJSON('["codeql-java-worker", "codeql-csharp-worker", "codeql-go-worker", "codeql-rust-worker"]'), matrix.target)
         run: node scripts/verify_codeql_structural.mjs factory-worker:candidate compiled-codeql.json "${{ matrix.target }}"
       - name: Retain native compiled-language evidence
-        if: always() && contains(fromJSON('["codeql-java-worker", "codeql-csharp-worker", "codeql-go-worker"]'), matrix.target)
+        if: always() && contains(fromJSON('["codeql-java-worker", "codeql-csharp-worker", "codeql-go-worker", "codeql-rust-worker"]'), matrix.target)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: compiled-codeql-${{ matrix.target }}

@@ -708,6 +708,7 @@ _STATIC_PROFILES = {
     "java": "java",
     "csharp": "csharp",
     "go": "go",
+    "rust": "rust",
 }
 
 

@@ -5913,6 +5913,10 @@ def test_codeql_result_path_maps_exact_versioned_inventory_path():
         _codeql_result_path("codeql/actions-queries/0.6.36/Security/A.ql")
         == "results/codeql/actions-queries/Security/A.bqrs"
     )
+    assert (
+        _codeql_result_path("codeql/rust-queries/0.1.43/queries/security/CWE-319/UseOfHttp.ql")
+        == "results/codeql/rust-queries/queries/security/CWE-319/UseOfHttp.bqrs"
+    )
 
 
 @pytest.mark.parametrize(
@@ -6406,6 +6410,7 @@ def test_codeql_archived_sources_bounds_archive_read(tmp_path, monkeypatch):
         ("java", "java", "CompilationUnit"),
         ("csharp", "csharp", "ExtractorError"),
         ("go", "go", "FactoryGoDiagnostic"),
+        ("rust", "rust", 'e.getTag() = "parse_error"'),
     ],
 )
 def test_codeql_source_query_maps_supported_languages(

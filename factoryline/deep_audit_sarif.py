@@ -4602,6 +4602,7 @@ def _codeql_result_path(query_path):
             "java-queries",
             "csharp-queries",
             "go-queries",
+            "rust-queries",
         }
         or _deep_audit_io.re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", parts[2]) is None
         or not parts[-1].endswith(".ql")
@@ -4702,6 +4703,16 @@ _COMPILED_CODEQL_SOURCE_QUERIES = {
         "}\n",
         "count(GoFile n | n = f)",
         "count(FactoryGoDiagnostic e | e.getFile() = f or not exists(e.getFile()))",
+    ),
+    "rust": (
+        "rs",
+        "import codeql.rust.Diagnostics\n",
+        "count(AstNode n | n.getLocation().getFile() = f)",
+        # Recovered syntax errors and syntax-only fallback can be warnings.
+        "count(Diagnostic e | (e instanceof ExtractionError or "
+        'e.getTag() = "parse_error" or e.getTag() = "semantics") and '
+        "(e.getLocation().getFile() = f or "
+        "not exists(e.getLocation().getFile())))",
     ),
 }
 
