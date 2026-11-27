@@ -361,6 +361,12 @@ jobs:
                   "required": ["state", fact_field],
                   "additionalProperties": False,
               }
+              if grounded:
+                  assessment["properties"].update({
+                      "source_line": {"type": "integer", "minimum": 1},
+                      "source_excerpt": {"type": "string", "minLength": 4, "maxLength": 96},
+                  })
+                  assessment["required"].extend(("source_line", "source_excerpt"))
               properties = {
                   "decision": {"enum": DECISIONS},
                   "findings": {
@@ -438,8 +444,10 @@ jobs:
                   "Use REVIEWED for a relevant observation, including a matching control result. "
                   "Use REVIEWED_NO_INDICATOR after inspecting a source with no relevant indicator. "
                   "Use UNRESOLVED only when evidence needed for that path is missing or contradictory. "
-                  "Write a concrete source or control observation in source_fact. "
-                  "Example source_fact: This file only lists pinned package versions. "
+                  "Each path assessment must cite one line number from that file and a short exact "
+                  "nonsecret source_excerpt from that line. Include that exact excerpt within source_fact "
+                  "and describe what it shows for this family. Do not reuse canned explanations. "
+                  "If the line contains a credential, quote only the key or an adjacent nonsecret token. "
                   "Name a matching control exit or existing rule ID when present. "
               )
               if recovery:
@@ -488,15 +496,29 @@ jobs:
                             if row["state"] != "UNRESOLVED" and has_assessment_rationale(row))
 
 
-          def grounded_assessments(rows):
+          def source_supports_fact(row, source, fact):
+              line, excerpt = row["source_line"], row["source_excerpt"]
+              lines = source.splitlines()
+              return (type(line) is int and 1 <= line <= len(lines)
+                      and isinstance(excerpt, str) and 4 <= len(excerpt) <= 96
+                      and len(excerpt.strip()) >= 4 and excerpt in lines[line - 1]
+                      and excerpt in fact)
+
+
+          def grounded_assessments(rows, sources):
               if not isinstance(rows, dict):
                   raise ValueError("grounded assessments must be keyed by path")
               assessments = {}
               for path, row in rows.items():
-                  if not isinstance(row, dict) or row.keys() != {"state", "source_fact"}:
-                      raise ValueError("grounded assessment must contain a source fact")
+                  if not isinstance(row, dict) or row.keys() != {
+                      "state", "source_fact", "source_line", "source_excerpt"
+                  }:
+                      raise ValueError("grounded assessment must contain a source fact and citation")
                   fact = require_str(row["source_fact"], "source fact", maximum=200)
-                  reason = fact if len(fact.strip()) >= SOURCE_FACT_MIN_LENGTH else row["state"]
+                  corroborated = source_supports_fact(row, sources.get(path, ""), fact)
+                  reason = fact if row["state"] == "UNRESOLVED" or (
+                      corroborated and len(fact.strip()) >= SOURCE_FACT_MIN_LENGTH
+                  ) else row["state"]
                   assessments[path] = {"state": row["state"], "reason": reason}
               return assessments
 
@@ -571,7 +593,7 @@ jobs:
                                        "reference_matches": reference == observation["observation_sha256"]})
               decision = "INCOMPLETE" if gaps else "FINDINGS" if findings else "ACCEPT"
               return ({"decision": decision, "findings": findings, "coverage_gaps": gaps,
-                       "path_assessments": grounded_assessments(result["path_assessments"])}, rejected)
+                       "path_assessments": grounded_assessments(result["path_assessments"], sources)}, rejected)
 
 
           def checked_response(raw, payload):
@@ -641,7 +663,7 @@ jobs:
           def rationale_response(raw, payload, paths):
               observed = response_content(raw, payload["family"])
               if dynamic_control_context(payload):
-                  observed = grounded_assessments(observed)
+                  observed = grounded_assessments(observed, payload["sources"])
               validate_path_assessments(observed, set(paths))
               return observed
 

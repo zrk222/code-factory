@@ -374,7 +374,12 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                 "findings": [finding],
                 "control_claims": [claim, {**claim, "kind": "missing_observation", "observation_sha256": ""}],
                 "path_assessments": {
-                    path: {"state": "REVIEWED", "source_fact": "Inspected the native control and path source"}
+                    path: {
+                        "state": "REVIEWED",
+                        "source_fact": "Inspected the synthetic test text for the control.",
+                        "source_line": 1,
+                        "source_excerpt": "synthetic test text",
+                    }
                     for path in assigned
                 },
             }
@@ -405,7 +410,11 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert [row["id"] for row in grounded["findings"]] == ["native-rule"]
             unresolved = {**result, "path_assessments": {
                 **result["path_assessments"],
-                positive_path: {"state": "UNRESOLVED", "source_fact": "Specific source evidence missing"},
+                positive_path: {
+                    **result["path_assessments"][positive_path],
+                    "state": "UNRESOLVED",
+                    "source_fact": "Specific source evidence missing",
+                },
             }}
             raw = json.dumps({"choices": [{"message": {"content": json.dumps(unresolved)}, "finish_reason": "stop"}]})
             recorded = review.recorded_response(raw.encode(), family_input)
@@ -435,8 +444,17 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert rejected[0]["reference_matches"] is False
             assert not grounded["findings"]
             assert schema["properties"][positive_path]["properties"]["source_fact"]["minLength"] > len("REVIEWED_NO_INDICATOR")
-            followup = {path: {"state": "REVIEWED", "source_fact": "REVIEWED"} for path in assigned}
-            assert not review.reviewed_paths(review.grounded_assessments(followup))
+            proven = result["path_assessments"]
+            assert review.reviewed_paths(review.grounded_assessments(proven, family_input["sources"])) == assigned
+            for unsupported in (
+                {"source_fact": "REVIEWED"},
+                {"source_fact": "This file only lists pinned package versions."},
+                {"source_line": 2},
+                {"source_excerpt": "pinned package versions",
+                 "source_fact": "This file only lists pinned package versions."},
+            ):
+                followup = {path: {**row, **unsupported} for path, row in proven.items()}
+                assert not review.reviewed_paths(review.grounded_assessments(followup, family_input["sources"]))
             observed_control = next(
                 item for obligation in family_input["obligations"]
                 if obligation["id"] == claim["obligation"]
