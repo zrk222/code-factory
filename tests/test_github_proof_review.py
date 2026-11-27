@@ -1622,3 +1622,45 @@ def test_missing_agent_audit_rejects_healing(
             ),
         )
     assert raised.value.code == "HEALING_AGENT_AUDIT_FAILED"
+
+
+def test_hsf_shaped_healing_input_is_accepted(tmp_path: Path) -> None:
+    """The document `hsf harness heal` writes (verify_with: factory-journey) passes this verifier's contract."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "calc.py").write_text(
+        "def add(a, b):\n    return a + b\n", encoding="utf-8"
+    )
+    patch = tmp_path / ".hsf-harness" / "kept.patch"
+    patch.parent.mkdir()
+    patch.write_text("--- a/src/calc.py\n+++ b/src/calc.py\n", encoding="utf-8")
+    anchor = {"role": "harness", "label": "calc", "route": "unit", "state": "required"}
+    protected = ["tests/test_calc.py@" + "a" * 64, "feature:F001"]
+    document = {
+        "schema": "factory.proof-gated-healing-input.v1",
+        "healing_id": "heal-20261126T120000-abcd1234",
+        "review_mode": "human_controlled",
+        "agent": None,
+        "patch": {
+            "path": ".hsf-harness/kept.patch",
+            "sha256": sha256(patch.read_bytes()).hexdigest(),
+            "changed_paths": ["src/calc.py"],
+        },
+        "allowed_paths": ["src"],
+        "semantic_identity": {"before": anchor, "after": anchor},
+        "coverage_before": protected,
+        "coverage_after": protected,
+        "positive_argv": [
+            sys.executable,
+            "-c",
+            "raise SystemExit(0)",
+        ],  # stands in for `hsf harness check`
+        "negative_argv": [
+            sys.executable,
+            "-c",
+            "raise SystemExit(1)",
+        ],  # the pre-repair snapshot still fails
+    }
+    receipt = verify_proof_gated_healing(
+        tmp_path, _write(tmp_path, "healing.json", document)
+    )
+    assert receipt["decision"] in {"passed", "admissible_for_human_review"}

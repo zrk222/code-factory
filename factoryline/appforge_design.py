@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 import hashlib
 import json
+from os.path import lexists
 from collections.abc import Callable, Iterator
 
 from . import canonical_sha, compat_sha
@@ -126,7 +127,7 @@ _STAGES: dict[str, tuple[Callable[..., dict[str, Any]], str]] = {
 
 
 def appforge_design_projection(
-    root: Path, *, stage: str | None = None
+    root: Path, *, stage: str | None = None, inventory: tuple[Path, ...] | None = None
 ) -> dict[str, Any]:
     """Inspect one AppForge stage or reuse one path inventory for full status."""
     workspace = Path(root).resolve()
@@ -148,7 +149,8 @@ def appforge_design_projection(
             "repair_messages": _focused_repair_messages(workspace, status),
             "help_command": ["factory", "revenue", command, "--help"],
         }
-    inventory = tuple(receipt_paths(workspace, "*.json"))
+    if inventory is None:
+        inventory = tuple(receipt_paths(workspace, "*.json"))
     return {
         **_design_status(workspace),
         **{
@@ -214,14 +216,56 @@ def _stage_status_lines(label: str, status: dict[str, Any]) -> Iterator[str]:
         yield f"{label} has no local receipts"
 
 
-def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
-    """Render evidence status without treating an inspection as a readiness gate."""
-    stage = payload.get("stage")
-    if stage is not None:
-        yield from _stage_status_lines(stage, payload["status"])
-        yield from payload.get("repair_messages", [])
-        yield " ".join(payload["help_command"])
+def appforge_status_brief(
+    root: Path, payload: dict[str, Any], inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
+    """The compact status: one row per stage that has receipts, plus the next command."""
+    stages = {}
+    for name in _STAGES:
+        status = payload if name == "design" else payload.get(name, {})
+        latest = status.get("latest") or {}
+        if status.get("current_count") or status.get("invalid_count"):
+            stages[name.replace("_", "-")] = {
+                "marker": latest.get("marker"),
+                "ok": _stage_state(status) == "done",
+                "path": latest.get("path"),
+            }
+    step = appforge_next(root, payload, inventory)
+    return {
+        "schema": "factory.appforge.status-brief.v1",
+        "marker": "APPFORGE_DESIGN_READ_ONLY",
+        "stages": stages,
+        "next": {
+            key: step[key]
+            for key in ("stage", "argv", "inputs_missing", "human_required")
+        },
+    }
+
+
+def _next_line(payload: dict[str, Any]) -> Iterator[str]:
+    step = payload if "argv" in payload else payload.get("next")
+    if not isinstance(step, dict):
         return
+    if step.get("argv"):
+        missing = step.get("inputs_missing") or []
+        yield (
+            "next: "
+            + " ".join(step["argv"])
+            + (f"  (also supply: {' '.join(missing)})" if missing else "")
+        )
+    elif step.get("stage") == "complete":
+        yield "next: every AppForge stage has a current receipt"
+
+
+def _compact_lines(payload: dict[str, Any]) -> Iterator[str]:
+    for name, row in (payload.get("stages") or {}).items():
+        yield f"{name}  {row['marker']}  {row['path']}"
+    if payload.get("stage") and payload.get("why"):
+        yield f"{payload['stage']}: {payload['why']}"
+    yield from _next_line(payload)
+
+
+def _full_status_lines(payload: dict[str, Any]) -> Iterator[str]:
     found = False
     for name in _STAGES:
         status = payload if name == "design" else payload[name]
@@ -231,6 +275,24 @@ def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
             yield from _repair_messages((status.get("latest") or {}).get("findings"))
     if not found:
         yield "No local AppForge receipts. Start with factory revenue appforge-init --help."
+    yield from _next_line(payload)
+
+
+def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
+    """Render evidence status without treating an inspection as a readiness gate."""
+    if payload.get("schema") in {
+        "factory.appforge.next.v1",
+        "factory.appforge.status-brief.v1",
+    }:
+        yield from _compact_lines(payload)
+        return
+    stage = payload.get("stage")
+    if stage is not None:
+        yield from _stage_status_lines(stage, payload["status"])
+        yield from payload.get("repair_messages", [])
+        yield " ".join(payload["help_command"])
+        return
+    yield from _full_status_lines(payload)
 
 
 def _validated_brief(brief: dict[str, Any]) -> set[str]:
@@ -408,3 +470,370 @@ def compile_appforge_design(
         "claim_boundary": contract["claim_boundary"],
     }
     return _seal(workspace, destination / "appforge-design-receipt.json", receipt)
+
+
+# Ordered AppForge chain for `factory appforge next`. Flag sources: "init:<artifact>" and "kit:<artifact>" come
+# from the latest init / evidence-kit receipt; "out:<path>" is the producing stage's default --out; None means a
+# person must supply it. human=True marks stages that need observed evidence, not just a command.
+_O = ".factory/appforge/"
+_NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
+    (
+        "init",
+        "appforge-init",
+        {
+            "--out-dir": None,
+            "--app-name": None,
+            "--bundle-identifier": None,
+            "--version": None,
+            "--build-number": None,
+            "--audience": None,
+            "--primary-job": None,
+            "--desired-emotion": None,
+        },
+        True,
+    ),
+    (
+        "design",
+        "appforge-design",
+        {"--brief": "init:design_brief", "--out-dir": f"out:{_O}design"},
+        False,
+    ),
+    (
+        "evidence_kit",
+        "evidence-kit",
+        {
+            "--candidate": "init:candidate",
+            "--design-input": "init:user_design_input",
+            "--out-dir": f"fresh:{_O}evidence",
+        },
+        False,
+    ),
+    (
+        "native_surface",
+        "appforge-native-surface",
+        {
+            "--candidate": "kit:candidate",
+            "--contract": None,
+            "--evidence": None,
+            "--out": f"fresh:{_O}native-surface.json",
+        },
+        True,
+    ),
+    (
+        "surface_matrix",
+        "appforge-surface-matrix",
+        {
+            "--candidate": "kit:candidate",
+            "--native-surface": "receipt:native_surface",
+        },
+        False,
+    ),
+    (
+        "app_review",
+        "app-review-gate",
+        {
+            "--contract": "kit:app_review_contract",
+            "--evidence": "kit:app_review_evidence",
+        },
+        True,
+    ),
+    (
+        "store_media",
+        "store-media-gate",
+        {
+            "--contract": "kit:store_media_contract",
+            "--evidence": "kit:store_media_evidence",
+        },
+        True,
+    ),
+    (
+        "storefront_story",
+        "appforge-storefront-story",
+        {
+            "--candidate": "kit:candidate",
+            "--store-media": "receipt:store_media",
+            "--contract": None,
+            "--evidence": None,
+        },
+        True,
+    ),
+    (
+        "fastlane_capture",
+        "appforge-fastlane-capture",
+        {
+            "--candidate": "kit:candidate",
+            "--surface-matrix": "receipt:surface_matrix",
+            "--storefront-story": "receipt:storefront_story",
+            "--contract": None,
+            "--out": f"fresh:{_O}fastlane-capture.json",
+        },
+        True,
+    ),
+    (
+        "submission_integrity",
+        "appforge-submission-integrity",
+        {"--candidate": "kit:candidate", "--contract": None},
+        True,
+    ),
+    (
+        "quality_audit",
+        "quality-audit",
+        {"--contract": "kit:quality_contract", "--evidence": "kit:quality_evidence"},
+        True,
+    ),
+    (
+        "oracle_authority",
+        "appforge-oracle",
+        {
+            "--authority": "kit:oracle_authority",
+            "--out": f"fresh:{_O}oracle-authority.json",
+        },
+        True,
+    ),
+    (
+        "eas_preflight",
+        "appforge-eas",
+        {
+            "--candidate": "kit:candidate",
+            "--eas-json": None,
+            "--build-profile": None,
+            "--submit-profile": None,
+            "--out": f"fresh:{_O}eas-preflight.json",
+        },
+        False,
+    ),
+    (
+        "submission_assurance",
+        "submission-assurance",
+        {
+            "--contract": "kit:assurance_contract",
+            "--app-review": "receipt:app_review",
+            "--store-media": "receipt:store_media",
+            "--saas-proof": None,
+            "--quality-audit": "receipt:quality_audit",
+            "--out": f"fresh:{_O}submission-assurance.json",
+        },
+        True,
+    ),
+    (
+        "release_rehearsal",
+        "appforge-rehearse",
+        {
+            "--candidate": "kit:candidate",
+            "--submission-assurance": "receipt:submission_assurance",
+            "--out": f"fresh:{_O}release-rehearsal.json",
+            "--profile": None,
+        },
+        False,
+    ),
+)
+_RECEIPT_ONLY = {
+    "evidence_kit": "appforge-evidence-kit-receipt.json",
+    "store_media": "store-media*.json",
+}
+
+
+def _sealed_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
+    try:
+        value = read_receipt(workspace, path)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    seal = value.pop("receipt_sha256", None)
+    return (
+        value
+        if seal in (canonical_sha(value), compat_sha(value)) and seal is not None
+        else None
+    )
+
+
+def _receipt_only_status(
+    workspace: Path,
+    pattern: str,
+    inventory: tuple[Path, ...] | None = None,
+    *,
+    candidate: dict | None = None,
+) -> dict[str, Any]:
+    current = [
+        (path, value)
+        for path in sorted(receipt_paths(workspace, pattern, inventory))[:100]
+        if (value := _sealed_receipt(workspace, path)) is not None
+    ]
+    if not current:
+        return {"current_count": 0}
+    matching = [item for item in current if item[1].get("candidate") == candidate]
+    path, value = (matching or current)[-1] if candidate is not None else current[-1]
+    latest = {
+        "path": path.relative_to(workspace).as_posix(),
+        "ok": value.get("ok"),
+        "marker": value.get("marker"),
+        "artifacts": value.get("artifacts"),
+        "candidate": value.get("candidate"),
+        "findings": value.get("findings"),
+    }
+    return {"current_count": len(current), "latest": latest}
+
+
+def _stage_state(status: dict[str, Any]) -> str:
+    latest = status.get("latest") or {}
+    if not status.get("current_count") or not latest:
+        return "missing"
+    if latest.get("ok") is False or "BLOCKED" in str(latest.get("marker", "")):
+        return "blocked"
+    return "done"
+
+
+def _fresh_output(workspace: Path, value: str) -> str | None:
+    path = Path(value)
+    if not lexists(workspace / path):
+        return value
+    for attempt in range(1, 101):
+        retry = path.with_name(f"{path.stem}_{attempt:03d}{path.suffix}")
+        if not lexists(workspace / retry):
+            return retry.as_posix()
+    return None
+
+
+def _flag_value(
+    workspace: Path, source: str | None, artifacts: dict[str, dict[str, Any]]
+) -> str | None:
+    if source is None:
+        return None
+    kind, _, value = source.partition(":")
+    if kind == "out":
+        return value
+    if kind == "fresh":
+        return _fresh_output(workspace, value)
+    path = (artifacts.get(kind) or {}).get(value)
+    return path if isinstance(path, str) else None
+
+
+def _next_argv(
+    workspace: Path,
+    command: str,
+    flags: dict[str, str | None],
+    artifacts: dict[str, dict[str, Any]],
+):
+    argv, missing = ["factory", "revenue", command, "--root", "."], []
+    for flag, source in flags.items():
+        value = _flag_value(workspace, source, artifacts)
+        if value is None:
+            missing.append(flag)
+        else:
+            argv += [flag, value]
+    return argv + ["--json"], missing
+
+
+def _candidate_drift(statuses: dict[str, dict[str, Any]], current: object) -> list[str]:
+    """Stages whose latest receipt binds a different release candidate than the newest one."""
+    stale = []
+    for name, status in statuses.items():
+        bound = (status.get("latest") or {}).get("candidate")
+        if isinstance(bound, dict) and isinstance(current, dict) and bound != current:
+            stale.append(name.replace("_", "-"))
+    return stale
+
+
+def _next_statuses(
+    workspace: Path, projection: dict[str, Any], inventory: tuple[Path, ...]
+) -> dict[str, dict]:
+    candidate = ((projection.get("init") or {}).get("latest") or {}).get("candidate")
+
+    def status(name: str) -> dict[str, Any]:
+        if name == "design":
+            return projection
+        if name == "evidence_kit" and isinstance(candidate, dict):
+            return _receipt_only_status(
+                workspace, _RECEIPT_ONLY[name], inventory, candidate=candidate
+            )
+        if name in _RECEIPT_ONLY:
+            return _receipt_only_status(workspace, _RECEIPT_ONLY[name], inventory)
+        return projection.get(name, {})
+
+    return {name: status(name) for name, *_ in _NEXT_CHAIN}
+
+
+def _next_artifacts(
+    workspace: Path, statuses: dict[str, dict]
+) -> dict[str, dict[str, Any]]:
+    path = (statuses["init"].get("latest") or {}).get("path")
+    receipt = _sealed_receipt(workspace, workspace / path) if path else None
+    return {
+        "init": (receipt or {}).get("artifacts") or {},
+        "kit": (statuses["evidence_kit"].get("latest") or {}).get("artifacts") or {},
+        "receipt": {
+            name: (status.get("latest") or {}).get("path")
+            for name, status in statuses.items()
+            if _stage_state(status) == "done"
+        },
+    }
+
+
+def _next_step(
+    workspace: Path,
+    name: str,
+    command: str,
+    flags: dict,
+    human: bool,
+    status: dict,
+    artifacts: dict,
+) -> dict:
+    state = _stage_state(status)
+    argv, missing = _next_argv(workspace, command, flags, artifacts)
+    findings = "; ".join(
+        _repair_messages((status.get("latest") or {}).get("findings"))
+    )[:500]
+    why = (
+        f"latest receipt is blocked: {findings}"
+        if state == "blocked"
+        else "no current valid receipt"
+    )
+    return {
+        "stage": name.replace("_", "-"),
+        "state": state,
+        "why": why,
+        "argv": argv,
+        "inputs_missing": missing,
+        "human_required": human or bool(missing),
+    }
+
+
+def appforge_next(
+    root: Path,
+    projection: dict[str, Any] | None = None,
+    inventory: tuple[Path, ...] | None = None,
+) -> dict[str, Any]:
+    """The first AppForge stage without a current valid receipt, and the command that produces it. Runs nothing."""
+    workspace = Path(root).resolve()
+    inventory = (
+        tuple(receipt_paths(workspace, "*.json")) if inventory is None else inventory
+    )
+    projection = projection or appforge_design_projection(
+        workspace, inventory=inventory
+    )
+    statuses = _next_statuses(workspace, projection, inventory)
+    stale = _candidate_drift(
+        statuses, (statuses["init"].get("latest") or {}).get("candidate")
+    )
+    for name in stale:
+        statuses[name.replace("-", "_")] = {}
+    artifacts = _next_artifacts(workspace, statuses)
+    result: dict[str, Any] = {
+        "schema": "factory.appforge.next.v1",
+        "marker": "APPFORGE_NEXT_READ_ONLY",
+        "stale_for_candidate": stale,
+        "authority": "none",
+        "runs_nothing": True,
+    }
+    for name, command, flags, human in _NEXT_CHAIN:
+        if _stage_state(statuses[name]) != "done":
+            return result | _next_step(
+                workspace, name, command, flags, human, statuses[name], artifacts
+            )
+    return result | {
+        "stage": "complete",
+        "state": "done",
+        "why": "every stage has a current valid receipt",
+        "argv": None,
+        "inputs_missing": [],
+        "human_required": False,
+    }

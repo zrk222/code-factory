@@ -164,7 +164,10 @@ def add_parser(sub: Any) -> None:
     revenue_appforge_init.add_argument("--bundle-identifier", required=True)
     revenue_appforge_init.add_argument("--version", required=True)
     revenue_appforge_init.add_argument("--build-number", required=True)
-    revenue_appforge_init.add_argument("--source-commit", required=True)
+    revenue_appforge_init.add_argument(
+        "--source-commit",
+        help="40-character build commit; defaults to HEAD of a clean git checkout",
+    )
     revenue_appforge_init.add_argument("--audience", required=True)
     revenue_appforge_init.add_argument("--primary-job", required=True)
     revenue_appforge_init.add_argument("--desired-emotion", required=True)
@@ -367,6 +370,94 @@ def add_parser(sub: Any) -> None:
         "--out", default=".factory/appforge/mobile-evidence.json"
     )
     revenue_mobile_evidence.add_argument("--json", action="store_true")
+    revenue_appforge_status.add_argument(
+        "--brief",
+        action="store_true",
+        help="only {stage: marker, ok, path} plus the next command",
+    )
+    revenue_next = revenue_sub.add_parser(
+        "appforge-next",
+        help="name the first AppForge stage without a current receipt and the command that produces it",
+    )
+    revenue_next.add_argument("--root", default=".")
+    revenue_next.add_argument("--json", action="store_true")
+    _default_stage_inputs(revenue_sub)
+    _add_appforge_group(sub, revenue_sub)
+
+
+# A-CON-2: an input that another stage produces defaults to that stage's default --out (still overridable).
+_STAGE_INPUT_DEFAULTS = {
+    ("submission-assurance", "--app-review"): ".factory/appforge/app-review.json",
+    ("submission-assurance", "--store-media"): ".factory/appforge/store-media.json",
+    ("submission-assurance", "--quality-audit"): ".factory/appforge/quality-audit.json",
+    (
+        "appforge-rehearse",
+        "--submission-assurance",
+    ): ".factory/appforge/submission-assurance.json",
+    (
+        "appforge-surface-matrix",
+        "--native-surface",
+    ): ".factory/appforge/native-surface.json",
+    (
+        "appforge-storefront-story",
+        "--store-media",
+    ): ".factory/appforge/store-media.json",
+    (
+        "appforge-fastlane-capture",
+        "--surface-matrix",
+    ): ".factory/appforge/surface-matrix.json",
+    (
+        "appforge-fastlane-capture",
+        "--storefront-story",
+    ): ".factory/appforge/storefront-story.json",
+}
+# `factory appforge <short>` reuses the `factory revenue <long>` parser and handler.
+APPFORGE_SHORT_NAMES = {
+    "init": "appforge-init",
+    "design": "appforge-design",
+    "kit": "evidence-kit",
+    "status": "appforge-status",
+    "next": "appforge-next",
+    "native-surface": "appforge-native-surface",
+    "surface-matrix": "appforge-surface-matrix",
+    "app-review": "app-review-gate",
+    "store-media": "store-media-gate",
+    "storefront-story": "appforge-storefront-story",
+    "fastlane-capture": "appforge-fastlane-capture",
+    "submission-integrity": "appforge-submission-integrity",
+    "quality-audit": "quality-audit",
+    "oracle": "appforge-oracle",
+    "device-reality-intent": "device-reality-intent",
+    "device-reality": "device-reality-gate",
+    "eas": "appforge-eas",
+    "submission-assurance": "submission-assurance",
+    "rehearse": "appforge-rehearse",
+    "mobile-evidence": "appforge-mobile-evidence",
+}
+
+
+def _default_stage_inputs(revenue_sub: Any) -> None:
+    for (command, flag), default in _STAGE_INPUT_DEFAULTS.items():
+        for action in revenue_sub.choices[command]._actions:
+            if flag in action.option_strings:
+                action.required = False
+                action.default = default
+                action.help = f"default: {default}"
+
+
+def _add_appforge_group(sub: Any, revenue_sub: Any) -> None:
+    appforge = sub.add_parser(
+        "appforge",
+        help="AppForge iOS delivery stages (same commands as factory revenue appforge-*)",
+    )
+    group = appforge.add_subparsers(required=True, dest="appforge_cmd")
+    helps = {action.dest: action.help for action in revenue_sub._choices_actions}
+    for short, long in APPFORGE_SHORT_NAMES.items():
+        source = revenue_sub.choices[long]
+        child = group.add_parser(
+            short, parents=[source], add_help=False, help=helps.get(long) or long
+        )
+        child.set_defaults(revenue_cmd=long)
 
 
 def _command_validate(args: Any, root: Path) -> dict:
@@ -709,10 +800,24 @@ def _command_appforge_init(args: Any, root: Path) -> dict:
 
 
 def _command_appforge_status(args: Any, root: Path) -> dict:
-    from .appforge_design import appforge_design_projection
+    from .appforge_design import appforge_design_projection, appforge_status_brief
 
-    payload = appforge_design_projection(root, stage=args.stage)
-    return payload
+    if args.stage is not None:
+        return appforge_design_projection(root, stage=args.stage)
+    from .revenue_evidence import receipt_paths
+
+    inventory = tuple(receipt_paths(root, "*.json"))  # one walk serves status and next
+    payload = appforge_design_projection(root, inventory=inventory)
+    brief = appforge_status_brief(root, payload, inventory)
+    return (
+        brief if getattr(args, "brief", False) else {**payload, "next": brief["next"]}
+    )
+
+
+def _command_appforge_next(args: Any, root: Path) -> dict:
+    from .appforge_design import appforge_next
+
+    return appforge_next(root)
 
 
 def _command_appforge_design(args: Any, root: Path) -> dict:
@@ -754,6 +859,7 @@ _COMMANDS = {
     "evidence-kit": _command_evidence_kit,
     "appforge-init": _command_appforge_init,
     "appforge-status": _command_appforge_status,
+    "appforge-next": _command_appforge_next,
     "appforge-design": _command_appforge_design,
 }
 
@@ -762,7 +868,7 @@ def _render_text_command(command: str, payload: dict) -> None:
     print(payload.get("marker", "REVENUEFORGE_OK"))
     if payload.get("receipt_sha256"):
         print(f"receipt     : {payload['receipt_sha256']}")
-    if command == "appforge-status":
+    if command in {"appforge-status", "appforge-next"}:
         from .appforge_design import appforge_status_lines
 
         for line in appforge_status_lines(payload):
