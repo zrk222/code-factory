@@ -58,6 +58,60 @@ def test_keyless_review_decodes_lossless_bounded_input():
             decode(b64encode(compress(b"a" * 4_194_305)))
 
 
+def test_keyless_artifact_download_follows_producing_job_on_rerun():
+    import yaml
+
+    workflows = Path(__file__).resolve().parents[1] / ".github/workflows"
+
+    def load(role):
+        path = workflows / f"deep-audit-keyless-{role}.yml"
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    def artifact_step(job, action):
+        return next(
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith(f"actions/{action}-artifact@")
+        )
+
+    review = load("reviewer")
+    jobs = review["jobs"]
+    coordinator = load("coordinator")["jobs"]
+    for job, prefix in (
+        (jobs["assemble"], "keyless-review-model-output"),
+        (jobs["sign"], "keyless-specialty-review"),
+        (coordinator["authorize"], "keyless-audit-authorization"),
+        (coordinator["attest-invocation"], "keyless-review-invocation"),
+    ):
+        upload = artifact_step(job, "upload")
+        assert upload["with"]["name"] == prefix + "-${{ github.run_attempt }}"
+        assert upload["with"].get("overwrite", "false") == "false"
+
+    for producer, consumer, output in (
+        (jobs["assemble"], jobs["sign"], "${{ needs.assemble.outputs.artifact_id }}"),
+        (
+            jobs["sign"],
+            coordinator["attest-invocation"],
+            "${{ needs.reviewer.outputs.signed_review_artifact_id }}",
+        ),
+    ):
+        upload = artifact_step(producer, "upload")
+        assert producer["outputs"]["artifact_id"] == (
+            "${{ steps." + upload["id"] + ".outputs.artifact-id }}"
+        )
+        download = artifact_step(consumer, "download")
+        guard = consumer["steps"][consumer["steps"].index(download) - 1]
+        assert guard["env"]["ARTIFACT_ID"] == output
+        assert '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]' in guard["run"]
+        assert download["with"]["artifact-ids"] == output
+        assert "name" not in download["with"] and "pattern" not in download["with"]
+
+    assert (
+        review["on"]["workflow_call"]["outputs"]["signed_review_artifact_id"]["value"]
+        == "${{ jobs.sign.outputs.artifact_id }}"
+    )
+
+
 def _keyless_review_fixture():
     from types import ModuleType
 
