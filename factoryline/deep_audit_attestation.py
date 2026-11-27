@@ -2934,7 +2934,7 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
             f"--output={result}",
             "--search-path=/opt/codeql/codeql/qlpacks",
             "--threads=2",
-            "--ram=2048",
+            f"--ram={_deep_audit_io._codeql_ram_mib(lane)}",
         ],
         [
             executable,

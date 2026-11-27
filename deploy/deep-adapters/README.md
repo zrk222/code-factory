@@ -23,6 +23,12 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `runtime-worker` | coverage.py 7.16.1 + pytest 9.1.1 | coverage JSON plus JUnit XML | Requires candidate `tests/test_runtime_harness.py`; its actual execution and source coverage must be validated. |
 | `fuzz-worker` | Atheris 3.0.0 + coverage.py 7.16.1 | runtime JSON | Requires candidate `.factory/fuzz_harness.py` exporting `TestOneInput(bytes)`; the image runner owns Atheris setup. Run counts and distinct-input counts are snapshot lower bounds; Python arcs are coverage.py observations, not native fuzzer edge coverage. Native source accounting and independent challenge evidence remain required. |
 
+CodeQL evaluator memory follows the signed lane: `{ram_mib}` in a CodeQL profile
+binds to `memory_mib` minus `min(1024, memory_mib / 4)` of JVM and process
+headroom, so raising a lane's container limit raises `--ram` with it. A 2048 MiB
+lane gets `--ram=1536`; full JavaScript analysis of mid-size repositories needs
+a lane of about 5 GiB or more.
+
 All profile argv is fixed in the image and uses only the documented source,
 output, report, and scratch placeholders. Profiles carry exact version probes.
 The Semgrep rules file is content-hashed. The other profile fingerprints refer

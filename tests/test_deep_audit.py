@@ -6364,7 +6364,7 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     inventory = {
         "files": [{"path": "src/a.js", "language": "javascript", "sha256": source_sha}]
     }
-    lane = {"languages": ["javascript"], "engine": "codeql"}
+    lane = {"languages": ["javascript"], "engine": "codeql", "memory_mib": 2048}
     decoded = json.dumps(
         {
             "#select": {

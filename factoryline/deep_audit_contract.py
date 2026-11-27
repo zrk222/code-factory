@@ -2025,13 +2025,29 @@ def _native_version(
     return facts
 
 
-def _native_argv(commands: list, bindings: dict) -> list:
+def _codeql_ram_mib(lane: dict) -> int:
+    """Evaluator RAM that fits the lane's container limit with JVM/process headroom."""
+    memory = _deep_audit_io.require_int(
+        lane.get("memory_mib"), "memory_mib", minimum=64, maximum=32768
+    )
+    return memory - min(1024, memory // 4)
+
+
+def _native_argv(commands: list, bindings: dict, lane: dict | None = None) -> list:
+    if lane is not None and any(
+        "{ram_mib}" in value for command in commands for value in command["argv"]
+    ):
+        bindings = {**bindings, "ram_mib": _codeql_ram_mib(lane)}
     result = []
     for command in commands:
         argv = []
         for value in command["argv"]:
             for name, bound in bindings.items():
                 value = value.replace("{" + name + "}", str(bound))
+            if "{ram_mib}" in value:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_ADAPTER_PROFILE", "lane memory binding required"
+                )
             argv.append(value)
         _deep_audit_io._adapter_command_shape(
             {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}
