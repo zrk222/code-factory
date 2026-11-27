@@ -67,6 +67,8 @@ def test_keyless_review_decodes_lossless_bounded_input():
         "no_indicator",
         "conflicting_assessment",
         "status_only_rationale",
+        "rationale_recovered",
+        "rationale_retry_tamper",
         "omitted",
         "out_of_scope",
         "truncated",
@@ -272,6 +274,32 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         body = json.loads(request.data)
         payload = json.loads(body["messages"][1]["content"])
         assigned = sorted(payload["sources"])
+        if payload.get("rationale_paths"):
+            selected = payload["rationale_paths"]
+            assert payload["family"] == "dependencies" and selected == assigned[:2]
+            assert sorted(body["response_format"]["schema"]["required"]) == selected
+            assert body["max_tokens"] < 2600
+            recovered = {
+                path: {
+                    "state": "REVIEWED",
+                    "reason": "REVIEWED"
+                    if mode == "status_only_rationale"
+                    else "Checked the bound dependency control outcome",
+                }
+                for path in selected
+            }
+            return BytesIO(
+                json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {"content": json.dumps(recovered)},
+                                "finish_reason": "stop",
+                            }
+                        ]
+                    }
+                ).encode()
+            )
         schema = body["response_format"]["schema"]["properties"]["path_assessments"]
         assert (
             schema["required"] == assigned and schema["additionalProperties"] is False
@@ -384,12 +412,30 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                         "remediation": "Inspect the recorded indicator",
                     }
                 ]
-        if mode == "status_only_rationale" and payload["family"] == "dependencies":
+        if (
+            mode
+            in {
+                "status_only_rationale",
+                "rationale_recovered",
+                "rationale_retry_tamper",
+            }
+            and payload["family"] == "dependencies"
+        ):
             result["path_assessments"][assigned[0]]["reason"] = "REVIEWED"
             result["path_assessments"][assigned[1]] = {
                 "state": "REVIEWED_NO_INDICATOR",
                 "reason": "  reviewed_no_indicator  ",
             }
+            if mode == "rationale_recovered":
+                result["findings"] = [
+                    {
+                        "id": "retained-first-pass-finding",
+                        "path": assigned[2],
+                        "severity": "low",
+                        "evidence": "Synthetic finding recorded in the first response",
+                        "remediation": "Review this synthetic observation",
+                    }
+                ]
         if mode == "obligation_gap" and payload["family"] == "dependencies":
             result["coverage_gaps"] = [
                 "The ledger lacks evidence for a declared dependency obligation"
@@ -434,6 +480,15 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         output.mkdir()
         (tmp_path / "review-family.json").replace(output / "review-family.json")
     monkeypatch.delenv("REVIEW_FAMILY")
+    if mode == "rationale_retry_tamper":
+        path = outputs / "keyless-review-family-1-dependencies/review-family.json"
+        part = json.loads(path.read_bytes())
+        part["rationale_recovery"]["raw_response"] += " "
+        path.write_text(json.dumps(part), encoding="utf-8")
+        with pytest.raises(ValueError, match="rationale recovery response fingerprint"):
+            review.main()
+        assert not (tmp_path / "review.json").exists()
+        return
     if mode in {"missing", "wrong_attempt", "wrong_runtime", "modified_response"}:
         if mode == "wrong_attempt":
             monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
@@ -455,10 +510,21 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     assert expected_coverage == paths
     assert len({row["family"] for row in coverage}) == 6
     assert {row["runtime_sha256"] for row in coverage} == {"4" * 64}
-    assert result["prompt_sha256"] == digest([row["prompt_sha256"] for row in coverage])
-    assert result["response_sha256"] == digest(
-        [sha256_bytes(row["raw_response"].encode()) for row in coverage]
-    )
+    for row in coverage:
+        assert row["response_sha256"] == sha256_bytes(row["raw_response"].encode())
+        if recovery := row.get("rationale_recovery"):
+            assert recovery["response_sha256"] == sha256_bytes(
+                recovery["raw_response"].encode()
+            )
+    for field in ("prompt_sha256", "response_sha256"):
+        assert result[field] == digest(
+            [
+                digest([row[field], row["rationale_recovery"][field]])
+                if row.get("rationale_recovery")
+                else row[field]
+                for row in coverage
+            ]
+        )
     assert result["authority"] == "none"
     summary = summary_path.read_text(encoding="utf-8")
     assert f"Six-family review · {result['decision']}" in summary
@@ -472,6 +538,12 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         assert result["coverage_gaps"][0].endswith("Manifest has insufficient evidence")
         assert [finding["id"] for finding in result["findings"]] == ["fixture-finding"]
         assert "| dependencies | 3 | 2 | 1 | 0 | 1 |" in summary
+    elif mode == "rationale_recovered":
+        assert result["decision"] == "FINDINGS" and result["coverage_gaps"] == []
+        assert [f["id"] for f in result["findings"]] == ["retained-first-pass-finding"]
+        row = next(x for x in coverage if x["family"] == "dependencies")
+        assert row["assigned_paths"] == row["result"]["reviewed_paths"]
+        assert len(row["rationale_recovery"]["paths"]) == 2
     elif mode == "status_only_rationale":
         assert result["decision"] == "INCOMPLETE"
         assert len(result["coverage_gaps"]) == 2
