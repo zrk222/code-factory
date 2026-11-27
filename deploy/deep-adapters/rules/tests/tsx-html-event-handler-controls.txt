@@ -1,7 +1,7 @@
 // Inline event-handler attributes are script: a value anywhere in them is reported.
 export function itemButton(item: { name: string }, index: number) {
   // ruleid: javascript.html-template-unescaped-interpolation
-  return `<button class="pick" onclick="select('${item.name}', ${index})">Pick</button>`;
+  return `<button class="pick" onclick="select(${index}, '${item.name}')">Pick</button>`;
 }
 
 export function contextButton(context: string) {

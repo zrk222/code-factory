@@ -9,9 +9,9 @@ class SearchStore {
         connection.prepareStatement("insert into " + tempTable + " (entity_id) values (?)").execute();
     }
 
-    String byOwner(String owner) {
+    String byOwner(String query) {
         // ruleid: java.parameter-sql-text
-        return String.format("select id from documents where owner = '%s'", owner);
+        return String.format("select id from documents where owner = '%s'", query);
     }
 
     java.sql.PreparedStatement bound(java.sql.Connection connection) throws java.sql.SQLException {

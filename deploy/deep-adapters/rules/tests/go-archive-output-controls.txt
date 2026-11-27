@@ -145,9 +145,9 @@ func greetEscaped(w http.ResponseWriter, r *http.Request) {
 
 func greetJSON(w http.ResponseWriter, r *http.Request) {
 	reply := model.MapToJson(map[string]string{"name": r.FormValue("name")})
-	// ok: go.request-html-injection
+	// ruleid: go.request-html-injection
 	w.Write([]byte(reply))
-	// ok: go.request-html-injection
+	// ruleid: go.request-html-injection
 	w.Write([]byte(model.MapToJson(map[string]string{"name": r.FormValue("name")})))
 	// ruleid: go.request-html-injection
 	w.Write([]byte(r.FormValue("name") + model.MapToJson(nil)))

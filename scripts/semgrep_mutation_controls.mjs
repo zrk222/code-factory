@@ -169,7 +169,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.parameter-shell-command': 4,
   'opt.factory.rules.go.parameter-sql-text': 9,
   'opt.factory.rules.go.request-command-injection': 3,
-  'opt.factory.rules.go.request-html-injection': 3,
+  'opt.factory.rules.go.request-html-injection': 6,
   'opt.factory.rules.go.request-path-traversal': 1,
   'opt.factory.rules.go.request-sql-injection': 6,
   'opt.factory.rules.go.tls-client-cert-requested-not-verified': 1,
@@ -189,7 +189,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.parameter-sql-text': 11,
   'opt.factory.rules.javascript.request-command-injection': 5,
   'opt.factory.rules.javascript.request-html-injection': 12,
-  'opt.factory.rules.javascript.request-path-traversal': 23,
+  'opt.factory.rules.javascript.request-path-traversal': 26,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
@@ -276,7 +276,7 @@ export function javascriptControlManifest() {
       path: 'typescript-sql-identifier.ts', line })),
     // Joined request paths before a fail-closed containment check, prefix-only and
     // non-exiting checks, and reads that precede the check.
-    ...[21, 50, 58, 63, 67, 72].map(line => ({ rule: 'opt.factory.rules.javascript.request-path-traversal',
+    ...[21, 39, 44, 48, 50, 58, 63, 67, 72].map(line => ({ rule: 'opt.factory.rules.javascript.request-path-traversal',
       path: 'typescript-path-guard.ts', line })),
     // Values inside inline event-handler attributes.
     ...[4, 9].map(line => ({ rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
@@ -299,7 +299,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 371;
+const REVIEWED_FINDINGS = 377;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

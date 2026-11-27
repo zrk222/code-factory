@@ -717,14 +717,6 @@ rules:
               metavariable: $C
               patterns:
                 - pattern-either:
-                    # A named containment predicate on the path (isInside(p), isOptimizedDepFile(p)).
-                    - patterns:
-                        - pattern-either:
-                            - pattern: '!$PRED($F)'
-                            - pattern: '!$PO.$PRED($F)'
-                        - metavariable-regex:
-                            metavariable: $PRED
-                            regex: '(?i)^(?:\w*(?:safe|contain|within|inside|subpath)\w*|is(?!(?:absolute|binary|text|hidden|symlink|symboliclink|executable|readable|writable|empty|exist\w*)(?:file|path|dir|directory)$)\w+(?:file|path|dir|directory))$'
                     - patterns:
                         - pattern-either:
                             - pattern: '!$F.startsWith($NB)'
@@ -865,14 +857,6 @@ rules:
                     metavariable: $C
                     patterns:
                       - pattern-either:
-                          # A named containment predicate on the path (isInside(p), isOptimizedDepFile(p)).
-                          - patterns:
-                              - pattern-either:
-                                  - pattern: '!$PRED($F)'
-                                  - pattern: '!$PO.$PRED($F)'
-                              - metavariable-regex:
-                                  metavariable: $PRED
-                                  regex: '(?i)^(?:\w*(?:safe|contain|within|inside|subpath)\w*|is(?!(?:absolute|binary|text|hidden|symlink|symboliclink|executable|readable|writable|empty|exist\w*)(?:file|path|dir|directory)$)\w+(?:file|path|dir|directory))$'
                           # A separator-aware prefix check (startsWith(root + path.sep)).
                           - patterns:
                               - pattern-either:
@@ -3854,12 +3838,6 @@ rules:
       - pattern: url.PathEscape(...)
       - pattern: strconv.Atoi(...)
       - pattern: strconv.Quote(...)
-      # encoding/json escapes <, > and & in strings, so serialized JSON is markup-safe.
-      - pattern: json.Marshal(...)
-      - pattern: json.MarshalIndent(...)
-      - patterns:
-          - pattern: $JO.$JM(...)
-          - metavariable-regex: {metavariable: $JM, regex: '^(?:ToJson|ToJSON|MapToJson|MapToJSON|MarshalJSON)$'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -4932,7 +4910,7 @@ rules:
               - pattern-inside: $RET $M(..., $T $P, ...) { ... }
               - pattern-inside: $M(..., $T $P, ...) { ... }
           # A parameter that carries the statement itself is query text, not a value.
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|hql|jpql)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:sql|stmt|statement|clause|where|fragment|expr|expression|condition|hql|jpql)$)\w+$'}
           - focus-metavariable: $P
     pattern-sanitizers:
       - pattern: Integer.parseInt(...)
@@ -5720,11 +5698,12 @@ rules:
           # value is script, where HTML escaping does not apply either.
           - patterns:
               - pattern: '`...${$X}...`'
-              - pattern-regex: <[A-Za-z][\w-]*[^<>`]*?\son[a-z]+\s*=\s*"[^"<>`\n]*?\$\{\s*(?P<VALUE>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\}[^"\n]*"
-              # UPPER_CASE constants and numeric names (counts, sizes, indexes).
-              - metavariable-regex:
-                  metavariable: $VALUE
-                  regex: '^(?!(?:[\w$]+\.)*[A-Z_][A-Z0-9_]*$)(?!(?:[\w$]+\.)*(?:width|height|x|y|size|opacity|index|idx|count|total|length|level|zIndex|i|j|k|n|\w*(?:Width|Height|Count|Total|Index|Length|Size))$)'
+              # Skip constants and numeric names while searching for later interpolations.
+              - pattern-regex: >-
+                  (?x)<[A-Za-z][\w-]*[^<>`]*?\son[a-z]+\s*=\s*"[^"<>`\n]*?\$\{\s*
+                  (?!(?:[\w$]+\.)*[A-Z_][A-Z0-9_]*\s*\})
+                  (?!(?:[\w$]+\.)*(?:width|height|x|y|size|opacity|index|idx|count|total|length|level|zIndex|i|j|k|n|\w*(?:Width|Height|Count|Total|Index|Length|Size))\s*\})
+                  [A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}[^"\n]*"
           # Attribute values spliced in by concatenation ('="' + value + '"' or "=\"" + v + "\"";
           # SQL's ='" + v + "'" quoting is a different shape). The leading
           # character class keeps out jQuery attribute selectors ([name="' + v + '"]),
