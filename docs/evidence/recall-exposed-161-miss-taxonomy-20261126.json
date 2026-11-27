@@ -1,0 +1,3409 @@
+{
+ "schema": "factory.recall-miss-taxonomy.v1",
+ "date": "2026-11-26",
+ "scope": "Exposed-161 cohort only (manifest 7036f848, cases 5f332b15). The held-out Q2 cohort (manifest 28063dd5...) and every Q2 path, branch and report were not read, scanned or referenced.",
+ "candidate": {
+  "branch": "claude/carry-forward-39",
+  "commit": "1673ec5d (classified at branch head 1b41fd05; rule bytes unchanged)",
+  "rules_sha256": "b2a2800f3b71300f7752ee404bc1c16d6752cf54c6e31219f2174d853dbdf1d6"
+ },
+ "inputs": {
+  "receipt": {
+   "path": "docs/evidence/recall-evaluation-b2a2800f-exposed161-opengrep210.json",
+   "sha256": "e83f0082ccb3e9d9ed3fdd1750ea91521bfc637ff8484e415fa9620ac8070b4a",
+   "written_by": "25c5c78c"
+  },
+  "manifest": {
+   "path": "/home/claude/pins/exposed-161-5f332b15.json",
+   "sha256": "7036f848d0f6ef56d0221177e0a129fed1a2a55db36deebe26e1fb762d08534c",
+   "cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013"
+  },
+  "case_packets": "/home/claude/run-r161/captures/cases-v4 (old/new sources and diff.patch; source bindings equal to the b2a2800f receipt per detector-iteration-20261126.json)",
+  "engine": {
+   "path": "/opt/og21/bin/opengrep_linux_x86",
+   "sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974"
+  },
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6"
+ },
+ "method": {
+  "classification": "One reviewer read each non-hit from the advisory CWE list (manifest), the in-language non-test fix diff and the old-side source around the changed lines. Vulnerability class follows what the fix does where it differs from the CWE (for example, a CWE-89 advisory fixed by an admin check is authz). Every lane and reason is a judgment from reading the code; no proposed rule was written or tested.",
+  "flagged_anywhere_rescan": "The b2a2800f receipt stores only aggregate file_hits (50), so to recover per-case file-level alerts the old side of all 158 scannable exposed packets was rescanned once under flock /tmp/recall-replay.lock. Each scan used the frozen b2a2800f rules, the profile argv (profileArgv) and the harness exports sarifFindings/parseHunks/scoreCase, with no new logic. The rescan reproduces the receipt exactly: 40/40 hunk hits case for case, 0 mismatches, 50 file hits, 0 engine errors. Scratch SARIF stayed in /tmp and was deleted.",
+  "pattern_recoverable_estimate": "true when best_lane is pattern and the proposed pattern alert would sit on an old-hunk line (pattern_alert_in_old_hunk_likely), or for outside_hunk cases where the existing alert is at this vulnerability's sink (recoverable by a scoring change only). This is an upper bound: precision controls and the fixed-side residual limit have not been run."
+ },
+ "definitions": {
+  "miss_reasons": {
+   "no_rule": "No rule for this class or language",
+   "interprocedural": "A rule exists, but the flow crosses functions or files (needs interprocedural analysis)",
+   "sink_unmodeled": "The sink is behind framework/ORM dispatch or has a shape the patterns do not model",
+   "source_unmodeled": "The source is not modeled",
+   "not_pattern": "Not expressible as a pattern (logic, authz, configuration, sanitizer/deny-list completeness)",
+   "outside_hunk": "The alert lands outside the fixed hunk (same vulnerability flagged elsewhere in the same file)",
+   "no_source_change": "No in-language source change, or unknown",
+   "coverage_gap": "Coverage gap or timeout (coverage_incomplete)"
+  },
+  "lanes": {
+   "pattern": "Pattern rule (feasible and principled)",
+   "codeql": "CodeQL interprocedural (python, javascript, ruby, go, java, csharp)",
+   "native_sast": "Native SAST (language-native taint tool; used for PHP, which CodeQL does not cover)",
+   "none": "None (needs a human or a test)"
+  }
+ },
+ "summary": {
+  "candidate_hits": 40,
+  "cases": 161,
+  "non_hits": 121,
+  "non_hit_outcomes": {
+   "miss": 116,
+   "coverage_incomplete": 3,
+   "unknown": 2
+  },
+  "flagged_anywhere_in_file": {
+   "family_relevant": 10,
+   "same_vulnerability": 4,
+   "unrelated_alert_in_file": 6,
+   "any_rule_alert_in_changed_file": 17,
+   "cases": [
+    "GHSA-4h97-wpxp-3757",
+    "GHSA-73wf-9vmv-5pv9",
+    "GHSA-76wq-xw4h-f8wj",
+    "GHSA-97jv-2hp6-3frj",
+    "GHSA-jjgq-jq8g-24w4",
+    "GHSA-mhwp-qhpc-h3jm",
+    "GHSA-qcpp-8x79-hhp3",
+    "GHSA-vj3g-5px3-gr46",
+    "GHSA-wqmh-qccw-pqwf",
+    "GHSA-x67c-8pwr-m8g3"
+   ],
+   "note": "family_relevant counts the receipt file_hit definition: an alert of the advisory family in a changed file on the old side, minus the hunk hits (50 - 40 = 10). Only 4 of the 10 are the same vulnerability flagged at its sink; the other 6 are unrelated alerts in a large file."
+  },
+  "by_reason": {
+   "not_pattern": 52,
+   "interprocedural": 17,
+   "sink_unmodeled": 14,
+   "source_unmodeled": 13,
+   "no_rule": 13,
+   "no_source_change": 5,
+   "outside_hunk": 4,
+   "coverage_gap": 3
+  },
+  "by_lane": {
+   "none": 75,
+   "pattern": 29,
+   "codeql": 13,
+   "native_sast": 4
+  },
+  "by_class": {
+   "injection-sql": 30,
+   "injection-command": 23,
+   "path-traversal": 21,
+   "crypto-tls": 14,
+   "xss": 11,
+   "deserialization": 7,
+   "authz-access-control": 7,
+   "injection-code": 5,
+   "other": 3
+  },
+  "pattern_recoverable_upper_bound": {
+   "cases": 27,
+   "by_rule_change": 23,
+   "by_scoring_change_only": 4,
+   "hits_if_all_recovered": 67
+  },
+  "not_recoverable_by_pattern_lane": {
+   "cases": 92,
+   "share_of_non_hits": 0.76,
+   "needs_human_or_test": 75,
+   "share_needs_human_or_test": 0.62,
+   "codeql": 13,
+   "native_sast": 4
+  }
+ },
+ "top5_recoverable_buckets": [
+  {
+   "rank": 1,
+   "bucket": [
+    "injection-sql",
+    "sink_unmodeled",
+    "pattern"
+   ],
+   "cases": 4,
+   "estimated_hit_gain": 3,
+   "examples": [
+    "GHSA-vf2r-cxg9-p7rf",
+    "GHSA-85gf-wr67-f83w",
+    "GHSA-wc3v-3457-c8cm"
+   ],
+   "rationale": "Add DB-wrapper and builder sinks (ADOdb Execute/GetOne/GetAll, Rails finder taking a whole params hash, go-sqlbuilder Select with a Sprintf quoted %s). The SQL text is on the deleted line. GHSA-jjgq is excluded because its $db->query sink is outside the hunks."
+  },
+  {
+   "rank": 2,
+   "bucket": [
+    "injection-sql",
+    "source_unmodeled",
+    "pattern"
+   ],
+   "cases": 3,
+   "estimated_hit_gain": 3,
+   "examples": [
+    "GHSA-6gm7-j668-w6h9",
+    "GHSA-vj9x-w7ch-f46p",
+    "GHSA-g23g-mw97-65c8"
+   ],
+   "rationale": "Model Symfony $request->get()/query/request bags and framework-bound Go form structs as sources; both pimcore cases concatenate the value into a hand-quoted condition fragment on the deleted line."
+  },
+  {
+   "rank": 3,
+   "bucket": [
+    "path-traversal",
+    "sink_unmodeled",
+    "pattern"
+   ],
+   "cases": 3,
+   "estimated_hit_gain": 3,
+   "examples": [
+    "GHSA-8qvf-mr4w-9x2c",
+    "GHSA-mj4x-vf5c-5xg8",
+    "GHSA-h36j-8vv3-cj52"
+   ],
+   "rationale": "Widen python.parameter-path-join-without-containment operand shapes ($BASE / ($A + $P), $BASE / $P[...]), and stop treating a custom tar members= filter whose check is startswith() without os.sep as a sanitizer."
+  },
+  {
+   "rank": 4,
+   "bucket": [
+    "injection-command",
+    "outside_hunk",
+    "pattern"
+   ],
+   "cases": 2,
+   "estimated_hit_gain": 2,
+   "examples": [
+    "GHSA-73wf-9vmv-5pv9",
+    "GHSA-qcpp-8x79-hhp3"
+   ],
+   "rationale": "Already flagged at the secure_popen sink; the fix edits the sanitizer above it. Needs no rule change, only a scoring decision (trace or sanitizer-span attribution), which Codex owns. The same mechanism covers GHSA-4h97 (sql) and GHSA-vj3g (path): 4 cases in total."
+  },
+  {
+   "rank": 5,
+   "bucket": [
+    "injection-command",
+    "no_rule",
+    "pattern"
+   ],
+   "cases": 2,
+   "estimated_hit_gain": 2,
+   "examples": [
+    "GHSA-2jh5-g5ch-43q5",
+    "GHSA-qrg7-hfx7-95c5"
+   ],
+   "rationale": "C# ProcessStartInfo{FileName=\"cmd.exe\", Arguments=$\"/C ...{x}\"} with a non-literal interpolation, and git subcommands taking a variable positional argument without a \"--\" end-of-options marker. Tied at 2 with five other buckets; see tie_note."
+  }
+ ],
+ "tie_note": "Six class x reason x lane buckets tie at 2 recoverable cases: injection-command/outside_hunk (ranked 4: no rule work), injection-command/no_rule (ranked 5), injection-command/source_unmodeled (GHSA-6qjf %x interpolation, GHSA-mc7w process.argv), injection-sql/no_rule (GHSA-mhwp Ruby ^$ anchors, GHSA-vmw2 C# SQL text), injection-code/no_rule (GHSA-6m8w rego.Query, GHSA-8gqp Nashorn without --no-java) and deserialization/no_rule (GHSA-2pm6 misspelled allowed_classes, GHSA-2fmj case-sensitive phar:// check).",
+ "buckets": [
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "cases": 4,
+   "pattern_recoverable": 3,
+   "case_ids": [
+    "GHSA-85gf-wr67-f83w",
+    "GHSA-jjgq-jq8g-24w4",
+    "GHSA-vf2r-cxg9-p7rf",
+    "GHSA-wc3v-3457-c8cm"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "cases": 3,
+   "pattern_recoverable": 3,
+   "case_ids": [
+    "GHSA-6gm7-j668-w6h9",
+    "GHSA-g23g-mw97-65c8",
+    "GHSA-vj9x-w7ch-f46p"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "cases": 3,
+   "pattern_recoverable": 3,
+   "case_ids": [
+    "GHSA-8qvf-mr4w-9x2c",
+    "GHSA-h36j-8vv3-cj52",
+    "GHSA-mj4x-vf5c-5xg8"
+   ]
+  },
+  {
+   "vuln_class": "deserialization",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "cases": 2,
+   "pattern_recoverable": 2,
+   "case_ids": [
+    "GHSA-2fmj-p74r-3wjm",
+    "GHSA-2pm6-9fhx-vvg3"
+   ]
+  },
+  {
+   "vuln_class": "injection-code",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "cases": 2,
+   "pattern_recoverable": 2,
+   "case_ids": [
+    "GHSA-6m8w-jc87-6cr7",
+    "GHSA-8gqp-hr9g-pg62"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "cases": 2,
+   "pattern_recoverable": 2,
+   "case_ids": [
+    "GHSA-2jh5-g5ch-43q5",
+    "GHSA-qrg7-hfx7-95c5"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "cases": 2,
+   "pattern_recoverable": 2,
+   "case_ids": [
+    "GHSA-73wf-9vmv-5pv9",
+    "GHSA-qcpp-8x79-hhp3"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "cases": 2,
+   "pattern_recoverable": 2,
+   "case_ids": [
+    "GHSA-6qjf-g333-pv38",
+    "GHSA-mc7w-4cjf-c973"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "cases": 2,
+   "pattern_recoverable": 2,
+   "case_ids": [
+    "GHSA-mhwp-qhpc-h3jm",
+    "GHSA-vmw2-qwm8-x84c"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 1,
+   "case_ids": [
+    "GHSA-jppv-gw3r-w3q8"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "interprocedural",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 1,
+   "case_ids": [
+    "GHSA-68wg-qv6r-j4vp"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 1,
+   "case_ids": [
+    "GHSA-4h97-wpxp-3757"
+   ]
+  },
+  {
+   "vuln_class": "other",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 1,
+   "case_ids": [
+    "GHSA-mmcv-fvq8-r9x3"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 1,
+   "case_ids": [
+    "GHSA-vj3g-5px3-gr46"
+   ]
+  },
+  {
+   "vuln_class": "xss",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 1,
+   "case_ids": [
+    "GHSA-6m7c-xfhp-p9fh"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 11,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-6j63-35hj-vmcg",
+    "GHSA-6w89-c65w-jx2c",
+    "GHSA-76wq-xw4h-f8wj",
+    "GHSA-784x-7w88-w564",
+    "GHSA-8grg-q944-cch5",
+    "GHSA-h4h6-vccr-44h2",
+    "GHSA-hq7p-j377-6v63",
+    "GHSA-j7g8-3qqg-8cvm",
+    "GHSA-p6w9-r443-r752",
+    "GHSA-rqw2-ghq9-44m7",
+    "GHSA-v74c-qc46-9gg9"
+   ]
+  },
+  {
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 9,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-38jw-g2qx-4286",
+    "GHSA-3p6w-gv5g-xjw9",
+    "GHSA-72c7-4g63-hpw5",
+    "GHSA-f7w7-6pjc-wwm6",
+    "GHSA-hwcc-4cv8-cf3h",
+    "GHSA-m462-mqw4-2c8m",
+    "GHSA-mxg3-432p-mr72",
+    "GHSA-q9mp-79cp-9g8j",
+    "GHSA-rc6v-5rmx-w5mv"
+   ]
+  },
+  {
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 7,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-2rc4-7jc6-qffh",
+    "GHSA-465w-gg5p-85c9",
+    "GHSA-5mq7-rwhj-4fh9",
+    "GHSA-j7wh-x834-p3r7",
+    "GHSA-jqmf-mx4f-hfr6",
+    "GHSA-q433-mp6c-8v4f",
+    "GHSA-x67c-8pwr-m8g3"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 7,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-3hcm-ggvf-rch5",
+    "GHSA-6xxq-j39w-g3f6",
+    "GHSA-74hp-mggr-hv58",
+    "GHSA-ff98-w8hj-qrxf",
+    "GHSA-hw6x-2qwv-rxr7",
+    "GHSA-mggc-4xg6-vcxf",
+    "GHSA-wrvw-254r-wpmv"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 6,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-2x7r-93ww-cxrq",
+    "GHSA-4m7p-55jm-3vwv",
+    "GHSA-7hxc-f267-h5q7",
+    "GHSA-f6wf-28g6-769x",
+    "GHSA-pj84-qjm3-77mg",
+    "GHSA-rmjr-87wv-gf87"
+   ]
+  },
+  {
+   "vuln_class": "deserialization",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 5,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-4574-qv3w-fcmg",
+    "GHSA-mq84-hjqx-cwf2",
+    "GHSA-mw36-7c6c-q4q2",
+    "GHSA-r8g5-cgf2-4m4m",
+    "GHSA-x843-g5mx-g377"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "cases": 4,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-79qw-g77v-2vfh",
+    "GHSA-7wqf-h36w-47mc",
+    "GHSA-gjqq-6r35-w3r8",
+    "GHSA-m445-w3xr-vp2f"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "cases": 4,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-6vmq-24h2-pj7j",
+    "GHSA-g72f-jw3w-mgh7",
+    "GHSA-mrq8-fv7v-hhjg",
+    "GHSA-wqmh-qccw-pqwf"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "cases": 4,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-2223-f22x-24cq",
+    "GHSA-9mh6-g99m-ppcw",
+    "GHSA-v253-rj99-jwpq",
+    "GHSA-xr9m-gphc-9p63"
+   ]
+  },
+  {
+   "vuln_class": "xss",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 4,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-jj27-h5hq-8x99",
+    "GHSA-jj45-24rw-v6jw",
+    "GHSA-mf2p-h6hf-fcwm",
+    "GHSA-p77r-c6m3-gj2r"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "cases": 3,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-3p24-9x7v-7789",
+    "GHSA-6g56-v9qg-jp92",
+    "GHSA-v222-6mr4-qj29"
+   ]
+  },
+  {
+   "vuln_class": "crypto-tls",
+   "miss_reason": "interprocedural",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-q296-9j5x-fxf4",
+    "GHSA-vq7p-f4fv-rr5x"
+   ]
+  },
+  {
+   "vuln_class": "crypto-tls",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-hr8g-6v94-x4m9",
+    "GHSA-m3hq-3qj8-c5fm"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-fwj4-6wgp-mpxm",
+    "GHSA-qqh2-wvmv-h72m"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-j6cv-98jx-mrwr",
+    "GHSA-x3wm-hffr-chwm"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "codeql",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-25gv-mvm7-5h3h",
+    "GHSA-7cj7-rcw6-p68v"
+   ]
+  },
+  {
+   "vuln_class": "other",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-mrww-27vc-gghv",
+    "GHSA-x9vc-6hfv-hg8c"
+   ]
+  },
+  {
+   "vuln_class": "xss",
+   "miss_reason": "coverage_gap",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-63q7-h895-m982",
+    "GHSA-gvg7-pp82-cff3"
+   ]
+  },
+  {
+   "vuln_class": "xss",
+   "miss_reason": "no_rule",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-72qq-p3r5-f7wq",
+    "GHSA-vp4f-wxgw-7x8x"
+   ]
+  },
+  {
+   "vuln_class": "crypto-tls",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-q27f-v3r6-9v77"
+   ]
+  },
+  {
+   "vuln_class": "injection-code",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-j3f9-p6hm-5w6q"
+   ]
+  },
+  {
+   "vuln_class": "injection-code",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-pxrr-hq57-q35p"
+   ]
+  },
+  {
+   "vuln_class": "injection-code",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "none",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-x485-rhg3-cqr4"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "coverage_gap",
+   "best_lane": "codeql",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-hc5w-gxxr-w8x8"
+   ]
+  },
+  {
+   "vuln_class": "injection-command",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-jccv-3h4x-35mv"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-97jv-2hp6-3frj"
+   ]
+  },
+  {
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_rule",
+   "best_lane": "none",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-m734-r4g6-34f9"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-4x28-j85r-668q"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-q7m5-3jmv-vm48"
+   ]
+  },
+  {
+   "vuln_class": "path-traversal",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "none",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-j456-xh4h-cpf2"
+   ]
+  },
+  {
+   "vuln_class": "xss",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-h6r4-xvw6-jc5h"
+   ]
+  },
+  {
+   "vuln_class": "xss",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "none",
+   "cases": 1,
+   "pattern_recoverable": 0,
+   "case_ids": [
+    "GHSA-wm65-ph3w-587c"
+   ]
+  }
+ ],
+ "rollup_reason_x_lane": [
+  {
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "cases": 10,
+   "pattern_recoverable": 9
+  },
+  {
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "cases": 9,
+   "pattern_recoverable": 8
+  },
+  {
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "cases": 5,
+   "pattern_recoverable": 5
+  },
+  {
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "cases": 4,
+   "pattern_recoverable": 4
+  },
+  {
+   "miss_reason": "interprocedural",
+   "best_lane": "pattern",
+   "cases": 1,
+   "pattern_recoverable": 1
+  },
+  {
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "cases": 52,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "cases": 10,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "cases": 8,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "cases": 5,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "cases": 4,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "no_rule",
+   "best_lane": "none",
+   "cases": 3,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "none",
+   "cases": 3,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "codeql",
+   "cases": 2,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "coverage_gap",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "interprocedural",
+   "best_lane": "none",
+   "cases": 2,
+   "pattern_recoverable": 0
+  },
+  {
+   "miss_reason": "coverage_gap",
+   "best_lane": "codeql",
+   "cases": 1,
+   "pattern_recoverable": 0
+  }
+ ],
+ "proposals_for_codex": [
+  "Scoring (Codex-owned, not implemented): the 4 same-vulnerability outside-hunk cases (GHSA-4h97, GHSA-73wf, GHSA-qcpp, GHSA-vj3g) have the alert at the sink while the fix edits a sanitizer or validator upstream. A pre-registered secondary metric that credits a same-file family alert on the fixed flow (or trace_hit when the SARIF carries a dataflow step in the hunk) would count them without any rule change. It must be pre-registered and reported apart from hunk_hits.",
+  "Join (Codex-owned): the 13 codeql-lane and 4 native_sast-lane cases are where the native-to-pattern fingerprint join would add recall. Their CodeQL alerts would mostly land at the sink, outside the fix hunk, so the same scoring question applies."
+ ],
+ "caveats": [
+  "One reviewer, diff-level reading. Reasons and lanes are judgments; borderline calls are noted in each rationale.",
+  "The pattern-recoverable count is an upper bound: no rule was written, and precision controls and the 10% fixed-side residual tolerance (limit 0.48 per hit) were not evaluated.",
+  "GHSA-mrq8/GHSA-6vmq and GHSA-r8g5/GHSA-x843 share a fix commit, so each pair counts twice.",
+  "Five non-hits are not scored misses: 3 coverage_incomplete and 2 unknown (no old-side source; no in-language source change)."
+ ],
+ "access_record": [
+  "docs/evidence/recall-evaluation-b2a2800f-exposed161-opengrep210.json",
+  "docs/evidence/detector-iteration-20261126.json (head)",
+  "/home/claude/pins/exposed-161-5f332b15.json",
+  "/home/claude/run-r161/checkpoints (eed93d96 arm, exposed manifest 5f332b15)",
+  "/home/claude/run-r161/captures/cases-v4 (exposed packets)",
+  "deploy/deep-adapters/rules/semgrep-pattern-limited.yml (b2a2800f)",
+  "scripts/recall_harness.mjs (exports only; unchanged)",
+  "/home/claude/run-ra.sh and /home/claude/run-pp/full-b2a2800f.sh were opened only to identify which runs used held-out manifests; both were then avoided, and no run-ra or run-pp results, checkpoints or captures were read."
+ ],
+ "cases": [
+  {
+   "ghsa": "GHSA-2223-f22x-24cq",
+   "repository": "wintercms/storm",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "@import paths inside LESS/JS asset content resolve outside allowed roots."
+  },
+  {
+   "ghsa": "GHSA-25gv-mvm7-5h3h",
+   "repository": "jeecgboot/jeecg-boot",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Hand-quoted id list (String.format \"'%s'\") passed to a MyBatis mapper; the ${} sink lives in mapper XML that no Java pattern sees."
+  },
+  {
+   "ghsa": "GHSA-2fmj-p74r-3wjm",
+   "repository": "pontedilana/php-weasyprint",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-502"
+   ],
+   "registered_family": "deser",
+   "outcome": "miss",
+   "vuln_class": "deserialization",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "Case-sensitive strpos($f,'phar://') deny check before file_exists (PHAR deserialization); there is no PHAR wrapper rule."
+  },
+  {
+   "ghsa": "GHSA-2jh5-g5ch-43q5",
+   "repository": "Bluegrams/YoutubeDLSharp",
+   "ecosystem": "NuGet",
+   "language": "csharp",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "ProcessStartInfo FileName=cmd.exe with Arguments $\"/C ... {ConvertToArgs(urls, options)}\". C# has no parameter-sourced shell rule and ProcessStartInfo is not a sink."
+  },
+  {
+   "ghsa": "GHSA-2pm6-9fhx-vvg3",
+   "repository": "CPS-IT/mailqueue",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-502"
+   ],
+   "registered_family": "deser",
+   "outcome": "miss",
+   "vuln_class": "deserialization",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "unserialize(file contents, ['allowedClasses'=>...]) uses a misspelled option key, so classes are unrestricted. php.request-unsafe-deserialization is request-sourced only."
+  },
+  {
+   "ghsa": "GHSA-2rc4-7jc6-qffh",
+   "repository": "fleetdm/fleet",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 3,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Windows MDM accepted devices without a client certificate (device authentication). The in-file alerts are parameter-sql-text."
+  },
+  {
+   "ghsa": "GHSA-2x7r-93ww-cxrq",
+   "repository": "wintercms/winter",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Color value format validation (value later used in LESS compile)."
+  },
+  {
+   "ghsa": "GHSA-38jw-g2qx-4286",
+   "repository": "kubevirt/kubevirt",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Client certificate CN/identity check missing on a shared CA."
+  },
+  {
+   "ghsa": "GHSA-3hcm-ggvf-rch5",
+   "repository": "openclaw/openclaw",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Shell tokenizer allowlist bypass ($(), backtick, newline)."
+  },
+  {
+   "ghsa": "GHSA-3p24-9x7v-7789",
+   "repository": "NationalSecurityAgency/emissary",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Config/argument file-ending fields are stored on the object and later concatenated into shell command lines in other methods."
+  },
+  {
+   "ghsa": "GHSA-3p6w-gv5g-xjw9",
+   "repository": "mongodb/mongo-rust-driver",
+   "ecosystem": "crates.io",
+   "language": "rust",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "tlsInsecure URI option maps to only one of the two relax flags (option parsing)."
+  },
+  {
+   "ghsa": "GHSA-4574-qv3w-fcmg",
+   "repository": "Codeception/Codeception",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-502"
+   ],
+   "registered_family": "deser",
+   "outcome": "miss",
+   "vuln_class": "deserialization",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Gadget class hardening (__sleep/__wakeup)."
+  },
+  {
+   "ghsa": "GHSA-465w-gg5p-85c9",
+   "repository": "kiali/kiali",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Token validation/signing in the auth flow."
+  },
+  {
+   "ghsa": "GHSA-4h97-wpxp-3757",
+   "repository": "langchain-ai/langgraph",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 3,
+   "any_rule_alerts_in_changed_files": 3,
+   "flagged_in_file_same_vulnerability": true,
+   "pattern_alert_in_old_hunk_likely": false,
+   "pattern_recoverable_estimate": true,
+   "rationale": "python.parameter-sql-text flags cur.execute at 1302/1327/1374; the fix validates filter keys at 370/620/856 where the keys enter the SQL text."
+  },
+  {
+   "ghsa": "GHSA-4m7p-55jm-3vwv",
+   "repository": "jenkinsci/workflow-cps-plugin",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Checkout directory isolation and containment (filed as CWE-78)."
+  },
+  {
+   "ghsa": "GHSA-4x28-j85r-668q",
+   "repository": "forkcms/forkcms",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "The module name is set from the request via setModule() and used to build the file path in another method."
+  },
+  {
+   "ghsa": "GHSA-5mq7-rwhj-4fh9",
+   "repository": "SteeltoeOSS/Steeltoe",
+   "ecosystem": "NuGet",
+   "language": "csharp",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Certificate-based authorization and loading logic."
+  },
+  {
+   "ghsa": "GHSA-63q7-h895-m982",
+   "repository": "cure53/DOMPurify",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "coverage_incomplete",
+   "vuln_class": "xss",
+   "miss_reason": "coverage_gap",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": null,
+   "any_rule_alerts_in_changed_files": null,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "coverage_incomplete (dist bundle gaps); the change is sanitizer logic (mXSS), not pattern-expressible."
+  },
+  {
+   "ghsa": "GHSA-68wg-qv6r-j4vp",
+   "repository": "usmanhalalit/pixie",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "interprocedural",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "'LIMIT ' . $statements['limit'] is built in the adapter and executed elsewhere; a SQL-fragment concat pattern with no (int) cast would sit on the deleted line."
+  },
+  {
+   "ghsa": "GHSA-6g56-v9qg-jp92",
+   "repository": "heketi/heketi",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "API message validation added in handlers; the ssh command sinks are in executors/sshexec (cross-file, per the earlier span review)."
+  },
+  {
+   "ghsa": "GHSA-6gm7-j668-w6h9",
+   "repository": "pimcore/pimcore",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "Hand-quoted \" '\" . $value . \"' \" condition from a decoded Symfony request filter; the Symfony Request source and the hand-quoted fragment shape are not modeled."
+  },
+  {
+   "ghsa": "GHSA-6j63-35hj-vmcg",
+   "repository": "nedap/mysql-binuuid-rails",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "The ActiveModel Binary type relies on implicit hex escaping; the fix adds UUID validation. This is type-cast semantics."
+  },
+  {
+   "ghsa": "GHSA-6m7c-xfhp-p9fh",
+   "repository": "baptisteArno/typebot.io",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "Solid JSX innerHTML={props...svg/placeholder} attribute; javascript.dom-innerhtml-from-variable models el.innerHTML = x, not the JSX prop."
+  },
+  {
+   "ghsa": "GHSA-6m8w-jc87-6cr7",
+   "repository": "open-policy-agent/opa",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-code",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "The URL path becomes a Rego data ref/query (rego.Query(healthDataPath)); there is no policy-query sink."
+  },
+  {
+   "ghsa": "GHSA-6qjf-g333-pv38",
+   "repository": "Shopify/job-iteration",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "%x(wc -l < #{filepath}) with filepath from @csv.path; the rule needs a method parameter source. Interpolation in %x/backticks is a principled search pattern."
+  },
+  {
+   "ghsa": "GHSA-6vmq-24h2-pj7j",
+   "repository": "sooperset/mcp-atlassian",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 2,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "MCP tool file_path arg (defined in servers/*) reaches open() in the attachments mixin (cross-file; MCP tool args are not a source)."
+  },
+  {
+   "ghsa": "GHSA-6w89-c65w-jx2c",
+   "repository": "jeecgboot/jeecg-boot",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Deny-list regex completeness in SqlInjectionUtil."
+  },
+  {
+   "ghsa": "GHSA-6xxq-j39w-g3f6",
+   "repository": "puppetlabs/puppet",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "A request param overrides bucket_path (framework param handling)."
+  },
+  {
+   "ghsa": "GHSA-72c7-4g63-hpw5",
+   "repository": "in-toto/go-witness",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Missing AWS IID signature/certificate verification."
+  },
+  {
+   "ghsa": "GHSA-72qq-p3r5-f7wq",
+   "repository": "a2ui-project/a2ui",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "no_rule",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "window.open(args.url) allows a javascript: scheme; there is no URL-scheme sink rule and the source is agent/library args."
+  },
+  {
+   "ghsa": "GHSA-73wf-9vmv-5pv9",
+   "repository": "nicolargo/glances",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 1,
+   "any_rule_alerts_in_changed_files": 1,
+   "flagged_in_file_same_vulnerability": true,
+   "pattern_alert_in_old_hunk_likely": false,
+   "pattern_recoverable_estimate": true,
+   "rationale": "python.parameter-shell-command flags secure_popen(cmd_full) at 111; the fix is the recursive sanitizer at 23-51."
+  },
+  {
+   "ghsa": "GHSA-74hp-mggr-hv58",
+   "repository": "sonirico/mcp-shell",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Command allowlist/validation configuration in an MCP shell server."
+  },
+  {
+   "ghsa": "GHSA-76wq-xw4h-f8wj",
+   "repository": "rails/rails",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 6,
+   "any_rule_alerts_in_changed_files": 6,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Nested-hash conditions are turned into a table name inside ActiveRecord. The in-file ruby.parameter-sql-text alerts (1772-1846) are other ORDER/GROUP builders, not this flow."
+  },
+  {
+   "ghsa": "GHSA-784x-7w88-w564",
+   "repository": "jeecgboot/jeecg-boot",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Adds table/field-name checks to a query blacklist handler. The dynamic SQL sink is elsewhere (online report / MyBatis)."
+  },
+  {
+   "ghsa": "GHSA-79qw-g77v-2vfh",
+   "repository": "inspektor-gadget/inspektor-gadget",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "CFLAGS from the build yaml go into a container build env (config-file source)."
+  },
+  {
+   "ghsa": "GHSA-7cj7-rcw6-p68v",
+   "repository": "spring-projects/spring-ai",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Cypher identifier injection through StringBuilder.append in a filter converter; no Cypher/Neo4j sink and no library-API source is modeled."
+  },
+  {
+   "ghsa": "GHSA-7hxc-f267-h5q7",
+   "repository": "craftcms/cms",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Order of normalizePath relative to the root join."
+  },
+  {
+   "ghsa": "GHSA-7wqf-h36w-47mc",
+   "repository": "apache/airflow",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "cmd_path comes from connection extras (conn.extra_dejson) and reaches subprocess in another method."
+  },
+  {
+   "ghsa": "GHSA-85gf-wr67-f83w",
+   "repository": "prodigasistemas/curupira",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "User.find_by(params[:user]) passes a whole params hash to a finder; ruby.request-sql-injection models where/find_by_sql strings only."
+  },
+  {
+   "ghsa": "GHSA-8gqp-hr9g-pg62",
+   "repository": "conductor-oss/conductor",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-code",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "ScriptEngineManager().getEngineByName(Nashorn) without --no-java/ClassFilter evaluates user scripts (sandbox escape)."
+  },
+  {
+   "ghsa": "GHSA-8grg-q944-cch5",
+   "repository": "hibernate/hibernate-orm",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Hibernate literal rendering for Character values (ORM internals)."
+  },
+  {
+   "ghsa": "GHSA-8qvf-mr4w-9x2c",
+   "repository": "mesop-dev/mesop",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 3,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "self.base_dir / (self.prefix + token); the parameter-path-join rule models $BASE / $P but not a concatenated operand. The in-file alerts are parameter-sql-text."
+  },
+  {
+   "ghsa": "GHSA-97jv-2hp6-3frj",
+   "repository": "Dolibarr/dolibarr",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 24,
+   "any_rule_alerts_in_changed_files": 63,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "card.php sets $object->employee from GETPOST('alphanothtml') and user.class.php update() concatenates $this->employee. Property-sourced; the in-file alerts are other functions."
+  },
+  {
+   "ghsa": "GHSA-9mh6-g99m-ppcw",
+   "repository": "auth0/auth0-PHP",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "An SDK-config file path with a stream wrapper (://) reaches a file read."
+  },
+  {
+   "ghsa": "GHSA-f6wf-28g6-769x",
+   "repository": "smarty-php/smarty",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Symlink-aware realpath in the trusted-dir check."
+  },
+  {
+   "ghsa": "GHSA-f7w7-6pjc-wwm6",
+   "repository": "apache/tomcat",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "TLS renegotiation (RFC 5746) handling."
+  },
+  {
+   "ghsa": "GHSA-ff98-w8hj-qrxf",
+   "repository": "openclaw/openclaw",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Removes a legacy plugin exec opt-in (configuration)."
+  },
+  {
+   "ghsa": "GHSA-fwj4-6wgp-mpxm",
+   "repository": "Katello/katello",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "params[:sort_by] reaches an ORM order clause through the shared API base controller."
+  },
+  {
+   "ghsa": "GHSA-g23g-mw97-65c8",
+   "repository": "IBAX-io/go-ibax",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "form.Order/form.Where (a framework-bound struct) go into fmt.Sprintf SQL passed to gorm .Raw in the deleted file; struct-binding sources are not modeled."
+  },
+  {
+   "ghsa": "GHSA-g72f-jw3w-mgh7",
+   "repository": "naorsabag/openhop",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Route :id reaches the store file path in store.ts (cross-file)."
+  },
+  {
+   "ghsa": "GHSA-gjqq-6r35-w3r8",
+   "repository": "getarcaneapp/arcane",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Container labels drive lifecycle-hook exec; feature removed."
+  },
+  {
+   "ghsa": "GHSA-gvg7-pp82-cff3",
+   "repository": "c3js/c3",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "coverage_incomplete",
+   "vuln_class": "xss",
+   "miss_reason": "coverage_gap",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": null,
+   "any_rule_alerts_in_changed_files": null,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "coverage_incomplete (c3.min.js gap). Tooltip HTML from chart data via d3 .html()."
+  },
+  {
+   "ghsa": "GHSA-h36j-8vv3-cj52",
+   "repository": "onnx/onnx",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "A custom tar members filter uses abs_member.startswith(abs_base) without a separator, and the tarfile rule accepts a members= filter as safe. A prefix-check-without-sep pattern would hit the deleted lines."
+  },
+  {
+   "ghsa": "GHSA-h4h6-vccr-44h2",
+   "repository": "uptrace/bun",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Query formatter: a negative number after '-' forms a SQL comment."
+  },
+  {
+   "ghsa": "GHSA-h6r4-xvw6-jc5h",
+   "repository": "nocodb/nocodb",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "replaceUrlsWithLink returns HTML rendered through v-html in .vue components (cross-file, framework sink)."
+  },
+  {
+   "ghsa": "GHSA-hc5w-gxxr-w8x8",
+   "repository": "BishopFox/sliver",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "coverage_incomplete",
+   "vuln_class": "injection-command",
+   "miss_reason": "coverage_gap",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": null,
+   "any_rule_alerts_in_changed_files": null,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "coverage_incomplete (generated *.pb.go gaps). msfvenom stager options flow over RPC into exec args."
+  },
+  {
+   "ghsa": "GHSA-hq7p-j377-6v63",
+   "repository": "rails/rails",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "SQL comment sanitizer regex in quoting/query_logs."
+  },
+  {
+   "ghsa": "GHSA-hr8g-6v94-x4m9",
+   "repository": "bcgit/bc-java",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "unknown",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": null,
+   "any_rule_alerts_in_changed_files": null,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Status no_old_side_source."
+  },
+  {
+   "ghsa": "GHSA-hw6x-2qwv-rxr7",
+   "repository": "jenkinsci/git-client-plugin",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "git URL argument injection ('-' prefix); the fix is URL validation, not a call-site change."
+  },
+  {
+   "ghsa": "GHSA-hwcc-4cv8-cf3h",
+   "repository": "snowflakedb/snowflake-connector-net",
+   "ecosystem": "NuGet",
+   "language": "csharp",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Inverted boolean: insecureMode is passed where !insecureMode is meant."
+  },
+  {
+   "ghsa": "GHSA-j3f9-p6hm-5w6q",
+   "repository": "briannesbitt/Carbon",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-98"
+   ],
+   "registered_family": "incl",
+   "outcome": "miss",
+   "vuln_class": "injection-code",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "The locale reaches a translation file include in the parent translator (CWE-98); the fix adds assertValidLocale."
+  },
+  {
+   "ghsa": "GHSA-j456-xh4h-cpf2",
+   "repository": "nltk/nltk",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "The caller-controlled model path goes to the weka JVM as a -l/-d argument (library API)."
+  },
+  {
+   "ghsa": "GHSA-j6cv-98jx-mrwr",
+   "repository": "laowantong/mocodo",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Only a __version__ bump in Python; the vulnerable change is not in-language."
+  },
+  {
+   "ghsa": "GHSA-j7g8-3qqg-8cvm",
+   "repository": "top-think/thinkphp",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "ORDER BY parser filtering inside the ThinkPHP DB driver."
+  },
+  {
+   "ghsa": "GHSA-j7wh-x834-p3r7",
+   "repository": "siyuan-note/siyuan",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Missing admin check for SQL search mode (authz, filed as CWE-89)."
+  },
+  {
+   "ghsa": "GHSA-jccv-3h4x-35mv",
+   "repository": "Codiad/Codiad",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "interprocedural",
+   "best_lane": "native_sast",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 1,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "$get['query'] is stored on $this in the constructor and reaches shell exec in a search method. The in-file alert at 555 is php.request-path-traversal."
+  },
+  {
+   "ghsa": "GHSA-jj27-h5hq-8x99",
+   "repository": "angular/angular",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Compiler event-handler attribute classification."
+  },
+  {
+   "ghsa": "GHSA-jj45-24rw-v6jw",
+   "repository": "totaljs/framework4",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "View compiler escaping of static template text."
+  },
+  {
+   "ghsa": "GHSA-jjgq-jq8g-24w4",
+   "repository": "Dolibarr/dolibarr",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 14,
+   "any_rule_alerts_in_changed_files": 61,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": false,
+   "pattern_recoverable_estimate": false,
+   "rationale": "$_GET['statut'] is concatenated into $sql and executed by $db->query. php.request-sql-injection models only procedural mysqli/pg sinks; even with a $db->query sink the alert would sit at line 119/124, outside the hunks."
+  },
+  {
+   "ghsa": "GHSA-jppv-gw3r-w3q8",
+   "repository": "ruby/rake",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "Bare Kernel#open(fn) (pipe-prefixed filename runs a command). Only Kernel.open is a sink, and fn is not a parameter. A Security/Open-style pattern is principled."
+  },
+  {
+   "ghsa": "GHSA-jqmf-mx4f-hfr6",
+   "repository": "HKUDS/Vibe-Trading",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 1,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Shell tools reachable without authentication (dev-mode auth). The in-file alert is an unrelated path join."
+  },
+  {
+   "ghsa": "GHSA-m3hq-3qj8-c5fm",
+   "repository": "fog/fog-kubevirt",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Only a VERSION bump in Ruby."
+  },
+  {
+   "ghsa": "GHSA-m445-w3xr-vp2f",
+   "repository": "charmbracelet/soft-serve",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "SSH session environment is appended to the git subprocess env."
+  },
+  {
+   "ghsa": "GHSA-m462-mqw4-2c8m",
+   "repository": "mattermost/mattermost",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 5,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Secure cookie flag/redirect URI under TLS termination. The in-file alerts are go.request-html-injection."
+  },
+  {
+   "ghsa": "GHSA-m734-r4g6-34f9",
+   "repository": "strongloop/loopback-connector-mongodb",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_rule",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "NoSQL $where/mapReduce operator injection through a connector buildWhere; there is no NoSQL rule and the source is the library API."
+  },
+  {
+   "ghsa": "GHSA-mc7w-4cjf-c973",
+   "repository": "peterbraden/node-opencv",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "process.argv[2] concatenated into child_process.exec; process.argv/env are not sources."
+  },
+  {
+   "ghsa": "GHSA-mf2p-h6hf-fcwm",
+   "repository": "tinymce/tinymce",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Element created in a scripting document (mXSS)."
+  },
+  {
+   "ghsa": "GHSA-mggc-4xg6-vcxf",
+   "repository": "sshnet/SSH.NET",
+   "ecosystem": "NuGet",
+   "language": "csharp",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Default remote-path quoting transformation for scp (library default)."
+  },
+  {
+   "ghsa": "GHSA-mhwp-qhpc-h3jm",
+   "repository": "rails/rails",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 1,
+   "any_rule_alerts_in_changed_files": 1,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "Ruby validation regex uses ^...$ instead of \\A...\\z before interpolating into B'..'/X'..'. A Brakeman-style anchor rule is principled. The in-file alert at 758 is another option builder."
+  },
+  {
+   "ghsa": "GHSA-mj4x-vf5c-5xg8",
+   "repository": "oscal-compass/compliance-trestle",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "trestle_root / uri[len(prefix):]; the parameter-path-join rule does not model a sliced parameter operand."
+  },
+  {
+   "ghsa": "GHSA-mmcv-fvq8-r9x3",
+   "repository": "symfony/symfony",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-502"
+   ],
+   "registered_family": "deser",
+   "outcome": "miss",
+   "vuln_class": "other",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "XXE: simplexml_load_string($data) without disabling the entity loader (filed as CWE-502); there is no PHP XXE rule."
+  },
+  {
+   "ghsa": "GHSA-mq84-hjqx-cwf2",
+   "repository": "keras-team/keras",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-502"
+   ],
+   "registered_family": "deser",
+   "outcome": "miss",
+   "vuln_class": "deserialization",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Safe-mode check for an external vocabulary file during model load."
+  },
+  {
+   "ghsa": "GHSA-mrq8-fv7v-hhjg",
+   "repository": "sooperset/mcp-atlassian",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 2,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Same fix commit as GHSA-6vmq: the MCP tool file_path reaches open() across files."
+  },
+  {
+   "ghsa": "GHSA-mrww-27vc-gghv",
+   "repository": "jackc/pgproto3",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "other",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Protocol message length overflow (message injection) in pgproto3 encoders."
+  },
+  {
+   "ghsa": "GHSA-mw36-7c6c-q4q2",
+   "repository": "x-stream/xstream",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "deserialization",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "XStream deny-list addition (gadget type)."
+  },
+  {
+   "ghsa": "GHSA-mxg3-432p-mr72",
+   "repository": "patrickhener/goshs",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Tunnel/cert handling configuration."
+  },
+  {
+   "ghsa": "GHSA-p6w9-r443-r752",
+   "repository": "shopware/core",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "'?' or ':' in an aggregation name becomes a DBAL placeholder (ORM internals)."
+  },
+  {
+   "ghsa": "GHSA-p77r-c6m3-gj2r",
+   "repository": "jaredhanson/oauth2orize-fprm",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "entities.encode skipped for non-string params (type confusion)."
+  },
+  {
+   "ghsa": "GHSA-pj84-qjm3-77mg",
+   "repository": "jenkinsci/workflow-multibranch-plugin",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Trusted checkout dir isolation and containment (filed as CWE-78)."
+  },
+  {
+   "ghsa": "GHSA-pxrr-hq57-q35p",
+   "repository": "dynaconf/dynaconf",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-code",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Dotted lookup traverses into non-container objects (attribute access leading to code execution)."
+  },
+  {
+   "ghsa": "GHSA-q27f-v3r6-9v77",
+   "repository": "igrigorik/em-http-request",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": false,
+   "pattern_recoverable_estimate": false,
+   "rationale": "EventMachine start_tls without peer verification. A pattern is feasible, but the fix adds a new method and the call site is unlikely to sit in the old hunk."
+  },
+  {
+   "ghsa": "GHSA-q296-9j5x-fxf4",
+   "repository": "jenkinsci/hpe-application-automation-tools-plugin",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "interprocedural",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Trust-everyone behaviour lives in the command executor factory outside the changed hunks."
+  },
+  {
+   "ghsa": "GHSA-q433-mp6c-8v4f",
+   "repository": "StacklokLabs/sqlite-mcp",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Read-only bypass through ATTACH DATABASE: engine limits and connection pinning, not a dataflow."
+  },
+  {
+   "ghsa": "GHSA-q7m5-3jmv-vm48",
+   "repository": "MervinPraison/PraisonAI",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "The in-language diff deletes a legacy handler file; the traversal is not visible in it."
+  },
+  {
+   "ghsa": "GHSA-q9mp-79cp-9g8j",
+   "repository": "containous/traefik",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "SNI vs Host header mismatch (domain fronting)."
+  },
+  {
+   "ghsa": "GHSA-qcpp-8x79-hhp3",
+   "repository": "nicolargo/glances",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 1,
+   "any_rule_alerts_in_changed_files": 1,
+   "flagged_in_file_same_vulnerability": true,
+   "pattern_alert_in_old_hunk_likely": false,
+   "pattern_recoverable_estimate": true,
+   "rationale": "python.parameter-shell-command flags secure_popen at 144; the fix extends the operator list at 20-30."
+  },
+  {
+   "ghsa": "GHSA-qqh2-wvmv-h72m",
+   "repository": "OpenRefine/OpenRefine",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "JDBC URL built by concatenating host/db name from the request-decoded configuration (connection-string injection)."
+  },
+  {
+   "ghsa": "GHSA-qrg7-hfx7-95c5",
+   "repository": "rancher/wrangler",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "git argument injection: the fix adds '--' before the URL/rev positional args. There is no argument-injection (missing end-of-options) rule."
+  },
+  {
+   "ghsa": "GHSA-r8g5-cgf2-4m4m",
+   "repository": "mmaitre314/picklescan",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-502"
+   ],
+   "registered_family": "deser",
+   "outcome": "miss",
+   "vuln_class": "deserialization",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "picklescan unsafe-globals deny-list completeness."
+  },
+  {
+   "ghsa": "GHSA-rc6v-5rmx-w5mv",
+   "repository": "arnika-project/arnika",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "PSK file permission/emptiness checks."
+  },
+  {
+   "ghsa": "GHSA-rmjr-87wv-gf87",
+   "repository": "mwilliamson/mammoth.js",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Default option externalFileAccess true -> false (configuration)."
+  },
+  {
+   "ghsa": "GHSA-rqw2-ghq9-44m7",
+   "repository": "django/django",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Dollar sign in a column alias (Django compiler internals)."
+  },
+  {
+   "ghsa": "GHSA-v222-6mr4-qj29",
+   "repository": "jirutka/asciidoctor-include-ext",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "URI.open(filename) with the target_uri? guard in another method (same file); see the earlier span review."
+  },
+  {
+   "ghsa": "GHSA-v253-rj99-jwpq",
+   "repository": "pnpm/pnpm",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "The package manifest directories.bin escapes the package root."
+  },
+  {
+   "ghsa": "GHSA-v74c-qc46-9gg9",
+   "repository": "apache/submarine",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "The fix disables the REST endpoints; the vulnerable sink is not in the changed hunk."
+  },
+  {
+   "ghsa": "GHSA-vf2r-cxg9-p7rf",
+   "repository": "ADOdb/ADOdb",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "\"PRAGMA table_info('$table')\" interpolated into $this->Execute/getOne/getAll. ADOdb sinks are not in php.parameter-sql-text."
+  },
+  {
+   "ghsa": "GHSA-vj3g-5px3-gr46",
+   "repository": "openclaw/openclaw",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "outside_hunk",
+   "best_lane": "pattern",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 2,
+   "any_rule_alerts_in_changed_files": 2,
+   "flagged_in_file_same_vulnerability": true,
+   "pattern_alert_in_old_hunk_likely": false,
+   "pattern_recoverable_estimate": true,
+   "rationale": "javascript.request-path-traversal flags readFile/unlink(params.tmpPath) at 57-58; the tmpPath built from imageKey is at 97-107/130-140."
+  },
+  {
+   "ghsa": "GHSA-vj9x-w7ch-f46p",
+   "repository": "pimcore/pimcore",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "'(storeId = ' . $storeId . ')' from a Symfony $request->get value into a listing condition."
+  },
+  {
+   "ghsa": "GHSA-vmw2-qwm8-x84c",
+   "repository": "JasperFx/marten",
+   "ecosystem": "NuGet",
+   "language": "csharp",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_rule",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "regConfig is interpolated into a generated SQL fragment. C# has no parameter-sourced SQL-text rule; csharp.request-sql-injection is request-sourced."
+  },
+  {
+   "ghsa": "GHSA-vp4f-wxgw-7x8x",
+   "repository": "decentraland/single-sign-on-client",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "no_rule",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "iframe src URL not validated for scheme (library API param)."
+  },
+  {
+   "ghsa": "GHSA-vq7p-f4fv-rr5x",
+   "repository": "jenkinsci/vsphere-cloud-plugin",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-295"
+   ],
+   "registered_family": "tls",
+   "outcome": "miss",
+   "vuln_class": "crypto-tls",
+   "miss_reason": "interprocedural",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "VSphere.connect trusts any certificate inside the client library, plus a permission check."
+  },
+  {
+   "ghsa": "GHSA-wc3v-3457-c8cm",
+   "repository": "openmeterio/openmeter",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "injection-sql",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "pattern",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": true,
+   "pattern_recoverable_estimate": true,
+   "rationale": "fmt.Sprintf(\"JSON_VALUE('{}', '%s')\", sqlbuilder.Escape(..)) into go-sqlbuilder Select; the builder sink is not modeled and Escape does not escape quotes."
+  },
+  {
+   "ghsa": "GHSA-wm65-ph3w-587c",
+   "repository": "quasarframework/quasar-ui-qmarkdown",
+   "ecosystem": "npm",
+   "language": "javascript",
+   "cwes": [
+    "CWE-79"
+   ],
+   "registered_family": "xss",
+   "outcome": "miss",
+   "vuln_class": "xss",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "markdown-it heading renderer emits raw token content."
+  },
+  {
+   "ghsa": "GHSA-wqmh-qccw-pqwf",
+   "repository": "mlflow/mlflow",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "interprocedural",
+   "best_lane": "codeql",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 2,
+   "any_rule_alerts_in_changed_files": 2,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "trace_id reaches the mkdir/rmtree path through helpers. The in-file alerts (1860, 2408) are tag-key/model joins, not the trace_id flow."
+  },
+  {
+   "ghsa": "GHSA-wrvw-254r-wpmv",
+   "repository": "alastairlundy/CliInvoke",
+   "ecosystem": "NuGet",
+   "language": "csharp",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-command",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Argument tokenization of a wrapped command (library design)."
+  },
+  {
+   "ghsa": "GHSA-x3wm-hffr-chwm",
+   "repository": "aws/amazon-redshift-jdbc-driver",
+   "ecosystem": "Maven",
+   "language": "java",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "unknown",
+   "vuln_class": "injection-sql",
+   "miss_reason": "no_source_change",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": null,
+   "any_rule_alerts_in_changed_files": null,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Status no_in_language_source_change."
+  },
+  {
+   "ghsa": "GHSA-x485-rhg3-cqr4",
+   "repository": "spree/spree",
+   "ecosystem": "RubyGems",
+   "language": "ruby",
+   "cwes": [
+    "CWE-78"
+   ],
+   "registered_family": "cmd",
+   "outcome": "miss",
+   "vuln_class": "injection-code",
+   "miss_reason": "sink_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "searchlogic(params[:search]) dispatches arbitrary scopes/methods (framework dispatch)."
+  },
+  {
+   "ghsa": "GHSA-x67c-8pwr-m8g3",
+   "repository": "siyuan-note/siyuan",
+   "ecosystem": "Go",
+   "language": "go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "authz-access-control",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": true,
+   "family_alerts_in_changed_files": 2,
+   "any_rule_alerts_in_changed_files": 2,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Template SQL functions allowed non-readonly statements. The in-file go.parameter-sql-text alerts (1088/1120) are other functions."
+  },
+  {
+   "ghsa": "GHSA-x843-g5mx-g377",
+   "repository": "mmaitre314/picklescan",
+   "ecosystem": "PyPI",
+   "language": "python",
+   "cwes": [
+    "CWE-502"
+   ],
+   "registered_family": "deser",
+   "outcome": "miss",
+   "vuln_class": "deserialization",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Same fix commit as GHSA-r8g5: deny-list completeness."
+  },
+  {
+   "ghsa": "GHSA-x9vc-6hfv-hg8c",
+   "repository": "npgsql/npgsql",
+   "ecosystem": "NuGet",
+   "language": "csharp",
+   "cwes": [
+    "CWE-89"
+   ],
+   "registered_family": "sql",
+   "outcome": "miss",
+   "vuln_class": "other",
+   "miss_reason": "not_pattern",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "Protocol message length overflow in Npgsql write buffer."
+  },
+  {
+   "ghsa": "GHSA-xr9m-gphc-9p63",
+   "repository": "grokability/snipe-it",
+   "ecosystem": "Packagist",
+   "language": "php",
+   "cwes": [
+    "CWE-22"
+   ],
+   "registered_family": "path",
+   "outcome": "miss",
+   "vuln_class": "path-traversal",
+   "miss_reason": "source_unmodeled",
+   "best_lane": "none",
+   "flagged_in_file": false,
+   "family_alerts_in_changed_files": 0,
+   "any_rule_alerts_in_changed_files": 0,
+   "flagged_in_file_same_vulnerability": false,
+   "pattern_alert_in_old_hunk_likely": null,
+   "pattern_recoverable_estimate": false,
+   "rationale": "A CSV-imported image name is stored and later concatenated into unlink/delete (second-order)."
+  }
+ ]
+}

@@ -1,3 +1,11 @@
+import { spawnSync } from 'node:child_process';
+import { extname, isAbsolute, posix, relative, resolve } from 'node:path';
+
+export const PARSER_LANGUAGE = Object.freeze({ c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
+  go: 'go', java: 'java', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' });
+
 // Git's NUL-delimited inventory includes files that the strict hunk filter drops.
 export function changedFiles(raw) {
   const fields = new TextDecoder('utf-8', { fatal: true }).decode(raw).split('\0');
@@ -33,10 +41,21 @@ export function sarifPath(uri, packetPaths) {
   return literal;
 }
 
+function engineSkippedPaths(entries) {
+  const skipped = new Map();
+  for (const entry of entries) {
+    const path = scannerPath(entry.path);
+    if (!path) continue;
+    const reason = skipped.has(path) && skipped.get(path) !== entry.reason ? null : entry.reason;
+    skipped.set(path, reason);
+  }
+  return skipped;
+}
+
 export function engineCoverage(report) {
   if (!Array.isArray(report?.paths?.scanned)) throw new Error('Missing engine scan paths');
   const scanned = new Set(report.paths.scanned.map(path => scannerPath(path)).filter(Boolean));
-  const skipped = new Map((report.paths.skipped ?? []).map(entry => [scannerPath(entry.path), entry.reason]));
+  const skipped = engineSkippedPaths(report.paths.skipped ?? []);
   const problems = new Map();
   const priority = { parse: 1, engine_error: 2, engine_timeout: 3 };
   let timeouts = 0;
@@ -53,6 +72,109 @@ export function engineCoverage(report) {
   return { scanned, skipped, problems, timeouts };
 }
 
+// Read only rule identity, attribution, and scope from the YAML document.
+const ruleMetadataProgram = String.raw`
+import json, sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(3)
+
+def value(node, kind, tag):
+    if not isinstance(node, kind) or node.tag != "tag:yaml.org,2002:" + tag:
+        raise ValueError("Unsupported rule scope")
+    return node.value
+
+def mapping(node):
+    pairs = value(node, yaml.MappingNode, "map")
+    fields = {value(key, yaml.ScalarNode, "str"): val for key, val in pairs}
+    if len(fields) != len(pairs):
+        raise ValueError("Duplicate YAML scope field")
+    return fields
+
+def strings(node):
+    return [value(item, yaml.ScalarNode, "str") for item in value(node, yaml.SequenceNode, "seq")]
+
+doc = mapping(yaml.compose(sys.stdin.buffer, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)))
+records, seen = [], set()
+for item in value(doc["rules"], yaml.SequenceNode, "seq"):
+    rule = mapping(item)
+    name = value(rule["id"], yaml.ScalarNode, "str")
+    if not name or name in seen:
+        raise ValueError("Invalid or duplicate rule id")
+    seen.add(name)
+    paths = mapping(rule["paths"]) if "paths" in rule else {}
+    meta = mapping(rule["metadata"]) if "metadata" in rule else {}
+    cwe = meta.get("cwe")
+    if cwe is None:
+        cwes = []
+    elif isinstance(cwe, yaml.ScalarNode):
+        cwes = [value(cwe, yaml.ScalarNode, "str")]
+    else:
+        cwes = strings(cwe)
+    records.append(dict(id=name, cwes=cwes,
+        languages=strings(rule["languages"]) if "languages" in rule else [],
+        excludes=strings(paths["exclude"]) if "exclude" in paths else []))
+print(json.dumps(records))
+`;
+
+export function readRuleMetadata(rules) {
+  const python = process.env.CF_RECALL_PYTHON;
+  const read = (command, options = []) => spawnSync(command, [...options, '-I', '-c', ruleMetadataProgram], {
+    input: rules, encoding: 'utf8', windowsHide: true, timeout: 7000, maxBuffer: 2 * 1024 * 1024,
+  });
+  let parsed = read(python ?? 'python');
+  if (!python && process.platform === 'win32' && (parsed.status === 3 || parsed.error?.code === 'ENOENT')) {
+    parsed = read('py', ['-3']);
+  }
+  if (parsed.status !== 0) return null;
+  try {
+    const rules = JSON.parse(parsed.stdout);
+    return Array.isArray(rules) ? rules : null;
+  } catch { return null; }
+}
+
+export function compileScannerPathPolicy(rules) {
+  const scopes = typeof rules === 'string' || Buffer.isBuffer(rules) ? readRuleMetadata(rules) : rules;
+  if (!scopes || scopes.some(({ languages }) => !languages.length)) return () => false;
+  const byLanguage = Map.groupBy(scopes.flatMap(({ languages, excludes: patterns }) => {
+    const excludes = patterns.filter(glob => /^\*\*\/[\w.*\/-]+$/.test(glob));
+    return languages.map(language => ({ language, excludes }));
+  }), rule => rule.language);
+  const known = new Set(Object.values(PARSER_LANGUAGE));
+  if ([...byLanguage.keys()].some(language => !known.has(language))) return () => false;
+  return (path) => {
+    const extension = extname(path).slice(1).toLowerCase();
+    const language = PARSER_LANGUAGE[extension];
+    if (!language) return false;
+    // Some native parsers accept additional files, so these extensions need both policies.
+    const named = extension === 'js' || extension === 'jsx' ? ['javascript', 'typescript']
+      : language === 'typescript' ? ['typescript', 'javascript'] : [language];
+    const applicable = named.flatMap(name => byLanguage.get(name) ?? []);
+    return Boolean(applicable.length) && applicable.every(rule => rule.excludes.some(glob => posix.matchesGlob(path, glob)));
+  };
+}
+
+export function scannerPathPolicy(profile, rules) {
+  if (profile.engine !== 'semgrep' || !['1.15.0', '2.1.0'].includes(profile.tool_version)) return null;
+  const usesTargetInventory = profile.tool_version === '2.1.0';
+  const proof = usesTargetInventory ? 'opengrep-2.1.0-target-inventory-v1' : 'opengrep-1.15.0-coverage-report-v1';
+  return { proof, ruleExcludes: compileScannerPathPolicy(rules), usesTargetInventory };
+}
+
+export function engineTargetIgnores(stdout, source) {
+  const selected = new Set(), ignored = new Set();
+  for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+    const row = line.match(/^(selected) (.+)$/) ?? line.match(/^(ignored) (.+) \[([a-z0-9_-]+)\]$/);
+    if (!row) return null;
+    const name = scannerPath(relative(source, resolve(source, row[2])));
+    if (!name || name === '..' || name.startsWith('../') || isAbsolute(name)) return null;
+    if (row[1] === 'selected') selected.add(name);
+    else if (row[3] === 'semgrepignore_patterns_match') ignored.add(name);
+  }
+  return path => !selected.has(path) && [...ignored].some(name => path === name || path.startsWith(name + '/'));
+}
+
 function packetCoverage(source, scan, findings, path) {
   if (!scan.submitted) return { ...source, state: 'not_submitted', reason: 'input_verification_failed' };
   if (!scan.verified) return { ...source, state: 'submitted', reason: 'scan_evidence_unverified' };
@@ -60,6 +182,9 @@ function packetCoverage(source, scan, findings, path) {
   const issue = engine?.problems.get(path);
   const matched = findings.has(path);
   if (issue) return { ...source, state: 'partial', reason: issue };
+  if (!matched && !engine?.scanned.has(path) && engine?.policyExclusions?.has(path)) {
+    return { ...source, state: 'excluded', reason: 'scanner_path_policy', policy: engine.policyExclusions.get(path) };
+  }
   if (engine?.skipped.has(path)) return { ...source, state: 'skipped', reason: engine.skipped.get(path) ?? 'engine_reported_skip' };
   if (engine?.scanned.has(path)) return { ...source, state: 'reported_scanned', reason: 'engine_scan_paths' };
   if (matched) return { ...source, state: 'reported_scanned', reason: 'sarif_finding' };
@@ -95,6 +220,17 @@ export function coverageGapEntries(files = []) {
 
 export function coverageGaps(files) {
   return coverageGapEntries(files).map(file => file.path);
+}
+
+export function completeFixedCoverage(files, packets) {
+  if (!Array.isArray(files) || !Array.isArray(packets)
+    || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
+  const byPath = new Map(files.map(file => [file.path, file]));
+  return byPath.size === files.length && packets.every(packet => {
+    const file = byPath.get(packet?.path);
+    return file?.submitted === true && file.state === 'reported_scanned'
+      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
+  });
 }
 
 export function summarizeCoverage(rows) {

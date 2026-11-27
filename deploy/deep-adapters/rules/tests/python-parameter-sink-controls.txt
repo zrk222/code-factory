@@ -54,6 +54,21 @@ def run_sql(cursor, sql):
     cursor.execute(sql)
 
 
+def find_by_column(cursor, table, column, value):
+    # ok: python.parameter-sql-text
+    cursor.execute(f'SELECT * FROM "{table}" WHERE `{column}` = %s', (value,))
+
+
+def find_by_escaped_column(cursor, schema, column, value):
+    # ok: python.parameter-sql-text
+    cursor.execute(f"SELECT * FROM \"{schema}\".items WHERE \"{column}\" = %s", (value,))
+
+
+def find_by_quoted_value(cursor, table, value):
+    # ruleid: python.parameter-sql-text
+    cursor.execute(f'SELECT * FROM "{table}" WHERE name = "{value}"')
+
+
 def restore(archive, dest):
     with tarfile.open(archive) as tf:
         for member in tf.getmembers():
@@ -65,3 +80,56 @@ def restore_filtered(archive, dest):
     with tarfile.open(archive) as tf:
         # ok: python.tarfile-extractall-without-filter
         tf.extractall(dest, filter="data")
+
+
+def _members_prefix_only(tar, base):
+    result = []
+    for member in tar:
+        abs_base = os.path.abspath(base)
+        abs_member = os.path.abspath(os.path.join(base, member.name))
+        if not abs_member.startswith(abs_base):
+            raise RuntimeError(member.name)
+        result.append(member)
+    return result
+
+
+def _members_with_sep(tar, base):
+    result = []
+    for member in tar:
+        abs_base = os.path.abspath(base) + os.sep
+        abs_member = os.path.abspath(os.path.join(base, member.name))
+        if not abs_member.startswith(abs_base):
+            raise RuntimeError(member.name)
+        result.append(member)
+    return result
+
+
+def _members_inline_sep(tar, base):
+    result = []
+    for member in tar:
+        abs_member = os.path.abspath(os.path.join(base, member.name))
+        if not abs_member.startswith(os.path.abspath(base) + os.sep):
+            raise RuntimeError(member.name)
+        result.append(member)
+    return result
+
+
+def restore_prefix_filtered(archive, dest):
+    with tarfile.open(archive) as tf:
+        # ruleid: python.tarfile-extractall-without-filter
+        tf.extractall(dest, members=_members_prefix_only(tf, dest))
+
+
+def restore_sep_filtered(archive, dest):
+    with tarfile.open(archive) as tf:
+        # ok: python.tarfile-extractall-without-filter
+        tf.extractall(dest, members=_members_with_sep(tf, dest))
+        # ok: python.tarfile-extractall-without-filter
+        tf.extractall(dest, members=_members_inline_sep(tf, dest))
+
+
+def use_query_builder(conn, table, user):
+    # ok: python.parameter-sql-text
+    conn.execute(select(table).where(table.c.user == user))
+    # ok: python.parameter-sql-text
+    conn.execute(insert(table).values(user=user))

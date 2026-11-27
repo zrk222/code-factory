@@ -1,0 +1,43 @@
+package fixture
+
+import (
+    "fmt"
+    "golang.org/x/crypto/ssh"
+)
+
+func makeCommand(labels map[string]string) []string {
+    for _, text := range labels {
+        // ruleid: go.parameter-shell-command
+        return []string{"/bin/sh", "-c", text}
+    }
+    return nil
+}
+
+func makeArguments(labels map[string]string) []string {
+    for _, text := range labels {
+        // ok: go.parameter-shell-command
+        return []string{"fixture-marker", "--name", text}
+    }
+    return nil
+}
+
+func remoteBatch(host, name string, runner RemoteRunner) error {
+    commands := []string{
+        // ok: go.parameter-shell-command
+        fmt.Sprintf("fixture-marker %v", name),
+    }
+    _, err := runner.RemoteCommandExecute(host, commands, 3)
+    return err
+}
+
+func formatLog(name string) string {
+    // ok: go.parameter-shell-command
+    return fmt.Sprintf("fixture-marker %v", name)
+}
+
+func hostVerification(key ssh.PublicKey) {
+    // ruleid: go.disabled-tls-verification
+    _ = ssh.InsecureIgnoreHostKey()
+    // ok: go.disabled-tls-verification
+    _ = ssh.FixedHostKey(key)
+}

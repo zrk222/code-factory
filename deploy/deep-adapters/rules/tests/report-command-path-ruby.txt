@@ -1,0 +1,65 @@
+class CsvPathFixture
+  def count
+    filename = @csv.path
+    # ruleid: ruby.parameter-shell-command
+    %x(fixture_marker #{filename}).to_i
+  end
+
+  def safe_count
+    filename = @csv.path
+    filename = Shellwords.escape(filename)
+    # ok: ruby.parameter-shell-command
+    %x(fixture_marker #{filename}).to_i
+  end
+
+  def read_lines(filename)
+    # ok: ruby.parameter-shell-command
+    IO.foreach(filename)
+  end
+
+  def read_uri(filename)
+    # ok: ruby.parameter-shell-command
+    URI.open(filename, &:read)
+  end
+
+  def read_fixed(filename)
+    # A fixed prefix prevents pipe dispatch, but filename can still escape the directory.
+    # ruleid: ruby.request-path-traversal
+    IO.foreach(File.join("assets", filename))
+  end
+
+  def read_each
+    each do |filename|
+      # ruleid: ruby.parameter-shell-command
+      open(filename, "r") { |handle| handle.read }
+    end
+  end
+
+  def read_files
+    each do |filename|
+      # ok: ruby.parameter-shell-command
+      File.open(filename, "r") { |handle| handle.read }
+    end
+  end
+end
+
+class LookupFixture < ActionController::Base
+  def find
+    # ruleid: ruby.request-sql-injection
+    Record.find_by(params[:filter])
+  end
+
+  def find_key
+    # ok: ruby.request-sql-injection
+    Record.find_by(id: params[:id])
+  end
+end
+
+class RequestDefaultFixture < ActionController::Base
+  def fallback_remains_local
+    fallback = "fixture_marker fixed"
+    params.fetch(:command, fallback)
+    # ok: ruby.request-command-injection
+    Kernel.system(fallback)
+  end
+end

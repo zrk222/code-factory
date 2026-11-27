@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, linkSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { hunkAdjudicationIdentity, hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -8,8 +8,60 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
-  publishPreparedCase, checkpointable, controlGapDelta, controlIssue } from './recall_harness.mjs';
+  publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint, reviewCapturePath,
+  replayCaseScore } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
+import { compileScannerPathPolicy, completeFixedCoverage, engineTargetIgnores, readRuleMetadata, scannerPathPolicy } from './recall_coverage.mjs';
+import { replayRegisteredCaptures } from './verify_registered_recall.mjs';
+
+test('readRuleMetadata reads byte-pinned YAML and rejects duplicate rule IDs', () => {
+  const rule = '  - metadata: {cwe: [CWE-79]}\n    languages: [javascript]\n    id: fixture\n';
+  assert.deepEqual(readRuleMetadata(Buffer.from('rules:\n' + rule)),
+    [{ id: 'fixture', cwes: ['CWE-79'], languages: ['javascript'], excludes: [] }]);
+  assert.equal(readRuleMetadata('rules:\n' + rule + rule), null);
+});
+
+test('completeFixedCoverage requires unique reports of the exact scanned packets', () => {
+  const packet = { path: 'file.js', bytes: 5, sha256: sha256('value') };
+  const report = { ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' };
+  assert.equal(completeFixedCoverage([report], [packet]), true);
+  assert.equal(completeFixedCoverage([report, report], [packet]), false);
+  assert.equal(completeFixedCoverage([{ ...report, bytes: 6 }], [packet]), false);
+  assert.equal(completeFixedCoverage([{ ...report, reason: 'sarif_finding' }], [packet]), false);
+});
+
+test('scanner path policy requires exclusion by every applicable YAML rule regardless of key order', () => {
+  const inline = '  - id: inline\n    languages: [go]\n    paths:\n      exclude: ["**/*.pb.go"]\n';
+  const block = "  - languages:\n    - go\n    paths:\n      exclude:\n      - '**/*.pb.go'\n    id: block\n";
+  const applicable = "  - languages: [go]\n    id: applicable\n";
+  const include = "  - id: subset\n    languages: [go]\n    paths:\n      include:\n      - '**/*.pb.go'\n";
+  const compile = (...entries) => compileScannerPathPolicy('rules:\n' + entries.join(''));
+  const policy = compile(inline, block);
+  assert.equal(policy('src/message.pb.go'), true);
+  assert.equal(policy('src/gateway.go'), false);
+  assert.equal(compile(applicable, inline)('src/message.pb.go'), false);
+  assert.equal(compile(inline, include)('src/message.pb.go'), false);
+  assert.equal(compile(inline, block.replace('    - go', '    - generic'))('src/message.pb.go'), false);
+  assert.equal(compile(inline, applicable + '    languages: [ruby]\n')('src/message.pb.go'), false);
+  assert.equal(compile(inline, '  - pending\n')('src/message.pb.go'), false);
+});
+
+test('target inventory preserves native scope evidence and refuses ambiguous paths', () => {
+  const root = join(tmpdir(), 'recall-target-inventory');
+  const contents = [
+    `ignored ${join(root, 'dist')} [semgrepignore_patterns_match]`,
+    `selected ${join(root, 'dist', 'explicit.js')}`,
+    `ignored ${join(root, 'big.js')} [too_big]`,
+    `selected ${join(root, 'app [semgrepignore_patterns_match]')}`,
+  ].join('\n');
+  const confirmed = engineTargetIgnores(contents, root);
+  assert.equal(confirmed('dist/generated.js'), true);
+  assert.equal(confirmed('dist/explicit.js'), false);
+  assert.equal(confirmed('big.js'), false);
+  assert.equal(confirmed('missing.js'), false);
+  assert.equal(engineTargetIgnores('warning: unsupported inventory', root), null);
+  assert.equal(engineTargetIgnores('ignored ../outside [semgrepignore_patterns_match]', root), null);
+});
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
 --- a/app/files.py
@@ -99,22 +151,26 @@ test('paired control recovery separates a watchdog kill from unrelated scan fail
   assert.equal(controlIssue({ notes: { failed_exit: false, timeouts: 1 } }), 'timeout');
 });
 
-test('rule families read both inline and block CWE lists', () => {
+test('rule families bind YAML metadata independent of key order and reject ambiguous rules', () => {
   const rules = `rules:
   - id: python.request-path-traversal
     metadata:
       cwe: ["CWE-22"]
-  - id: ruby.request-path-traversal
+  - languages: [ruby]
     metadata:
       cwe:
       - CWE-22
       - CWE-73
+    id: ruby.request-path-traversal
   - id: c.unsafe-gets
     metadata:
-      cwe: ["CWE-242"]
+      cwe: CWE-242
 `;
   assert.deepEqual(ruleFamilies(rules), { 'python.request-path-traversal': ['path'],
     'ruby.request-path-traversal': ['path'], 'c.unsafe-gets': [] });
+  const reordered = rules.replace('id: ruby.request-path-traversal', 'id: python.request-path-traversal');
+  assert.throws(() => ruleFamilies(reordered), /unique ids/);
+  assert.throws(() => ruleFamilies(rules + '  - id: malformed\n    metadata: [CWE-89]\n'), /parseable YAML/);
   const shipped = ruleFamilies(readFileSync('deploy/deep-adapters/rules/semgrep-pattern-limited.yml', 'utf8'));
   const shippedRuleCount = Object.keys(shipped).length;
   assert.ok(shippedRuleCount > 0 && shippedRuleCount <= 64, `shipped rules must stay within the 64-rule ceiling (${shippedRuleCount})`);
@@ -240,6 +296,35 @@ test('gate rejects lost hits, more residuals and control growth', () => {
   assert.equal(gate({ dev: [{ before: result(before.cases, 1), after: result(better.cases, 3) }], controls: [] }).decision, 'REJECT');
   const noisy = gate({ dev: [{ before, after: better }], controls: [{ before: 3, after: 9 }], maxControlIncrease: 5 });
   assert.deepEqual([noisy.decision, noisy.control_increase], ['REJECT', 6]);
+});
+
+test('paired reports expose fixed-side span replacements even at equal counts', () => {
+  const packet = { path: 'sample.py', bytes: 14, sha256: 'a'.repeat(64) };
+  const finding = ['fixture.review', packet.path, 3];
+  const beforeSpan = [1, 0, 4], afterSpan = [6, 0, 9];
+  const record = { ghsa: 'A', status: 'scored', outcome: 'hit', hunk_hit: true,
+    source_packets: { old: [], fixed: [packet] },
+    file_coverage: { old: [], fixed: [{ ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' }] },
+    fix_side_residual: [finding, finding], fix_side_residual_spans: [beforeSpan, beforeSpan] };
+  const report = row => ({ cases: [row], summary: { fix_side_residual_alerts: 2, hunk_hits: 1 } });
+  const compare = row => gate({ dev: [{ before: report(record), after: report(row) }], controls: [] });
+  const verdict = compare({ ...record, fix_side_residual_spans: [beforeSpan, afterSpan] });
+  assert.equal(verdict.decision, 'ACCEPT');
+  assert.deepEqual(verdict.residual, [2, 2]);
+  const detail = { advisory: 'A', path: packet.path, rule: 'fixture.review', line: 3, source_sha256: packet.sha256, count: 1 };
+  assert.deepEqual(verdict.fixed_side_span_delta, { compared_cases: 1, unresolved_advisories: [],
+    added: [{ ...detail, span: afterSpan }], removed: [{ ...detail, span: beforeSpan }] });
+  assert.deepEqual(compare({ ...record, fix_side_residual_spans: undefined }).fixed_side_span_delta, {
+    compared_cases: 0, added: [], removed: [], unresolved_advisories: ['A'],
+  });
+  const failed = { ...record, fix_side_residual: [], fix_side_residual_spans: undefined };
+  for (const fixed of [{ failed_exit: true }, { blocking_parse_errors: 1 }, { timeouts: 1 }]) {
+    assert.deepEqual(compare({ ...failed, scan_sides: { fixed } }).fixed_side_span_delta, {
+      compared_cases: 0, added: [], removed: [], unresolved_advisories: ['A'],
+    });
+  }
+  assert.equal(compare({ ...failed, scan_sides: { old: { failed_exit: true } } })
+    .fixed_side_span_delta.removed[0].count, 2);
 });
 
 test('family transitions distinguish a lost family within a retained hit from incomplete coverage', () => {
@@ -765,6 +850,74 @@ async function feederFixture(run, row = feederRow) {
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
+test('live scoring and replay require rule proof for generic engine skips', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, profile, baseline, opts } = fixture;
+  const scanner = join(root, 'scanner.mjs');
+  const stub = readFileSync(scanner, 'utf8');
+  const marker = 'const nativeErrors =';
+  assert.ok(stub.includes(marker));
+  writeFileSync(scanner, stub.replace(marker, `skipped.push({ path: 'sample.py', reason: ruleText.includes('# size') ? 'exceeded_size_limit' : 'always_skipped' });\n${marker}`));
+  writeFileSync(profile, JSON.stringify({ ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: '2.1.0' }));
+  const input = JSON.parse(readFileSync(manifest, 'utf8')).cases[0];
+  for (const [ruleExcludes, sizeSkip, outcome] of [
+    [true, false, 'miss'], [false, false, 'coverage_incomplete'], [true, true, 'coverage_incomplete'],
+  ]) {
+    const rules = 'rules:\n  - id: fixture.review\n    languages: [python]\n    metadata: {cwe: [CWE-79]}\n# clean-miss\n'
+      + (ruleExcludes ? '    paths: {exclude: ["**/*.py"]}\n' : '') + (sizeSkip ? '# size\n' : '');
+    writeFileSync(baseline, rules);
+    const scored = await scoreManifest(manifest, baseline, { ...opts, 'scanner-path-policy': 'true' });
+    const row = scored.cases[0];
+    assert.equal(row.outcome, outcome);
+    assert.equal(row.file_coverage.old[0].reason, outcome === 'miss' ? 'scanner_path_policy'
+      : sizeSkip ? 'exceeded_size_limit' : 'always_skipped');
+    const retained = {};
+    assert.equal(checkpointArtifactsIntact(workdir, row, retained), true);
+    const replayed = replayCaseScore(realpathSync(workdir), input, row, retained, ruleFamilies(rules),
+      scored.scope, scannerPathPolicy({ engine: 'semgrep', tool_version: '2.1.0' }, rules));
+    assert.equal(replayed.outcome, outcome);
+    assert.deepEqual(replayed.file_coverage, row.file_coverage);
+  }
+}));
+
+test('OpenGrep 1.15 scoring and replay use explicit skips from the retained coverage report', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, profile, baseline, opts } = fixture;
+  const scanner = join(root, 'scanner.mjs');
+  const stub = readFileSync(scanner, 'utf8');
+  const marker = 'const nativeErrors =';
+  assert.ok(stub.includes(marker));
+  writeFileSync(scanner, stub.replace(marker, [
+    "if (process.argv.includes('--x-ls-long')) throw Error('Legacy scanner has no usable inventory');",
+    "if (ruleText.includes('# typed-ignore')) skipped.push({ path: 'sample.py', reason: 'semgrepignore_patterns_match' });",
+    "if (ruleText.includes('# conflicting-skip')) skipped.unshift({ path: 'sample.py', reason: 'exceeded_size_limit' });",
+    marker,
+  ].join('\n')));
+  const legacy = { ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: '1.15.0' };
+  writeFileSync(profile, JSON.stringify(legacy));
+  const input = JSON.parse(readFileSync(manifest, 'utf8')).cases[0];
+  for (const [scenario, outcome] of [
+    ['', 'miss'],
+    ['# conflicting-skip', 'coverage_incomplete'],
+    ['# candidate-parse', 'coverage_incomplete'],
+  ]) {
+    const rules = 'rules:\n  - id: fixture.review\n    languages: [python]\n    metadata: {cwe: [CWE-79]}\n# clean-miss\n# typed-ignore\n'
+      + scenario + '\n';
+    writeFileSync(baseline, rules);
+    const scored = await scoreManifest(manifest, baseline, { ...opts, 'scanner-path-policy': 'true' });
+    const row = scored.cases[0];
+    assert.equal(scored.scanner_path_policy, 'opengrep-1.15.0-coverage-report-v1');
+    assert.equal(row.outcome, outcome);
+    assert.equal(row.file_coverage.old[0].policy, outcome === 'miss' ? 'engine_coverage_ignore' : undefined);
+    assert.equal(row.captures.old.target_inventory, undefined);
+    const retained = {};
+    assert.equal(checkpointArtifactsIntact(workdir, row, retained), true);
+    assert.ok(retained.old.native_report);
+    const replayed = replayCaseScore(realpathSync(workdir), input, row, retained, ruleFamilies(rules),
+      scored.scope, scannerPathPolicy(legacy, rules));
+    assert.equal(replayed.outcome, outcome);
+    assert.deepEqual(replayed.file_coverage, row.file_coverage);
+  }
+}));
+
 test('score rejects invalid options before reading a manifest or invoking the engine', () => {
   const args = ['scripts/recall_harness.mjs', 'score', '--manifest', 'absent-fixture.json',
     '--rules', 'absent-rules.yml', '--out', 'unused-score.json'];
@@ -893,6 +1046,71 @@ test('review-alerts exports pinned old-side reports with distinct spans on one l
   assert.equal(existsSync(output), false);
 }));
 
+test('replayCaseScore and fixed review recompute exact same-line residual spans from pinned packets, rules and diff', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline } = fixture;
+  const scanner = join(root, 'scanner.mjs');
+  const stub = readFileSync(scanner, 'utf8');
+  assert.ok(stub.includes('const results = old &&'));
+  writeFileSync(scanner, stub.replace('const results = old &&', "const results = (old || basename(process.cwd()) === 'new') &&"));
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n');
+  const saved = join(root, 'score.json'), output = join(root, 'fixed-alerts.json');
+  const script = 'scripts/recall_harness.mjs';
+  const scored = spawnSync(process.execPath, [script, 'score', '--manifest', manifest, '--rules', baseline,
+    '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--out', saved], { encoding: 'utf8' });
+  assert.equal(scored.status, 0, scored.stderr);
+  const pinned = readFileSync(saved), score = JSON.parse(pinned);
+  const [row] = score.cases;
+  const expected = [[1, 0, 4], [6, 0, 9]];
+  assert.deepEqual(row.fix_side_residual_spans, expected);
+  const inputs = JSON.parse(readFileSync(manifest, 'utf8'));
+  const retained = {};
+  assert.equal(checkpointArtifactsIntact(workdir, row, retained), true);
+  const recomputed = replayCaseScore(realpathSync(workdir), inputs.cases[0], row, retained,
+    ruleFamilies(readFileSync(baseline, 'utf8')), score.scope);
+  assert.deepEqual(recomputed.fix_side_residual_spans, expected);
+  const replay = () => replayRegisteredCaptures(score, workdir, inputs, readFileSync(baseline, 'utf8'));
+  assert.deepEqual(replay(), { verified_capture_cases: 1, replayed_case_scores: 1, invalid: [], unreproduced: [] });
+  const oldCoverage = row.file_coverage.old[0].state;
+  row.file_coverage.old[0].state = 'unreported';
+  assert.deepEqual(replay().unreproduced, [row.ghsa]);
+  row.file_coverage.old[0].state = oldCoverage;
+  const run = (rules = baseline, destination = output) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
+    '--score-sha256', sha256(readFileSync(saved)), '--workdir', workdir, '--out', destination,
+    '--side', 'fixed', '--rules', rules], { encoding: 'utf8' });
+  const exported = run();
+  assert.equal(exported.status, 0, exported.stderr);
+  assert.deepEqual(JSON.parse(exported.stdout), { alerts: 2, scored_cases: 1, omitted_cases: 0 });
+  const records = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(records.map(alert => alert.span), expected);
+  assert.ok(records.every(alert => alert.side === 'fixed' && alert.on_fix_hunk
+    && alert.source_sha256 === row.source_packets.fixed[0].sha256));
+  rmSync(output);
+  const pinnedRules = readFileSync(baseline);
+  const rulesAlias = join(root, 'rules-alias.yml');
+  linkSync(baseline, rulesAlias);
+  for (const destination of [baseline, rulesAlias]) {
+    const guarded = run(baseline, destination);
+    assert.notEqual(guarded.status, 0, guarded.stderr);
+    assert.match(guarded.stderr, /output is the ruleset/);
+    assert.deepEqual(readFileSync(baseline), pinnedRules);
+  }
+
+  row.fix_side_residual_spans[1] = [7, 0, 9];
+  assert.deepEqual(replay().unreproduced, [row.ghsa]);
+  writeFileSync(saved, JSON.stringify(score));
+  assert.match(run().stderr, /positions or spans differ/);
+  writeFileSync(saved, pinned);
+  const wrong = join(root, 'wrong.yml');
+  writeFileSync(wrong, '# different rules\n');
+  assert.match(run(wrong).stderr, /Review rules digest differs/);
+  row.fix_side_residual_spans[1] = expected[1];
+  const diff = join(workdir, row.captures.fixed.source_root, '..', 'diff.patch');
+  writeFileSync(diff, ' ', { flag: 'a' });
+  assert.deepEqual(replay().unreproduced, [row.ghsa]);
+  assert.match(run().stderr, /Review diff digest differs/);
+  assert.equal(existsSync(output), false);
+}));
+
 test('evaluation refuses a missing or mismatched engine and ruleset drift without writing a new receipt', () =>
   feederFixture(({ root, workdir, manifest, baseline, candidate, profile }) => {
     const output = join(root, 'unqualified.json');
@@ -934,7 +1152,7 @@ test('an empty successful scanner result needs old-side coverage to count as a m
   assert.equal(verdict.decision, 'REJECT');
 
   const checkpoint = join(root, 'checkpoint.json');
-  writeFileSync(checkpoint, JSON.stringify({ schema: 'factory.recall-evaluation.v1', gained: [feederRow.ghsa], dev: [{
+  writeFileSync(checkpoint, JSON.stringify({ schema: 'factory.recall-evaluation.v1', engine: { executable_sha256: sha256(readFileSync(process.execPath)) }, gained: [feederRow.ghsa], dev: [{
     manifest_cases_sha256: before.manifest_cases_sha256, after_evidence: { cases: before.cases },
     cases: [{ ghsa: feederRow.ghsa, before: 'miss', after: 'hit' }],
   }] }));
@@ -1908,6 +2126,27 @@ test('a resumed score reuses only exactly matching completed cases', () => feede
   assert.deepEqual(resumedRetry.resumed_cases, [feederRow.ghsa]);
   assert.deepEqual(resumedRetry.cases, recovered.cases);
   assert.deepEqual(readdirSync(join(fixture.workdir, resumedRetry.scan_directory)), []);
+  const noReports = structuredClone(recoveredCase);
+  const watchdog = { watchdog_timeout: true, failed_exit: true, timeouts: 1 };
+  noReports.initial_captures.old = null;
+  noReports.initial_scan_sides.old = watchdog;
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports), true);
+  for (const field of ['report_sha256', 'coverage_report_sha256', 'target_inventory_sha256']) {
+    noReports.initial_scan_sides.old = { ...watchdog, [field]: 'a'.repeat(64) };
+    assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports), false);
+  }
+  noReports.initial_scan_sides.old = { ...watchdog, watchdog_timeout: false };
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports), false);
+  noReports.initial_scan_sides.old = watchdog;
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, { ...noReports, captures: { ...noReports.captures, old: null } }), false);
+  const checkpoints = readdirSync(checkpointDir).map(name => JSON.parse(readFileSync(join(checkpointDir, name), 'utf8')));
+  const { inputs } = checkpoints.find(({ result }) => result.retried_serially);
+  writeCheckpoint(checkpointDir, inputs, noReports);
+  const resumedWatchdog = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.deepEqual(resumedWatchdog.resumed_cases, [feederRow.ghsa]);
+  assert.deepEqual(resumedWatchdog.cases, [noReports]);
+  assert.deepEqual(readdirSync(join(fixture.workdir, resumedWatchdog.scan_directory)), []);
+  writeCheckpoint(checkpointDir, inputs, recoveredCase);
   const initialReport = join(fixture.workdir, recoveredCase.initial_captures.old.native_report.path);
   writeFileSync(initialReport, '{}');
   assert.equal(checkpointArtifactsIntact(fixture.workdir, recoveredCase), false);
@@ -1968,7 +2207,7 @@ test('scored cases reach the checkpoint directory only under the verified execut
   assert.deepEqual(readdirSync(checkpoints), records);
 }));
 
-test('an interrupted scoring group preserves only earlier verified checkpoints', () => feederFixture(async fixture => {
+test('checkpoint batches keep workers active and preserve only verified results on interruption', () => feederFixture(async fixture => {
   const { root, workdir, manifest, baseline, opts } = fixture;
   const checkpoints = join(root, 'group-checkpoints');
   const casesRoot = join(workdir, 'cases-v4');
@@ -1994,6 +2233,30 @@ test('an interrupted scoring group preserves only earlier verified checkpoints',
   assert.deepEqual(resumed.resumed_cases, cases.slice(0, 16).map(row => row.ghsa));
   assert.equal(resumed.cases.filter(row => row.outcome === 'hit').length, cases.length);
   assert.equal(readdirSync(checkpoints).length, cases.length);
+
+  const scanner = join(root, 'scanner.mjs');
+  const marker = join(root, 'next-group-started');
+  const slow = caseDigest([cases[0]]), next = caseDigest([cases[16]]);
+  const inject = [
+    "const key = basename(dirname(process.cwd()));",
+    "const marker = " + JSON.stringify(marker) + ";",
+    "if (old && key === " + JSON.stringify(next) + ") writeFileSync(marker, '');",
+    "if (old && key === " + JSON.stringify(slow) + ") {",
+    "  const deadline = Date.now() + 25000;",
+    "  while (!existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));",
+    "  if (!existsSync(marker)) throw Error('Checkpoint boundary held an idle worker');",
+    "}",
+  ].join('\n');
+  const script = readFileSync(scanner, 'utf8');
+  const before = "const control = basename(process.cwd()) === 'control';";
+  assert.ok(script.includes(before));
+  writeFileSync(scanner, script.replace(before, inject + '\n' + before));
+  const rollingDir = join(root, 'rolling-checkpoints');
+  const rolling = await scoreManifest(manifest, baseline, { ...settings, jobs: 2, 'checkpoint-dir': rollingDir });
+  assert.deepEqual(rolling.cases.map(row => row.ghsa), cases.map(row => row.ghsa));
+  assert.equal(rolling.cases[0].outcome, 'hit');
+  assert.deepEqual(rolling.summary, resumed.summary);
+  assert.equal(readdirSync(rollingDir).length, cases.length);
 }));
 
 test('incomplete cases and rows with missing artifacts are rescanned, never resumed', () => feederFixture(async fixture => {
@@ -2020,6 +2283,27 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   const fresh = await scoreManifest(manifest, baseline, resumable);
   assert.equal(readdirSync(checkpointDir).length, 1);
   assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0]), true);
+  const prepared = join(workdir, 'cases-v4', caseDigest([feederRow]));
+  const recordPath = join(prepared, 'case.json');
+  const recordBytes = readFileSync(recordPath);
+  const changedRecord = JSON.parse(recordBytes);
+  changedRecord.revisions.old = '4'.repeat(40);
+  writeFileSync(recordPath, JSON.stringify(changedRecord));
+  const rebound = await scoreManifest(manifest, baseline, resumable);
+  assert.deepEqual(rebound.resumed_cases, []);
+  assert.equal(rebound.cases[0].revisions.old, changedRecord.revisions.old);
+  writeFileSync(recordPath, recordBytes);
+  for (const name of ['case.json', 'diff.patch', 'changes.z']) {
+    const path = join(prepared, name);
+    const original = readFileSync(path);
+    const changed = name === 'case.json' ? JSON.stringify({ ...JSON.parse(original), case_sha256: 'a'.repeat(64) })
+      : Buffer.concat([original, Buffer.from('changed')]);
+    writeFileSync(path, changed);
+    const rejected = await scoreManifest(manifest, baseline, resumable);
+    assert.deepEqual(rejected.resumed_cases, [], name);
+    assert.match(rejected.cases[0].detail, /fingerprint differs/);
+    writeFileSync(path, original);
+  }
   const sarif = join(workdir, fresh.cases[0].captures.old.sarif.path);
   writeFileSync(sarif, '{}');
   assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0]), false);
@@ -2047,4 +2331,28 @@ test('assertReviewOutput refuses the score receipt, its aliases and the capture 
   assert.throws(() => assertReviewOutput(join(work, 'alerts.json'), score, realpathSync(work)), /capture workdir/);
   assertReviewOutput(join(root, 'alerts.json'), score, realpathSync(work));
   assert.equal(readFileSync(score, 'utf8'), '{}');
+});
+
+test('assertPinnedRetention requires the bound engine on every retention checkpoint', async () => {
+  const { assertPinnedRetention } = await import('./recall_harness.mjs');
+  const pin = 'a'.repeat(64);
+  const receipt = engine => Buffer.from(JSON.stringify({ schema: 'factory.recall-evaluation.v1', ...(engine ? { engine } : {}) }));
+  assert.throws(() => assertPinnedRetention(receipt(null), pin), /not engine-pinned/);
+  assert.throws(() => assertPinnedRetention(receipt({ executable_sha256: 'b'.repeat(64) }), pin), /engine differs/);
+  assertPinnedRetention(receipt({ executable_sha256: pin }), pin);
+});
+
+test('reviewCapturePath verifies that both literal and resolved files stay within the capture root', t => {
+  const root = mkdtempSync(join(tmpdir(), 'review-capture-path-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const work = join(root, 'work');
+  mkdirSync(work);
+  const capture = join(work, 'capture.json');
+  const outside = join(root, 'outside.json');
+  writeFileSync(capture, '{}');
+  writeFileSync(outside, '{}');
+  symlinkSync(outside, join(work, 'alias.json'));
+  assert.equal(reviewCapturePath(realpathSync(work), 'capture.json'), realpathSync(capture));
+  assert.throws(() => reviewCapturePath(realpathSync(work), '../outside.json'), /leaves the work directory/);
+  assert.throws(() => reviewCapturePath(realpathSync(work), 'alias.json'), /leaves the work directory/);
 });

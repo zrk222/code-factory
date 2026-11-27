@@ -166,6 +166,16 @@ rules:
           - pattern-not-inside: |
               if $OPTIN:
                 ...
+          # An explicit verification setting chooses the verified branch.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: $SAFE if $VERIFY else $DISABLED
+                - metavariable-pattern:
+                    metavariable: $SAFE
+                    pattern: ssl.create_default_context(...)
+                - metavariable-regex:
+                    metavariable: $VERIFY
+                    regex: '(?i)^(?:[A-Za-z_]\w*\.)*verify_(?:ssl|tls)(?:_cert(?:ificate)?)?$'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -181,8 +191,14 @@ rules:
     mode: taint
     pattern-sources:
       - pattern: '$REQ.query'
+        label: REQUEST_INPUT
       - pattern: '$REQ.body'
+        label: REQUEST_INPUT
       - pattern: '$REQ.params'
+        label: REQUEST_INPUT
+      - pattern: process.argv[...]
+        label: CLI_INPUT
+        exact: true
     pattern-sanitizers:
       # if (!isValidIp(ip)) return; allowed.has(id); url.includes(name)
       - by-side-effect: true
@@ -200,6 +216,24 @@ rules:
               - pattern: child_process.exec($COMMAND, ...)
               - pattern: child_process.execSync($COMMAND, ...)
           - focus-metavariable: $COMMAND
+        requires: REQUEST_INPUT
+      - patterns:
+          - pattern: $EXEC($COMMAND, ...)
+          - pattern-either:
+              - pattern-inside: |
+                  var $EXEC = require("child_process").exec;
+                  ...
+              - pattern-inside: |
+                  const $EXEC = require("child_process").exec;
+                  ...
+              - pattern-inside: |
+                  import {exec as $EXEC} from "child_process";
+                  ...
+          - metavariable-pattern:
+              metavariable: $COMMAND
+              pattern: $L + $R
+          - focus-metavariable: $COMMAND
+        requires: CLI_INPUT
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -755,10 +789,31 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+      # Symfony HttpFoundation request bags.
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ->get(...)
+              - pattern: $REQ->query->get(...)
+              - pattern: $REQ->request->get(...)
+              - pattern: $REQ->query->all(...)
+              - pattern: $REQ->request->all(...)
+              - pattern: $REQ->cookies->get(...)
+              - pattern: $REQ->getContent(...)
+          - metavariable-regex: {metavariable: $REQ, regex: '^\$(?i:request|req|httpRequest)$'}
+        exact: true
     pattern-sanitizers:
       - pattern: (int) $VALUE
       - pattern: (integer) $VALUE
       - pattern: intval(...)
+      - patterns:
+          - pattern-either:
+              - pattern: $OBJ->$M(...)
+              - pattern: $M(...)
+          - metavariable-regex: {metavariable: $M, regex: '^(?i:\w*escape\w*|\w*quote\w*|addslashes)$'}
+      # Counts and placeholder lists (implode(',', array_fill(0, count($ids), '?'))) carry no request text.
+      - pattern: count(...)
+      - pattern: array_fill(...)
+      - pattern: str_repeat(...)
       - patterns:
           - pattern: preg_replace($CLASS, ...)
           - metavariable-regex:
@@ -799,6 +854,23 @@ rules:
               - pattern: '\pg_query_params($DB, $VALUE, params: $PARAMS)'
               - pattern: '\pg_query_params(connection: $VALUE, query: $PARAMS)'
               - pattern: '\pg_query_params($VALUE, query: $PARAMS)'
+          - focus-metavariable: $VALUE
+      # A hand-built SQL condition fragment, wherever it is executed later: a value
+      # wrapped in SQL single quotes ($field . " '" . $v . "' "), or a bare comparison
+      # opener ('(storeId = ' . $v). HTML markup is not SQL text.
+      # (PHP concatenation matches associatively: $PRE absorbs any leading operands.)
+      - patterns:
+          - pattern-either:
+              - pattern: $LIT . $VALUE . $R
+              - pattern: $PRE . $LIT . $VALUE . $R
+          - metavariable-regex: {metavariable: $LIT, regex: '(?s)\A[''"](?!.*<\w).*(?:=|<>|!=|<|>|\blike|\bin\s*\(|[(,\s])\s*''[''"]\z'}
+          - metavariable-regex: {metavariable: $R, regex: '\A[''"]''(?:\s|[),]|[''"]\z)'}
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern-either:
+              - pattern: $LIT . $VALUE
+              - pattern: $PRE . $LIT . $VALUE
+          - metavariable-regex: {metavariable: $LIT, regex: '(?is)\A[''"]\s*(?:(?:where|and|or|on|having)\s+|\(\s*)*[\w.`]+\s*(?:=|<>|!=|<=|>=|<|>|like\s|in\s*\()\s*[''"]\z'}
           - focus-metavariable: $VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -909,7 +981,7 @@ rules:
       cwe: ["CWE-98"]
       scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
   - id: php.request-unsafe-deserialization
-    message: Request data reaches unserialize; use a non-executable format with schema validation.
+    message: Review unsafe deserialization and ignored class-filter options. Prefer a non-executable format with schema validation.
     severity: WARNING
     languages: [php]
     mode: taint
@@ -921,6 +993,20 @@ rules:
       - pattern: '$_REQUEST[...]'
         exact: true
       - pattern: '$_COOKIE[...]'
+        exact: true
+      - patterns:
+          - pattern-either:
+              - pattern: unserialize($VALUE, $OPTIONS)
+              - pattern: \unserialize($VALUE, $OPTIONS)
+          - metavariable-regex:
+              metavariable: $OPTIONS
+              regex: '(?s)\A\s*\[\s*[''"]allowedClasses[''"]\s*=>(?!.*[''"]allowed_classes[''"]\s*=>)'
+          - metavariable-pattern:
+              metavariable: $VALUE
+              pattern-either:
+                - pattern: file_get_contents(...)
+                - pattern: (string) file_get_contents(...)
+          - focus-metavariable: $VALUE
         exact: true
     pattern-sanitizers:
       - pattern: (int) $VALUE
@@ -940,38 +1026,52 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-502"]
-      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+      scope: Local PHP request taint and a file-backed call with a misspelled class filter; no interprocedural guarantees.
   - id: go.disabled-tls-verification
     message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
     severity: INFO
     languages: [go]
-    patterns:
-      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
-      - pattern-not-inside:
-          patterns:
-            - pattern-inside: |
-                if $OPTIN { ... }
-            - metavariable-regex:
-                metavariable: $OPTIN
-                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
-      - pattern-either:
-          - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
-          - pattern: "$CONFIG.InsecureSkipVerify = true"
-      # Report only functions whose traffic carries credentials or session material.
-      - pattern-either:
-          - pattern-inside: |
-              func $FUNCTION(...) { $...BODY }
-          - pattern-inside: |
-              func $FUNCTION(...) $RESULT { $...BODY }
-          - pattern-inside: |
-              func ($RECEIVER $TYPE) $FUNCTION(...) { $...BODY }
-          - pattern-inside: |
-              func ($RECEIVER $TYPE) $FUNCTION(...) $RESULT { $...BODY }
-      - metavariable-pattern:
-          metavariable: $...BODY
-          language: generic
-          patterns:
-            - pattern-regex: (?i)(authorization|bearer|setbasicauth|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential)
+    pattern-either:
+      - patterns:
+          - pattern: ssh.InsecureIgnoreHostKey()
+          - pattern-either:
+              - pattern-inside: |
+                  import "golang.org/x/crypto/ssh"
+                  ...
+              - pattern-inside: |
+                  import (
+                    ...
+                    "golang.org/x/crypto/ssh"
+                    ...
+                  )
+                  ...
+      - patterns:
+          # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $OPTIN { ... }
+                - metavariable-regex:
+                    metavariable: $OPTIN
+                    regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
+          - pattern-either:
+              - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+              - pattern: "$CONFIG.InsecureSkipVerify = true"
+          # Report only functions whose traffic carries credentials or session material.
+          - pattern-either:
+              - pattern-inside: |
+                  func $FUNCTION(...) { $...BODY }
+              - pattern-inside: |
+                  func $FUNCTION(...) $RESULT { $...BODY }
+              - pattern-inside: |
+                  func ($RECEIVER $TYPE) $FUNCTION(...) { $...BODY }
+              - pattern-inside: |
+                  func ($RECEIVER $TYPE) $FUNCTION(...) $RESULT { $...BODY }
+          - metavariable-pattern:
+              metavariable: $...BODY
+              language: generic
+              patterns:
+                - pattern-regex: (?i)(authorization|bearer|setbasicauth|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential)
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1020,6 +1120,11 @@ rules:
                   fn $F(..., $CONFIG: boring::ssl::ConnectConfiguration, ...) { ... }
               - pattern-inside: |
                   fn $F(..., mut $CONFIG: boring::ssl::ConnectConfiguration, ...) { ... }
+              # The unqualified SSL ConnectConfiguration type has the same positive verify flag.
+              - pattern-inside: |
+                  fn $F(..., $CONFIG: ConnectConfiguration, ...) { ... }
+              - pattern-inside: |
+                  fn $F(..., mut $CONFIG: ConnectConfiguration, ...) { ... }
               - patterns:
                   - pattern-inside: |
                       $CONFIG.set_verify_hostname($VERIFY);
@@ -1061,6 +1166,7 @@ rules:
           - pattern: "new org.apache.http.conn.ssl.NoopHostnameVerifier()"
           - pattern: "org.apache.http.conn.ssl.SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER"
           - pattern: "org.apache.http.conn.ssl.TrustAllStrategy.INSTANCE"
+          - pattern: new com.vmware.vim25.mo.ServiceInstance($URL, $USER, $PASSWORD, true)
           - pattern: "$BUILDER.loadTrustMaterial($STORE, ($CHAIN, $AUTH) -> true)"
           - pattern: |
               public boolean verify(String $HOST, javax.net.ssl.SSLSession $SESSION) { return true; }
@@ -1141,7 +1247,7 @@ rules:
                 - metavariable-regex:
                     metavariable: $OPTIN
                     regex: >-
-                      (?x)\A\s*(?:(?:\w+\.)*(?:insecure|skip_tls_verify|allow_invalid)\??|\w+\[\s*(?::|["'])(?:insecure|skip_tls_verify|allow_invalid)["']?\s*\])\s*\z
+                      (?x)\A\s*(?:(?:\w+\.)*(?:insecure|skip_tls_verify|allow_invalid)\??|\w+\[\s*(?::|["'])(?:insecure|skip_tls_verify|allow_invalid|insecure-skip-tls-verify)["']?\s*\])(?:\s*==\s*true)?\s*\z
                 - focus-metavariable: $ASSIGN
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -1271,6 +1377,34 @@ rules:
               - pattern: "$CTX.QueryParam(...)"
               - pattern: "$CTX.FormValue(...)"
         exact: true
+      # A struct bound from the request (parseForm(r, form), Decode(&form), c.ShouldBind(&form)).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: "func $F(..., $REQ *http.Request, ...) { ... }"
+                      - pattern-inside: "func ($RECV $RT) $F(..., $REQ *http.Request, ...) { ... }"
+                  - pattern-either:
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $BIND($REQ, $FORM)
+                              - pattern: $BIND($REQ, &$FORM)
+                          - metavariable-regex: {metavariable: $BIND, regex: '(?i)^\w*(?:parse|bind|decode)\w*$'}
+                      - pattern: json.NewDecoder($REQ.Body).Decode($FORM)
+                      - pattern: json.NewDecoder($REQ.Body).Decode(&$FORM)
+                      - pattern: $DEC.Decode(&$FORM, $REQ.Form)
+                      - pattern: $DEC.Decode(&$FORM, $REQ.PostForm)
+                      - pattern: $DEC.Decode(&$FORM, $REQ.URL.Query())
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: "func $F(..., $CTX *gin.Context, ...) { ... }"
+                      - pattern-inside: "func ($RECV $RT) $F(..., $CTX *gin.Context, ...) { ... }"
+                      - pattern-inside: "func $F(..., $CTX echo.Context, ...) $RET { ... }"
+                      - pattern-inside: "func ($RECV $RT) $F(..., $CTX echo.Context, ...) $RET { ... }"
+                  - pattern: $CTX.$BIND(&$FORM)
+                  - metavariable-regex: {metavariable: $BIND, regex: '^(?:ShouldBind|Bind)(?:JSON|Query|Uri|Form|XML|YAML)?$'}
+          - focus-metavariable: $FORM
     pattern-sanitizers:
       - pattern-either:
           - pattern: strconv.Atoi(...)
@@ -1303,7 +1437,8 @@ rules:
                   - pattern: $DB.$METHOD(...)
                   - metavariable-regex:
                       metavariable: $DB
-                      regex: (?i)^(?!.*stmt).*(db|tx|conn|pool|sql|database|gorm)\w*$
+                      # A handle accessor such as sqldb.GetDB(nil) counts as the handle.
+                      regex: (?i)^(?!.*stmt).*(db|tx|conn|pool|sql|database|gorm)\w*(?:\([^()]*\))?$
           - focus-metavariable: $VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -1314,7 +1449,7 @@ rules:
       cwe: ["CWE-89"]
       scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
   - id: java.request-command-injection
-    message: Request data reaches a command operand; review this local source-to-sink candidate.
+    message: Review request-controlled command operands or public script evaluators using Nashorn with Java access enabled.
     severity: INFO
     languages: [java]
     mode: taint
@@ -1334,6 +1469,8 @@ rules:
               - pattern-inside: "$RET $F(..., @PathVariable $T $P, ...) { ... }"
               - pattern-inside: "$RET $F(..., @PathVariable(...) $T $P, ...) { ... }"
           - pattern: $P
+      - pattern: new javax.script.ScriptEngineManager().getEngineByName("Nashorn")
+        exact: true
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -1351,6 +1488,20 @@ rules:
               - pattern: "Runtime.getRuntime().exec($VALUE)"
               - pattern: "(java.lang.Runtime $R).exec($VALUE)"
           - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: $ENGINE = $INITIALIZER
+          - pattern-inside: |
+              class $OWNER {
+                ...
+                static javax.script.ScriptEngine $ENGINE;
+                ...
+                public static $RESULT $RUN(String $CODE, ...) {
+                  ...
+                  return $ENGINE.eval($CODE, ...);
+                }
+                ...
+              }
+          - focus-metavariable: $INITIALIZER
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1358,7 +1509,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-78"]
-      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+      scope: Local request taint to command operands, or a class-bound Nashorn initializer used by a public script evaluator.
   - id: java.request-sql-injection
     message: Request data reaches a sql operand; review this local source-to-sink candidate.
     severity: INFO
@@ -1419,13 +1570,15 @@ rules:
     languages: [csharp]
     mode: taint
     pattern-sources:
-      - patterns:
+      - label: REQ
+        patterns:
           - pattern-inside: $RET $F(..., Microsoft.AspNetCore.Http.HttpRequest $REQ, ...) { ... }
           - pattern-either:
               - pattern: $REQ.Query[...]
               - pattern: $REQ.Form[...]
         exact: true
-      - patterns:
+      - label: REQ
+        patterns:
           - pattern-inside: |
               class $C : $BASE { ... }
           - metavariable-regex:
@@ -1438,14 +1591,65 @@ rules:
               - pattern: Request.Query[...]
               - pattern: Request[...]
         exact: true
+      # cmd.exe /C (or /K) command text with a non-literal interpolation or
+      # concatenation: cmd parses the whole text, so the value can add commands.
+      - label: INTERP
+        patterns:
+          # Literal gate for the prefilter: only files that name cmd.exe are parsed.
+          - pattern-inside:
+              patterns:
+                - pattern-regex: '(?s)\A(?=.*"(?i:cmd(?:\.exe)?)").*'
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd.exe";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: Process.Start("cmd.exe", $ARGS)
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd", $ARGS)
+              - pattern: Process.Start("cmd", $ARGS)
+              - pattern: System.Diagnostics.Process.Start("cmd.exe", $ARGS)
+              - pattern: System.Diagnostics.Process.Start("cmd", $ARGS)
+          - metavariable-regex: {metavariable: $ARGS, regex: '^(?:\$@?"\s*/[cCkK]\b.*(?<!\{)\{(?!\{)|"\s*/[cCkK]\b[^"]*"\s*\+)'}
+          - focus-metavariable: $ARGS
     pattern-sinks:
-      - patterns:
+      - requires: REQ or INTERP
+        patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd.exe";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd.exe", $ARGS)
+              - pattern: Process.Start("cmd.exe", $ARGS)
+              - patterns:
+                  - pattern-inside: |
+                      $PSI.FileName = "cmd";
+                      ...
+                  - pattern: $PSI.Arguments = $ARGS
+              - pattern: new ProcessStartInfo("cmd", $ARGS)
+              - pattern: new System.Diagnostics.ProcessStartInfo("cmd", $ARGS)
+              - pattern: Process.Start("cmd", $ARGS)
+          - focus-metavariable: $ARGS
+      - requires: REQ or INTERP
+        patterns:
           - pattern: System.Diagnostics.Process.Start($SHELL, $ARGS)
           - metavariable-regex:
               metavariable: $SHELL
               regex: ^"(/bin/sh|/bin/bash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)"$
           - focus-metavariable: $ARGS
-      - patterns:
+      - requires: REQ
+        patterns:
           - pattern: System.Diagnostics.Process.Start($VALUE)
           - focus-metavariable: $VALUE
     paths:
@@ -1521,7 +1725,65 @@ rules:
           - pattern: "\"'\" + (string)$VALUE + \"'\""
         label: SQL_LITERAL_VALUE
         exact: true
+      # The older C# parser needs the property span backed by the exact constructor and builder use.
+      - patterns:
+          - pattern-inside: |
+              class $OWNER : ISqlFragment {
+                  ...
+                  public $OWNER(..., string $INPUT = $DEFAULT, ...) {
+                      ...
+                      $FIELD = $INPUT;
+                      ...
+                  }
+                  ...
+                  public void $APPLY(ICommandBuilder $BUILDER) {
+                      ...
+                      $BUILDER.AppendWithParameters($SQL, ...)[...].Value = $PARAM;
+                      ...
+                  }
+                  ...
+              }
+          - pattern-regex: >-
+              (?mx)
+              ^[ \t]*public\s+[A-Za-z_]\w*\s*\(
+              [^(){};]{0,350}?\bstring\s+(?P<arg>[A-Za-z_]\w*)\s*=[^(){};]{1,120}?
+              \)\s*\{[^}]{0,500}?
+              \b(?P<field>[A-Za-z_]\w*)\s*=\s*\k<arg>\s*;
+              [\s\S]{0,1800}?
+              ^[ \t]*private\s+string\s+(?P<property>[A-Za-z_]\w*)\s*=>\s*(?://[^\r\n]*\s*)*
+              (?P<VALUE>\$"[^"\r\n]*\x27\{\k<field>\}\x27::regconfig[^"\r\n]*");
+              [\s\S]{0,600}?
+              \b[A-Za-z_]\w*\.AppendWithParameters\(\s*\k<property>\b
+          - pattern-not-inside: |
+              class $OWNER : ISqlFragment {
+                  ...
+                  private static readonly System.Text.RegularExpressions.Regex $FILTER = new(
+                      @"^[a-zA-Z_][a-zA-Z0-9_]{0,62}(\.[a-zA-Z_][a-zA-Z0-9_]{0,62})?$",
+                      System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                  ...
+                  public $OWNER(..., string $INPUT = $DEFAULT, ...) {
+                      ...
+                      $VALIDATE($INPUT);
+                      $FIELD = $INPUT;
+                      ...
+                  }
+                  ...
+                  private static void $VALIDATE(string $ARG) {
+                      if ($ARG is null) {
+                          throw ...;
+                      }
+                      if (!$FILTER.IsMatch($ARG)) {
+                          throw ...;
+                      }
+                  }
+                  ...
+              }
+          - focus-metavariable: $VALUE
+        label: SQL_REGCONFIG_EXPRESSION
+        exact: true
     pattern-sinks:
+      - pattern-regex: '\$"[^"\r\n]*::regconfig[^"\r\n]*"'
+        requires: SQL_REGCONFIG_EXPRESSION
       - patterns:
           - pattern-either:
               - pattern: new System.Data.SqlClient.SqlCommand($VALUE, ...)
@@ -1583,6 +1845,19 @@ rules:
               - pattern: params.fetch(...)
               - pattern: params.dig(...)
         exact: true
+      - patterns:
+          - pattern-inside: |
+              class $C < $BASE
+                ...
+              end
+          - metavariable-regex:
+              metavariable: $BASE
+              regex: ^(.*Controller|.*ControllerBase|ActionController::(Base|API)|Sinatra::Base|Grape::API)$
+          - pattern: params.fetch($KEY)
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: '^:[A-Za-z_][A-Za-z0-9_]*[!?]?$'
+        exact: false
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -1635,6 +1910,12 @@ rules:
           - pattern-either:
               - pattern: $MODEL.find_by_sql($VALUE, ...)
               - pattern: $MODEL.where($VALUE)
+              # Finders given a whole request value treat a string as a SQL condition.
+              - pattern: $MODEL.find_by($VALUE)
+              - pattern: $MODEL.find_by!($VALUE)
+              - pattern: $MODEL.find_or_create_by($VALUE)
+              - pattern: $MODEL.find_or_create_by!($VALUE)
+              - pattern: $MODEL.find_or_initialize_by($VALUE)
           - metavariable-regex: {metavariable: $MODEL, regex: '^[A-Z]\w*$'}
           # Non-array calls focus their SQL argument; array templates are separate.
           - pattern-not: $MODEL.find_by_sql([...], ...)
@@ -1814,6 +2095,33 @@ rules:
               - pattern-not: $T.extractall(..., filter=$F, ...)
               - pattern-not: $T.extract(..., filter=$F, ...)
               - pattern-not: $T.extractall(..., members=$M, ...)
+          # A members= filter defined in the module whose only containment test is a
+          # prefix check without a separator ("/base-evil" starts with "/base").
+          - patterns:
+              - pattern: $T.extractall(..., members=$MF(...), ...)
+              - pattern-not: $T.extractall(..., filter=$F, ...)
+              - pattern-inside: |
+                  def $MF(...):
+                    ...
+                    if not $ABS.startswith($PREFIX):
+                      ...
+                    ...
+                  ...
+              - metavariable-regex:
+                  metavariable: $PREFIX
+                  regex: '^(?!.*\bos\.sep\b)(?!.*\+\s*[''"]/[''"])(?!.*os\.path\.join\(.*,\s*(?:""|''''|[''"]/[''"])\s*\)).*$'
+              - pattern-not-inside: |
+                  def $MF(...):
+                    ...
+                    $PREFIX = <... os.sep ...>
+                    ...
+                  ...
+              - pattern-not-inside: |
+                  def $MF(...):
+                    ...
+                    $PREFIX = os.path.join(..., "")
+                    ...
+                  ...
       - pattern-either:
           - patterns:
               - pattern-either:
@@ -2976,14 +3284,12 @@ rules:
         - pattern: params.dig(...)
       exact: true
       label: REQUEST
-    # Method parameters: storage keys and relative names may only reach a
-    # File.join under a root; any path-named parameter may reach a file server.
     - patterns:
       - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
       - pattern: $P
       - metavariable-regex:
           metavariable: $P
-          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path|filename|file_name)$
+          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path)$
       label: PARAM_KEY
     - patterns:
       - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
@@ -2992,6 +3298,9 @@ rules:
           metavariable: $P
           regex: ^(?i)\w*(path|file)\w*$
       label: PARAM_PATH
+    - pattern: File.join(...)
+      requires: PARAM_PATH
+      label: JOINED_PARAM_PATH
     pattern-sanitizers:
     - pattern: File.basename(...)
     - pattern: $X.to_i
@@ -3121,6 +3430,10 @@ rules:
         - pattern: serve_file($P, ...)
       - focus-metavariable: $P
       requires: REQUEST or PARAM_KEY or PARAM_PATH
+    - patterns:
+      - pattern: IO.foreach($P, ...)
+      - focus-metavariable: $P
+      requires: JOINED_PARAM_PATH
     paths:
       exclude:
       - '**/test/**'
@@ -3255,6 +3568,14 @@ rules:
       - pattern: e(...)
       - pattern: filter_var(...)
       - pattern: json_encode(...)
+      # Only the numeric result is safe to place in markup.
+      - patterns:
+          - pattern-either:
+              - pattern: $A * $B
+              - pattern: $A - $B
+              - pattern: $A / $B
+              - pattern: $A % $B
+        exact: true
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3418,7 +3739,7 @@ rules:
           - pattern-inside: |
               def $F(..., $P, ...):
                 ...
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|cmd|cmds|command|commands|cmdline|cmd_line|shell_cmd|script|argv|args)$)\w+$'}
     pattern-sanitizers:
       - pattern: shlex.quote(...)
@@ -3527,7 +3848,7 @@ rules:
       # reports (same receivers, same child_process bindings) is reported once, there.
       # Templates built elsewhere, or passed to any other receiver, stay reported here.
       - patterns:
-          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
           - pattern-not-inside:
               patterns:
                 - pattern-either:
@@ -3612,7 +3933,7 @@ rules:
     pattern-sources:
       - patterns:
           - pattern-inside: function $F(..., $P, ...) { ... }
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
     pattern-sanitizers:
       - pattern: escapeshellarg(...)
@@ -3650,39 +3971,93 @@ rules:
       cwe: ["CWE-78"]
       scope: Function parameters to shell-parsed exec/system/popen text in the same function.
   - id: go.parameter-shell-command
-    message: A function parameter is built into shell command text; pass it as a separate exec.Command argument instead of through sh -c.
+    message: A function parameter is built into shell command text, or passed to git as a positional argument that could be read as an option; pass it as a separate exec.Command argument instead of through sh -c, and put "--" before git positional arguments.
     severity: INFO
     languages: [go]
     mode: taint
     pattern-sources:
-      - patterns:
-          - pattern-either:
-              - pattern-inside: func $F(..., $P $T, ...) { ... }
-              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
-          - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv|ctx)$)\w+$'}
+    - patterns:
+      - pattern-either:
+        - pattern-inside: func $F(..., $P $T, ...) { ... }
+        - pattern-inside: func $F(..., $P $T, ...) $R { ... }
+        - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
+        - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
+      - pattern: $P
+      - metavariable-regex:
+          metavariable: $P
+          regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv|ctx)$)\w+$
+      label: PARAMETER
+    - patterns:
+      - pattern-inside: "func $F(..., $SET map[string]string, ...) []string {\n  ...\n  for $KEY, $VALUE := range $SET { ... }\n  ...\n}\n"
+      - metavariable-regex:
+          metavariable: $F
+          regex: (?i)^\w*(command|cmd|healthcheck|probe)\w*$
+      - focus-metavariable: $VALUE
+      label: COMMAND_MAP_VALUE
     pattern-sanitizers:
       - pattern: strconv.Itoa(...)
       - pattern: strconv.Quote(...)
       - pattern: shellescape.Quote(...)
     pattern-sinks:
-      - patterns:
+    - patterns:
+      - pattern-either:
+        - pattern: exec.Command($SHELL, $FLAG, $CMD, ...)
+        - pattern: exec.CommandContext($C, $SHELL, $FLAG, $CMD, ...)
+      - metavariable-regex:
+          metavariable: $SHELL
+          regex: ^"(/bin/|/usr/bin/)?(sh|bash|zsh|cmd|cmd\.exe|powershell|pwsh)"$
+      - metavariable-regex:
+          metavariable: $FLAG
+          regex: ^"(-c|/c|/C|-Command)"$
+      - focus-metavariable: $CMD
+      requires: PARAMETER
+    - patterns:
+      - pattern-inside:
+          patterns:
+          - pattern-regex: (?s)\A(?=.*(?:"git"|\b(?i:git|gitcmd|rungit|execgit|gitexec|gitrun|gitoutput)\()).*
+      - pattern-either:
+        - pattern: exec.Command("git", ..., $SUB, ..., $X, ...)
+        - pattern: exec.CommandContext($CTX, "git", ..., $SUB, ..., $X, ...)
+        - patterns:
+          - pattern: $G.$GIT(..., $SUB, ..., $X, ...)
+          - metavariable-regex:
+              metavariable: $GIT
+              regex: ^(?i:git|gitcmd|rungit|execgit|gitexec|gitrun|gitoutput)$
+      - metavariable-regex:
+          metavariable: $SUB
+          regex: ^"(?:clone|fetch|pull|push|ls-remote|checkout|switch|reset|archive|log|show|diff|rev-parse|rev-list|cat-file|blame|branch|tag|merge|rebase|cherry-pick|submodule|worktree|grep)"$
+      - metavariable-regex:
+          metavariable: $X
+          regex: ^(?!["`])
+      - pattern-not: exec.Command(..., "--", ..., $X, ...)
+      - pattern-not: exec.CommandContext(..., "--", ..., $X, ...)
+      - pattern-not: $G.$GIT(..., "--", ..., $X, ...)
+      - pattern-not-inside:
+          patterns:
           - pattern-either:
-              - pattern: exec.Command($SHELL, $FLAG, $CMD, ...)
-              - pattern: exec.CommandContext($C, $SHELL, $FLAG, $CMD, ...)
-          - metavariable-regex: {metavariable: $SHELL, regex: '^"(/bin/|/usr/bin/)?(sh|bash|zsh|cmd|cmd\.exe|powershell|pwsh)"$'}
-          - metavariable-regex: {metavariable: $FLAG, regex: '^"(-c|/c|/C|-Command)"$'}
-          - focus-metavariable: $CMD
+            - pattern: exec.Command(..., $OPT, $X, ...)
+            - pattern: exec.CommandContext(..., $OPT, $X, ...)
+            - pattern: $G.$GIT(..., $OPT, $X, ...)
+          - metavariable-regex:
+              metavariable: $OPT
+              regex: ^"(?:-C|-c|-b|-B|-o|-m|-F|--branch|--depth|--git-dir|--work-tree|--origin|--reference|--template|--separate-git-dir|--message|--file|--config)"$
+      - focus-metavariable: $X
+      requires: PARAMETER
+    - patterns:
+      - pattern: return []string{$SHELL, "-c", $CMD}
+      - metavariable-regex:
+          metavariable: $SHELL
+          regex: ^"(/bin/|/usr/bin/)?(sh|bash|zsh)"$
+      - focus-metavariable: $CMD
+      requires: COMMAND_MAP_VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
       confidence: LOW
-      cwe: ["CWE-78"]
-      scope: Function parameters to the text of an sh -c style exec.Command in the same function.
+      cwe: ["CWE-78", "CWE-88"]
+      scope: Function parameters to the text of an sh -c style exec.Command, or to git positional arguments without "--", in the same function.
   - id: ruby.parameter-shell-command
     message: A method parameter reaches a shell command or an API that can start a process. Use separate arguments or an explicit file API.
     severity: INFO
@@ -3699,12 +4074,27 @@ rules:
                   def self.$F(..., $P, ...)
                     ...
                   end
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+        label: METHOD_PARAMETER
+      - patterns:
+          - pattern: $VALUE = $FIELD.path
+          - metavariable-regex: {metavariable: $FIELD, regex: '^@\w+$'}
+          - focus-metavariable: $VALUE
+        label: FILE_PROPERTY
+        by-side-effect: true
+      - patterns:
+          - pattern-inside: |
+              each do |$ITEM|
+                ...
+              end
+          - focus-metavariable: $ITEM
+        label: FILE_LIST_ITEM
     pattern-sanitizers:
       - pattern: Shellwords.escape(...)
       - pattern: $X.shellescape
       - pattern: $X.to_i
+        exact: true
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3722,6 +4112,7 @@ rules:
               patterns:
                 - pattern-not: '[...]'
           - focus-metavariable: $CMD
+        requires: METHOD_PARAMETER
       - patterns:
           - pattern: Kernel.open($PATH, ...)
           - metavariable-regex:
@@ -3729,7 +4120,28 @@ rules:
               regex: >-
                 (?s)\A(?!\s*(?:::)?File\s*\.\s*join\s*\(\s*(?:'[^|'\\][^'\\]*'|"[^|"\\#][^"\\#]*")\s*,).+
           - focus-metavariable: $PATH
+        requires: METHOD_PARAMETER
       - pattern: '`...#{$X}...`'
+        requires: METHOD_PARAMETER
+      - patterns:
+          - pattern-regex: '%x[({\[<][^\r\n]*#\{\s*(?P<ARG>[_a-zA-Z]\w*)\s*\}'
+          - focus-metavariable: $ARG
+        requires: FILE_PROPERTY
+      - patterns:
+          - pattern: |
+              open($ITEM, "r", ...) do |$FILE|
+                ...
+              end
+          - pattern-not-inside: |
+              class $CLASS
+                ...
+                def open(...)
+                  ...
+                end
+                ...
+              end
+          - focus-metavariable: $ITEM
+        requires: FILE_LIST_ITEM
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -3748,7 +4160,7 @@ rules:
           - pattern-inside: |
               def $F(..., $P, ...):
                 ...
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|raw_sql|apps|schema_editor)$)\w+$'}
     pattern-sanitizers:
       - pattern: int(...)
@@ -3760,6 +4172,10 @@ rules:
       - pattern: $X.quote_ident(...)
       - pattern: $X.escape_string(...)
       - pattern: $X.literal(...)
+      # A quoted SQL identifier in an f-string (FROM "{table}", `{column}`): a double quote
+      # after a keyword, name, '.', ',' or '(' (never a comparison or LIKE), or a backtick.
+      - pattern-regex: '(?i)(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*\\?"\{[^{}"\\\n]*\}\\?"'
+      - pattern-regex: '`\{[^{}`\n]*\}`'
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3777,7 +4193,7 @@ rules:
                     - pattern: '"...".format(...)'
                     - pattern: '"..." + $X'
                     - pattern: '$X + "..."'
-                    - pattern: $NAME
+                    - pattern-regex: ^[A-Za-z_][\w.]*$
           - focus-metavariable: $Q
       - patterns:
           - pattern-either:
@@ -3798,118 +4214,179 @@ rules:
     languages: [php]
     mode: taint
     pattern-sources:
-      - patterns:
+      - label: PARAM
+        patterns:
           - pattern-inside: function $F(..., $P, ...) { ... }
-          - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
+          - focus-metavariable: $P
+      # Table and column names are identifiers, except where an interpolated SQL string
+      # quotes them as a value ("table_info('$table')").
+      - label: NAME
+        patterns:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?i:table|column|columns)$'}
+          - focus-metavariable: $P
     pattern-sanitizers:
-      - patterns:
-          - pattern: $OBJ->$M(...)
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build\w*|in_set|wrap\w*)$
-      - patterns:
-          - pattern: $FN(...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?i:\w*escape\w*|\w*quote\w*|addslashes)$
-      - pattern: intval(...)
-      - pattern: (int) $V
-      - pattern: (float) $V
-      - pattern: $DB->quote(...)
-      - pattern: $DB->escape(...)
-      - pattern: $DB->escapeString(...)
-      - pattern: $DB->real_escape_string(...)
-      - pattern: mysqli_real_escape_string(...)
-      - pattern: $DB->quoteIdentifier(...)
-      - pattern: esc_sql(...)
-      - pattern: $DB->prepare(...)
-      - patterns:
-          - pattern: $OBJ->$M(...)
-          - metavariable-regex: {metavariable: $M, regex: '^(?i:compile|wrap|quote|escape|sanitize|grammar)\w*$'}
-      # PHP arithmetic yields a number whatever its operands were.
-      - pattern: $A * $B
-      - pattern: $A - $B
-      - pattern: $A / $B
-      - pattern: $A % $B
-      - pattern: count(...)
-      - pattern: time()
+    - patterns:
+      - pattern: $OBJ->$M(...)
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build\w*|in_set|wrap\w*|qstr|addq)$
+    - patterns:
+      - pattern: $FN(...)
+      - metavariable-regex:
+          metavariable: $FN
+          regex: ^(?i:\w*escape\w*|\w*quote\w*|addslashes)$
+    - pattern: intval(...)
+    - pattern: (int) $V
+    - pattern: (float) $V
+    - pattern: $DB->quote(...)
+    - pattern: $DB->escape(...)
+    - pattern: $DB->escapeString(...)
+    - pattern: $DB->real_escape_string(...)
+    - pattern: mysqli_real_escape_string(...)
+    - pattern: $DB->quoteIdentifier(...)
+    - pattern: esc_sql(...)
+    - pattern: $DB->prepare(...)
+    - patterns:
+      - pattern: $OBJ->$M(...)
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^(?i:compile|wrap|quote|escape|sanitize|grammar)\w*$
+    - pattern: $A * $B
+    - pattern: $A - $B
+    - pattern: $A / $B
+    - pattern: $A % $B
+    - pattern: count(...)
+    - pattern: time()
+    - pattern-regex: '`(?:\{\$[^{}`"\n]+\}|\$\w+(?:->\w+)*)`'
+    - patterns:
+      - pattern: $QL . $QX . $QR
+      - metavariable-regex:
+          metavariable: $QL
+          regex: (?s)\A['"].*`['"]\z
+      - metavariable-regex:
+          metavariable: $QR
+          regex: \A['"]`
+      - focus-metavariable: $QX
+    - pattern: array_map('intval', ...)
+      exact: true
     pattern-sinks:
-      - patterns:
+    - requires: PARAM
+      patterns:
+      - pattern-either:
+        - pattern: $DB->query($Q, ...)
+        - pattern: $DB->exec($Q)
+        - pattern: $DB->executeQuery($Q, ...)
+        - pattern: $DB->executeStatement($Q, ...)
+        - pattern: $DB->fetchAllAssociative($Q, ...)
+        - pattern: $DB->fetchAssociative($Q, ...)
+        - pattern: $DB->fetchOne($Q, ...)
+        - pattern: $DB->fetchFirstColumn($Q, ...)
+        - pattern: $DB->get_results($Q, ...)
+        - pattern: $DB->get_row($Q, ...)
+        - pattern: $DB->get_var($Q, ...)
+      - metavariable-regex:
+          metavariable: $DB
+          regex: ^\$
+      - metavariable-regex:
+          metavariable: $Q
+          regex: ^[^\[]
+      - metavariable-pattern:
+          metavariable: $Q
+          patterns:
           - pattern-either:
-              - pattern: $DB->query($Q, ...)
-              - pattern: $DB->exec($Q)
-              - pattern: $DB->executeQuery($Q, ...)
-              - pattern: $DB->executeStatement($Q, ...)
-              - pattern: $DB->fetchAllAssociative($Q, ...)
-              - pattern: $DB->fetchAssociative($Q, ...)
-              - pattern: $DB->fetchOne($Q, ...)
-              - pattern: $DB->fetchFirstColumn($Q, ...)
-              - pattern: $DB->get_results($Q, ...)
-              - pattern: $DB->get_row($Q, ...)
-              - pattern: $DB->get_var($Q, ...)
-          - metavariable-regex: {metavariable: $DB, regex: '^\$'}
-          - metavariable-regex: {metavariable: $Q, regex: '^[^\[]'}
-          - metavariable-pattern:
-              metavariable: $Q
+            - pattern: $A . $B
+            - pattern: sprintf(...)
+            - pattern: \sprintf(...)
+            - pattern: '"..."'
+            - pattern-regex: ^\$\w+$
+      - focus-metavariable: $Q
+    - requires: PARAM
+      patterns:
+      - pattern-either:
+        - patterns:
+          - pattern: $this->$ADO($Q, ...)
+          - pattern-inside:
               patterns:
-                - pattern-either:
-                    - pattern: $A . $B
-                    - pattern: sprintf(...)
-                    - pattern: \sprintf(...)
-                    - pattern: '"..."'
-                    - pattern-regex: ^\$\w+$
-          - focus-metavariable: $Q
-      - patterns:
+              - pattern: class $ADOC extends $ADOB { ... }
+              - metavariable-regex:
+                  metavariable: $ADOB
+                  regex: ^(?i:ado)\w*$
+        - patterns:
+          - pattern: $DB->$ADO($Q, ...)
+          - metavariable-regex:
+              metavariable: $DB
+              regex: ^\$(?:this->)?(?i:_?(?:\w*db|conn\w*|connection|database|adodb\w*))$
+      - metavariable-regex:
+          metavariable: $Q
+          regex: ^(?![\[]|array\s*\()
+      - metavariable-regex:
+          metavariable: $ADO
+          regex: ^(?i:execute|getone|getall|getrow|getcol|getassoc|getarray|selectlimit|cacheexecute|cachegetone|cachegetall|cachegetrow|cachegetcol|cacheselectlimit)$
+      - metavariable-pattern:
+          metavariable: $Q
+          patterns:
           - pattern-either:
-              - pattern: mysqli_query($C, $Q, ...)
-              - pattern: DB::select($Q, ...)
-              - pattern: DB::statement($Q, ...)
-              - pattern: DB::unprepared($Q)
-          - metavariable-pattern:
-              metavariable: $Q
-              patterns:
-                - pattern-either:
-                    - pattern: $A . $B
-                    - pattern: sprintf(...)
-                    - pattern: '"..."'
-                    - pattern-regex: ^\$\w+$
-          - focus-metavariable: $Q
-      # SQL text assembled from a parameter inside a quoted SQL value
-      # ('... = \'' . $v, 'LIKE \'%' . $v, sprintf("... '%s'", $v)), wherever it
-      # is executed later. SQL compilers (Grammar/Builder/Compiler classes) are
-      # left out: they assemble already-quoted pieces by design.
-      - patterns:
-          - pattern: $LIT . $X
-          - metavariable-pattern:
-              metavariable: $LIT
-              patterns:
-                - pattern: '"..."'
-                # One regex over the whole literal, delimiters included (two
-                # pattern-regex terms would intersect their match ranges): SQL text
-                # whose content ends inside a value: = ', LIKE \'%, IN (, \', or a
-                # lone backtick opening a quoted identifier ('`' . $column).
-                - pattern-regex: '(?is)\A[''"]`[''"]\z|\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\''%?|"%?|''%?|`)[''"]\z'
-          - pattern-not-inside:
-              patterns:
-                - pattern: class $C extends $B { ... }
-                - metavariable-regex:
-                    metavariable: $C
-                    regex: (?i).*(Grammar|Builder|Compiler|Dialect|Platform).*
-          # The body of a quoting or escaping helper wraps its argument by design.
-          - pattern-not-inside:
-              patterns:
-                - pattern: function $QF(...) { ... }
-                - metavariable-regex: {metavariable: $QF, regex: '(?i).*(quote|escape).*'}
-          - focus-metavariable: $X
-      - patterns:
-          - pattern: sprintf($FMT, ..., $X, ...)
-          - metavariable-pattern:
-              metavariable: $FMT
-              patterns:
-                - pattern: '"..."'
-                - pattern-regex: '(?is)\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?([''"](%%)*%?%s(%%)*%?[''"]|\\[''"]%s).*\z'
-          - focus-metavariable: $X
+            - pattern: $A . $B
+            - pattern: sprintf(...)
+            - pattern: \sprintf(...)
+            - pattern: '"..."'
+            - pattern-regex: ^\$\w*(?i:sql|query)\w*$
+      - focus-metavariable: $Q
+    - requires: PARAM
+      patterns:
+      - pattern-either:
+        - pattern: mysqli_query($C, $Q, ...)
+        - pattern: DB::select($Q, ...)
+        - pattern: DB::statement($Q, ...)
+        - pattern: DB::unprepared($Q)
+      - metavariable-pattern:
+          metavariable: $Q
+          patterns:
+          - pattern-either:
+            - pattern: $A . $B
+            - pattern: sprintf(...)
+            - pattern: '"..."'
+            - pattern-regex: ^\$\w+$
+      - focus-metavariable: $Q
+    - requires: PARAM
+      patterns:
+      - pattern: $LIT . $X
+      - metavariable-regex:
+          metavariable: $LIT
+          regex: (?s)\A(?=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\z)(?:(?is)\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?['\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\'%?|"%?|'%?)['"]\z)
+      - pattern-not-inside:
+          patterns:
+          - pattern: class $C extends $B { ... }
+          - metavariable-regex:
+              metavariable: $C
+              regex: (?i).*(Grammar|Builder|Compiler|Dialect|Platform).*
+      - pattern-not-inside:
+          patterns:
+          - pattern: function $QF(...) { ... }
+          - metavariable-regex:
+              metavariable: $QF
+              regex: (?i).*(quote|escape).*
+      - focus-metavariable: $X
+    - requires: PARAM
+      patterns:
+      - pattern: sprintf($FMT, ..., $X, ...)
+      - metavariable-pattern:
+          metavariable: $FMT
+          patterns:
+          - pattern: '"..."'
+          - pattern-regex: (?is)\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?['\"%]).*?(['"](%%)*%?%s(%%)*%?['"]|\\['"]%s).*\z
+      - focus-metavariable: $X
+    - requires: NAME
+      patterns:
+      - pattern-regex: (?is)"[^"]*?\b(?:select\s[^"]*?\bfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|pragma\s+\w+|where|and|or)\b[^"]*?'\{?\$\w+(?:->\w+|\[[^\]'"]*\])*\}?'
+    - patterns:
+      - pattern-either:
+        - pattern: '"LIMIT " . $OPTIONS["limit"]'
+        - pattern: '"OFFSET " . $OPTIONS["offset"]'
+      - focus-metavariable: $OPTIONS
+      requires: PARAM
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -3924,14 +4401,30 @@ rules:
     languages: [go]
     mode: taint
     pattern-sources:
-      - patterns:
-          - pattern-either:
-              - pattern-inside: func $F(..., $P $T, ...) { ... }
-              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
-          - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
+    - label: PARAM
+      patterns:
+      - pattern-either:
+        - pattern-inside: func $F(..., $P $T, ...) { ... }
+        - pattern-inside: func $F(..., $P $T, ...) $R { ... }
+        - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
+        - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
+      - metavariable-regex:
+          metavariable: $P
+          regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$
+      - focus-metavariable: $P
+    - label: QUOTED
+      patterns:
+      - pattern: fmt.Sprintf($FMT, ..., $X, ...)
+      - pattern-not: fmt.Sprintf($FMT, sqlbuilder.Escape("..."))
+      - metavariable-regex:
+          metavariable: $FMT
+          regex: (?s)\A["`].*'%s'.*["`]\z
+      - metavariable-pattern:
+          metavariable: $X
+          patterns:
+          - pattern: $V
+          - pattern-not: '"..."'
+      - focus-metavariable: $X
     pattern-sanitizers:
       - pattern: strconv.Itoa(...)
       - pattern: strconv.FormatInt(...)
@@ -3943,63 +4436,82 @@ rules:
               - pattern: $O.$F(...)
           # Validation, allow-list and quoting helpers return a value the caller has vetted.
           - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(valid|sanitiz|escape|quote|allow|whitelist)\w*$'}
+          # go-sqlbuilder Escape only escapes its own $ syntax, not SQL quotes.
+          - pattern-not: sqlbuilder.Escape(...)
+          - pattern-not: sqlbuilder.EscapeAll(...)
     pattern-sinks:
-      - patterns:
+    - requires: PARAM
+      patterns:
+      - pattern-either:
+        - pattern: $DB.Query($Q, ...)
+        - pattern: $DB.QueryContext($C, $Q, ...)
+        - pattern: $DB.QueryRow($Q, ...)
+        - pattern: $DB.QueryRowContext($C, $Q, ...)
+        - pattern: $DB.Exec($Q, ...)
+        - pattern: $DB.ExecContext($C, $Q, ...)
+        - pattern: $DB.Raw($Q, ...)
+        - pattern: $DB.Select($DST, $Q, ...)
+        - pattern: $DB.Get($DST, $Q, ...)
+      - metavariable-regex:
+          metavariable: $DB
+          regex: (?i)(^|\.)(db|tx|conn|sqlx?|pool|database|dbconn|dbpool|\w*(db|tx|conn|pool))(?:\([^()]*\))?$
+      - metavariable-pattern:
+          metavariable: $Q
+          patterns:
           - pattern-either:
-              - pattern: $DB.Query($Q, ...)
-              - pattern: $DB.QueryContext($C, $Q, ...)
-              - pattern: $DB.QueryRow($Q, ...)
-              - pattern: $DB.QueryRowContext($C, $Q, ...)
-              - pattern: $DB.Exec($Q, ...)
-              - pattern: $DB.ExecContext($C, $Q, ...)
-              - pattern: $DB.Raw($Q, ...)
-              - pattern: $DB.Select($DST, $Q, ...)
-              - pattern: $DB.Get($DST, $Q, ...)
-          - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|tx|conn|sqlx?|pool|database|dbconn|dbpool|\w*(db|tx|conn|pool))$'}
-          - metavariable-pattern:
-              metavariable: $Q
-              patterns:
-                - pattern-either:
-                    - pattern: fmt.Sprintf(...)
-                    - pattern: $A + $B
-                    - pattern: $V
-                    - pattern: $V.String()
-          - focus-metavariable: $Q
-      # The same calls on a parameter declared as a database handle, under any name.
-      - patterns:
+            - pattern: fmt.Sprintf(...)
+            - pattern: $A + $B
+            - pattern: $V
+            - pattern: $V.String()
+      - focus-metavariable: $Q
+    - requires: PARAM
+      patterns:
+      - pattern-either:
+        - pattern-inside: func $F(..., $DB *$TYPE, ...) { ... }
+        - pattern-inside: func $F(..., $DB *$TYPE, ...) $R { ... }
+        - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) { ... }
+        - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) $R { ... }
+      - metavariable-regex:
+          metavariable: $TYPE
+          regex: ^(sql\.(DB|Tx|Conn)|sqlx\.(DB|Tx)|gorm\.DB|pgxpool\.Pool|pgx\.Conn)$
+      - pattern-either:
+        - pattern: $DB.Query($Q, ...)
+        - pattern: $DB.QueryContext($C, $Q, ...)
+        - pattern: $DB.QueryRow($Q, ...)
+        - pattern: $DB.QueryRowContext($C, $Q, ...)
+        - pattern: $DB.Exec($Q, ...)
+        - pattern: $DB.ExecContext($C, $Q, ...)
+        - pattern: $DB.Raw($Q, ...)
+        - pattern: $DB.Select($DST, $Q, ...)
+        - pattern: $DB.Get($DST, $Q, ...)
+      - metavariable-pattern:
+          metavariable: $Q
+          patterns:
           - pattern-either:
-              - pattern-inside: func $F(..., $DB *$TYPE, ...) { ... }
-              - pattern-inside: func $F(..., $DB *$TYPE, ...) $R { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) $R { ... }
-          - metavariable-regex: {metavariable: $TYPE, regex: '^(sql\.(DB|Tx|Conn)|sqlx\.(DB|Tx)|gorm\.DB|pgxpool\.Pool|pgx\.Conn)$'}
-          - pattern-either:
-              - pattern: $DB.Query($Q, ...)
-              - pattern: $DB.QueryContext($C, $Q, ...)
-              - pattern: $DB.QueryRow($Q, ...)
-              - pattern: $DB.QueryRowContext($C, $Q, ...)
-              - pattern: $DB.Exec($Q, ...)
-              - pattern: $DB.ExecContext($C, $Q, ...)
-              - pattern: $DB.Raw($Q, ...)
-              - pattern: $DB.Select($DST, $Q, ...)
-              - pattern: $DB.Get($DST, $Q, ...)
-          - metavariable-pattern:
-              metavariable: $Q
-              patterns:
-                - pattern-either:
-                    - pattern: fmt.Sprintf(...)
-                    - pattern: $A + $B
-                    - pattern: $V
-                    - pattern: $V.String()
-          - focus-metavariable: $Q
-      # Query-builder ordering and grouping take a column expression, not a bound value.
-      - patterns:
-          - pattern-either:
-              - pattern: $B.Order($Q)
-              - pattern: $B.OrderBy($Q, ...)
-              - pattern: $B.Group($Q)
-              - pattern: $B.GroupBy($Q, ...)
-          - focus-metavariable: $Q
+            - pattern: fmt.Sprintf(...)
+            - pattern: $A + $B
+            - pattern: $V
+            - pattern: $V.String()
+      - focus-metavariable: $Q
+    - requires: PARAM
+      patterns:
+      - pattern-either:
+        - pattern: $B.Order($Q)
+        - pattern: $B.OrderBy($Q, ...)
+        - pattern: $B.Group($Q)
+        - pattern: $B.GroupBy($Q, ...)
+      - pattern-not: $B.Order(clause.OrderByColumn{...})
+      - focus-metavariable: $Q
+    - requires: PARAM or QUOTED
+      patterns:
+      - pattern: $B.$BM(..., $Q, ...)
+      - metavariable-regex:
+          metavariable: $BM
+          regex: ^(?:Select|Where|Having|OrderBy|GroupBy|Order|Group|Joins|LeftJoin)$
+      - metavariable-pattern:
+          metavariable: $Q
+          pattern: fmt.Sprintf(...)
+      - focus-metavariable: $Q
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -4014,17 +4526,18 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
+      # Seed taint at the binding and let the engine follow its uses.
       - patterns:
           - pattern-either:
-              - pattern-inside: function $F(..., $P, ...) { ... }
-              - pattern-inside: async function $F(..., $P, ...) { ... }
-              - pattern-inside: (..., $P, ...) => { ... }
-              - pattern-inside: async (..., $P, ...) => { ... }
-              - pattern-inside: |
+              - pattern: function $F(..., $P, ...) { ... }
+              - pattern: async function $F(..., $P, ...) { ... }
+              - pattern: (..., $P, ...) => { ... }
+              - pattern: async (..., $P, ...) => { ... }
+              - pattern: |
                   class $C { ... $M(..., $P, ...) { ... } ... }
-              - pattern-inside: |
+              - pattern: |
                   class $C { ... async $M(..., $P, ...) { ... } ... }
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex|app|application|server|router|plugin|logger)$)\w+$'}
     pattern-sanitizers:
       - pattern: parseInt(...)
@@ -4033,6 +4546,28 @@ rules:
       - pattern: $DB.escapeId(...)
       - pattern: mysql.escape(...)
       - pattern: format(...)
+      # Identifier quoting and escaping helpers (escapeIdentifier, quoteIdent, format.ident).
+      - patterns:
+          - pattern-either:
+              - pattern: $QF(...)
+              - pattern: $QO.$QF(...)
+          - metavariable-regex: {metavariable: $QF, regex: '(?i)^(?:\w*(?:escape|quote)\w*|ident)$'}
+      # A double-quoted SQL identifier ("${table}", "${schema}"."${column}"): the quote
+      # follows a keyword, name, '.', ',' or '(', never a comparison or LIKE.
+      - pattern-regex: '(?i)(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*"\$\{[^{}`"\n]*\}"'
+      - patterns:
+          - pattern: $QL + $QX + $QR
+          - metavariable-regex: {metavariable: $QL, regex: '(?is)\A[''"].*(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*"[''"]\z'}
+          - metavariable-regex: {metavariable: $QR, regex: '\A[''"]"'}
+          - focus-metavariable: $QX
+      # Positional or named placeholders ($${n}, @${name}) and placeholder lists.
+      - pattern-regex: '[$@]\$\{[^{}`\n]*\}'
+      - patterns:
+          - pattern: $QP.join(...)
+          - metavariable-regex: {metavariable: $QP, regex: '(?i)^\w*placeholders?$'}
+      - patterns:
+          - pattern: $QA.map((...) => $QT)
+          - metavariable-regex: {metavariable: $QT, regex: '\A(?:([''"`])[(), ]*\?[?(), ]*\1|`[$@]\$\{[^`]*\}`|[''"][$@][''"]\s*\+[^,]*)\z'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -4111,10 +4646,11 @@ rules:
     languages: [ruby]
     patterns:
       - pattern-either:
-          # SQL text in a double-quoted literal with an interpolation that is not adapter quoting.
-          - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+          # SQL text in a double-quoted literal with an interpolation that is not adapter quoting
+          # or a quoted identifier (`#{column}`, \"#{table}\").
+          - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?(?<!`)(?<!\\")#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
           # ActiveRecord query methods given an interpolated string.
-          - pattern-regex: '\.(?:where|order|reorder|group|having|joins|select|pluck|from|find_by_sql|lock|count_by_sql)\(\s*(?:Arel\.sql\(\s*)?"[^"\n]*#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+          - pattern-regex: '\.(?:where|order|reorder|group|having|joins|select|pluck|from|find_by_sql|lock|count_by_sql)\(\s*(?:Arel\.sql\(\s*)?"[^"\n]*(?<!`)(?<!\\")#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
       - pattern-not-regex: '(?m)^[ \t]*#(?!\{).*$'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py", "**/db/migrate/**", "**/db/post_migrate/**"]
@@ -4133,7 +4669,7 @@ rules:
           - pattern-either:
               - pattern-inside: $RET $M(..., $T $P, ...) { ... }
               - pattern-inside: $M(..., $T $P, ...) { ... }
-          - pattern: $P
+          - focus-metavariable: $P
     pattern-sanitizers:
       - pattern: Integer.parseInt(...)
       - pattern: Long.parseLong(...)
@@ -4179,198 +4715,313 @@ rules:
     severity: INFO
     languages: [python]
     patterns:
-      - pattern-either:
-          - pattern-inside: |
-              def $F(..., $P, ...):
+    - pattern-either:
+      - pattern-inside: "def $F(..., $P, ...):\n  ...\n"
+      - pattern-inside: "def $F(..., $D, ...):\n  ...\n  for $P, $VAL in $D.items():\n    ...\n"
+      - pattern-inside: "def $F(..., $D, ...):\n  ...\n  for $P, $VAL in ($D or {}).items():\n    ...\n"
+      - pattern-inside: "def $F(self, ...):\n  ...\n  for $P, $VAL in self.$A.items():\n    ...\n"
+    - pattern-either:
+      - pattern: os.path.join($BASE, ..., $P, ...)
+      - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
+      - pattern: os.path.join($BASE, ..., $P.strip(...), ...)
+      - pattern: os.path.join($BASE, ..., $P.lstrip(...), ...)
+      - pattern: os.path.join($BASE, ..., $P.rstrip(...), ...)
+      - pattern: $BASE / $P.strip(...)
+      - patterns:
+        - pattern: $BASE / $P.lstrip(...)
+        - pattern-not: Path($ROOT) / $P.lstrip(...)
+      - patterns:
+        - pattern: $BASE / $P.lstrip(...)
+        - pattern: Path($ROOT) / $P.lstrip(...)
+        - pattern-either:
+          - patterns:
+            - pattern-inside: $SINK(..., Path($ROOT) / $P.lstrip(...), ...)
+            - metavariable-regex:
+                metavariable: $SINK
+                regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
+          - patterns:
+            - pattern-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
+
                 ...
-          # Keys of a caller-supplied or instance mapping (template names, file
-          # names) written out one file per key.
-          - pattern-inside: |
-              def $F(..., $D, ...):
+
+                $SINK(..., $OUT, ...)
+
+                '
+            - metavariable-regex:
+                metavariable: $SINK
+                regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
+          - patterns:
+            - pattern-inside: "$OUT = Path($ROOT) / $P.lstrip(...)\n...\nwith $SINK(..., $OUT, ...) as $FH:\n  ...\n"
+            - metavariable-regex:
+                metavariable: $SINK
+                regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
+          - patterns:
+            - pattern-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
+
                 ...
-                for $P, $VAL in $D.items():
-                  ...
-          - pattern-inside: |
-              def $F(..., $D, ...):
-                ...
-                for $P, $VAL in ($D or {}).items():
-                  ...
-          - pattern-inside: |
-              def $F(self, ...):
-                ...
-                for $P, $VAL in self.$A.items():
-                  ...
-      - pattern-either:
-          - pattern: os.path.join($BASE, ..., $P, ...)
-          - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
-          - pattern: os.path.join($BASE, ..., $P.strip(...), ...)
-          - pattern: os.path.join($BASE, ..., $P.lstrip(...), ...)
-          - pattern: os.path.join($BASE, ..., $P.rstrip(...), ...)
-          - pattern: $BASE / $P.strip(...)
-          - pattern: $BASE / $P.lstrip(...)
-          - pattern: $BASE / $P.rstrip(...)
-          - pattern: $BASE / $P
-          - pattern: $BASE / f"...{$P}..."
-          - pattern: Path($BASE, ..., $P, ...)
-      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
-      - metavariable-pattern:
-          metavariable: $BASE
-          patterns:
-            - pattern-not: $P
-            - pattern-not: '"..."'
-      - pattern-either:
-          - pattern-inside: |
-              def $F(...):
-                ...
-                $SINK(...)
-                ...
-          - pattern-inside: |
-              def $F(...):
-                ...
-                with $SINK(...) as $FH:
-                  ...
-                ...
-      - metavariable-regex: {metavariable: $SINK, regex: '^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$'}
-      - pattern-not-inside: |
-          def $F(...):
+
+                $OUT.$METHOD(...)
+
+                '
+            - metavariable-regex:
+                metavariable: $METHOD
+                regex: ^(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir)$
+        - pattern-not-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
+
             ...
-            $C.relative_to(...)
+
+            $OUT.resolve().relative_to(Path($ROOT).resolve())
+
             ...
-      - pattern-not-inside: |
-          def $F(...):
+
+            '
+      - pattern: $BASE / $P.rstrip(...)
+      - pattern: $BASE / $P
+      - pattern: $BASE / f"...{$P}..."
+      - pattern: $BASE / ($A + $P)
+      - pattern: $BASE / ($P + $A)
+      - pattern: $BASE / $P[$I]
+      - pattern: $BASE / $P[$S:]
+      - pattern: $BASE / $P[:$E]
+      - pattern: $BASE / $P[$S:$E]
+      - pattern: os.path.join($BASE, ..., $A + $P, ...)
+      - pattern: os.path.join($BASE, ..., $P + $A, ...)
+      - pattern: os.path.join($BASE, ..., $P[$I], ...)
+      - pattern: os.path.join($BASE, ..., $P[$S:], ...)
+      - pattern: os.path.join($BASE, ..., $P[:$E], ...)
+      - pattern: os.path.join($BASE, ..., $P[$S:$E], ...)
+      - pattern: Path($BASE, ..., $P, ...)
+    - metavariable-regex:
+        metavariable: $P
+        regex: ^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|token|uri|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$
+    - metavariable-regex:
+        metavariable: $P
+        regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)
+    - metavariable-pattern:
+        metavariable: $BASE
+        patterns:
+        - pattern-not: $P
+        - pattern-not: '"..."'
+    - pattern-either:
+      - patterns:
+        - pattern-either:
+          - pattern-inside: "def $F(...):\n  ...\n  $SINK(...)\n  ...\n"
+          - pattern-inside: "def $F(...):\n  ...\n  with $SINK(...) as $FH:\n    ...\n  ...\n"
+        - metavariable-regex:
+            metavariable: $SINK
+            regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$
+      - patterns:
+        - pattern-inside: "def $F(...):\n  ...\n"
+        - pattern-either:
+          - pattern-inside: return $BASE / $RHS
+          - pattern-inside: return os.path.join($BASE, ...)
+          - pattern-inside: return Path($BASE, ...)
+        - metavariable-regex:
+            metavariable: $F
+            regex: ^(?i)_*\w*(path|file)\w*$
+        - metavariable-regex:
+            metavariable: $BASE
+            regex: ^(?:(?:self|cls)\.\w+(?:\.\w+)*|[A-Z][A-Z0-9_]*)$
+    - pattern-not-inside:
+        patterns:
+        - pattern-either:
+          - patterns:
+            - pattern-inside: "$V = $E\nif $COND:\n  $...BEFORE\n  $EXIT\n"
+            - metavariable-regex:
+                metavariable: $EXIT
+                regex: ^(raise|return|continue)\b
+            - metavariable-pattern:
+                metavariable: $E
+                patterns:
+                - pattern-either:
+                  - pattern: os.path.join($B, ..., $Q, ...)
+                  - pattern: $B / $Q
+                  - pattern: Path($B, ..., $Q, ...)
+                  - pattern: pathlib.Path($B, ..., $Q, ...)
+                - metavariable-pattern:
+                    metavariable: $COND
+                    patterns:
+                    - pattern-either:
+                      - pattern: not $NV.is_relative_to($B)
+                      - pattern: not $NV.is_relative_to($B.resolve())
+                      - pattern: not $NV.is_relative_to(Path($B).resolve())
+                      - pattern: not $NV.is_relative_to(pathlib.Path($B).resolve())
+                      - pattern: $B not in $NV.parents
+                      - pattern: not $B in $NV.parents
+                      - pattern: $B.resolve() not in $NV.parents
+                      - pattern: not $B.resolve() in $NV.parents
+                      - pattern: Path($B).resolve() not in $NV.parents
+                      - pattern: not Path($B).resolve() in $NV.parents
+                      - pattern: $NV.parent != $B
+                      - pattern: $NV.parent != $B.resolve()
+                      - pattern: $NV.parent != Path($B).resolve()
+                      - pattern: os.path.commonpath([$B, $NV]) != $B
+                      - pattern: os.path.commonpath([$NV, $B]) != $B
+                      - pattern: os.path.commonpath(($B, $NV)) != $B
+                      - pattern: os.path.commonpath(($NV, $B)) != $B
+                      - pattern: os.path.commonpath([os.path.realpath($B), $NV]) != os.path.realpath($B)
+                      - pattern: os.path.commonpath([$NV, os.path.realpath($B)]) != os.path.realpath($B)
+                      - pattern: os.path.commonpath((os.path.realpath($B), $NV)) != os.path.realpath($B)
+                      - pattern: os.path.commonpath(($NV, os.path.realpath($B))) != os.path.realpath($B)
+                      - pattern: os.path.commonpath([os.path.abspath($B), $NV]) != os.path.abspath($B)
+                      - pattern: os.path.commonpath([$NV, os.path.abspath($B)]) != os.path.abspath($B)
+                      - pattern: os.path.commonpath((os.path.abspath($B), $NV)) != os.path.abspath($B)
+                      - pattern: os.path.commonpath(($NV, os.path.abspath($B))) != os.path.abspath($B)
+                      - pattern: not $NV.startswith($B + os.sep)
+                      - pattern: not $NV.startswith(os.path.join($B, ""))
+                      - pattern: not $NV.startswith(os.path.realpath($B) + os.sep)
+                      - pattern: not $NV.startswith(os.path.join(os.path.realpath($B), ""))
+                      - pattern: not $NV.startswith(os.path.abspath($B) + os.sep)
+                      - pattern: not $NV.startswith(os.path.join(os.path.abspath($B), ""))
+                    - pattern-not-inside: $L and $R
+                    - metavariable-pattern:
+                        metavariable: $NV
+                        pattern-either:
+                        - pattern: $V.resolve(...)
+                        - pattern: Path($V).resolve(...)
+                        - pattern: pathlib.Path($V).resolve(...)
+                        - pattern: os.path.realpath($V)
+                        - pattern: os.path.abspath($V)
+                        - pattern: os.path.normpath($V)
+                        - patterns:
+                          - pattern: $V
+                          - metavariable-comparison:
+                              comparison: str($NV) == str($V)
+                          - metavariable-pattern:
+                              metavariable: $E
+                              patterns:
+                              - pattern-either:
+                                - pattern: $X.resolve(...)
+                                - pattern: os.path.realpath(...)
+                                - pattern: os.path.abspath(...)
+                                - pattern: os.path.normpath(...)
+                              - pattern-not-inside: os.path.join(...)
+                              - pattern-not-inside: $LHS / $RHS
+          - patterns:
+            - pattern-either:
+              - pattern-inside: "$B = os.path.realpath($ROOT)\n$V = os.path.join($B, ..., $Q, ...)\n$NV = os.path.realpath($V)\n$OK = os.path.commonpath(($B, $NV)) == $B\nif $CHECK:\n  raise ...\n"
+              - pattern-inside: "$B = os.path.realpath($ROOT)\n$V = os.path.join($B, ..., $Q, ...)\n$NV = os.path.realpath($V)\ntry:\n  $OK = os.path.commonpath(($B, $NV)) == $B\nexcept ValueError:\n  $OK = False\nif $CHECK:\n  raise ...\n"
+            - metavariable-pattern:
+                metavariable: $CHECK
+                pattern-either:
+                - pattern: not $OK
+                - pattern: not $OK or os.path.islink($V)
+          - patterns:
+            - pattern-inside: '$V = $E
+
+                $STMT
+
+                '
+            - metavariable-regex:
+                metavariable: $STMT
+                regex: ^(?!(?:try|if|elif|with|for|while|def|class|return|lambda)\b)[^\n]*\.relative_to\(
+            - pattern-either:
+              - pattern-inside: '$V = $E
+
+                  $NV.relative_to($B)
+
+                  '
+              - pattern-inside: '$V = $E
+
+                  $NV.relative_to($B.resolve())
+
+                  '
+              - pattern-inside: '$V = $E
+
+                  $NV.relative_to(Path($B).resolve())
+
+                  '
+            - metavariable-pattern:
+                metavariable: $E
+                patterns:
+                - pattern-either:
+                  - pattern: os.path.join($B, ..., $Q, ...)
+                  - pattern: $B / $Q
+                  - pattern: Path($B, ..., $Q, ...)
+                  - pattern: pathlib.Path($B, ..., $Q, ...)
+                - metavariable-pattern:
+                    metavariable: $NV
+                    pattern-either:
+                    - pattern: $V.resolve(...)
+                    - pattern: Path($V).resolve(...)
+                    - pattern: pathlib.Path($V).resolve(...)
+                    - pattern: os.path.realpath($V)
+                    - pattern: os.path.abspath($V)
+                    - pattern: os.path.normpath($V)
+                    - patterns:
+                      - pattern: $V
+                      - metavariable-comparison:
+                          comparison: str($NV) == str($V)
+                      - metavariable-pattern:
+                          metavariable: $E
+                          patterns:
+                          - pattern-either:
+                            - pattern: $X.resolve(...)
+                            - pattern: os.path.realpath(...)
+                            - pattern: os.path.abspath(...)
+                            - pattern: os.path.normpath(...)
+                          - pattern-not-inside: os.path.join(...)
+                          - pattern-not-inside: $LHS / $RHS
+          - patterns:
+            - pattern-either:
+              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B)\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
+              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B)\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
+              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B.resolve())\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
+              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B.resolve())\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
+              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to(Path($B).resolve())\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
+              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to(Path($B).resolve())\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
+            - metavariable-regex:
+                metavariable: $EXIT
+                regex: ^(raise|return)\b
+            - metavariable-pattern:
+                metavariable: $E
+                patterns:
+                - pattern-either:
+                  - pattern: os.path.join($B, ..., $Q, ...)
+                  - pattern: $B / $Q
+                  - pattern: Path($B, ..., $Q, ...)
+                  - pattern: pathlib.Path($B, ..., $Q, ...)
+                - metavariable-pattern:
+                    metavariable: $NV
+                    pattern-either:
+                    - pattern: $V.resolve(...)
+                    - pattern: Path($V).resolve(...)
+                    - pattern: pathlib.Path($V).resolve(...)
+                    - pattern: os.path.realpath($V)
+                    - pattern: os.path.abspath($V)
+                    - pattern: os.path.normpath($V)
+                    - patterns:
+                      - pattern: $V
+                      - metavariable-comparison:
+                          comparison: str($NV) == str($V)
+                      - metavariable-pattern:
+                          metavariable: $E
+                          patterns:
+                          - pattern-either:
+                            - pattern: $X.resolve(...)
+                            - pattern: os.path.realpath(...)
+                            - pattern: os.path.abspath(...)
+                            - pattern: os.path.normpath(...)
+                          - pattern-not-inside: os.path.join(...)
+                          - pattern-not-inside: $LHS / $RHS
+        - pattern: $V = $E
+        - pattern-not-inside: '$V = $E
+
             ...
-            $C.is_relative_to(...)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            os.path.commonpath(...)
-            ...
-      # Joined value resolved and compared, with a raise, before use.
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... Path($V).resolve() ...>:
-            ...
-            raise ...
-          ...
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... os.path.realpath($V) ...>:
-            ...
-            raise ...
-          ...
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... os.path.abspath($V) ...>:
-            ...
-            raise ...
-          ...
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... $V.resolve() ...>:
-            ...
-            raise ...
-          ...
-      # A prefix check only contains the path when the prefix ends in a separator;
-      # startswith(abspath(root)) alone also accepts root-evil/.
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            <... $S.startswith(<... os.sep ...>) ...>
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            <... $S.startswith($R + "/") ...>
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            <... os.sep ...>
-            ...
-            <... $S.startswith(...) ...>
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            $V = os.path.basename($P)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            $V = secure_filename($P)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            $CHECK($P, ...)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... os.path.commonpath(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... os.path.commonprefix(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $C.is_relative_to(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $C.relative_to(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $X in $Y.parents ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $X not in $Y.parents ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... os.path.isabs($P) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... '..' in $P ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... ".." in $P ...>:
-              ...
-            ...
-      - pattern-not-inside:
-          patterns:
-            - pattern: $H(...)
-            - metavariable-regex: {metavariable: $H, regex: '(?i)^(\w+\.)*_?\w*(rooted|contain|confine|within|inside|safe_join|safejoin|ensure_under|under_root)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|keyid|uuid|pk)$)'}
-      - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
-      - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
+
+            $V = $OTHER
+
+            '
+    - pattern-not-inside: "def $F(...):\n  ...\n  $V = os.path.basename($P)\n  ...\n"
+    - pattern-not-inside: "def $F(...):\n  ...\n  $V = secure_filename($P)\n  ...\n"
+    - pattern-not-inside: "def $F(...):\n  ...\n  if <... os.path.isabs($P) ...>:\n    ...\n  ...\n"
+    - pattern-not-inside: "def $F(...):\n  ...\n  if <... '..' in $P ...>:\n    ...\n  ...\n"
+    - pattern-not-inside: "def $F(...):\n  ...\n  if <... \"..\" in $P ...>:\n    ...\n  ...\n"
+    - metavariable-regex:
+        metavariable: $P
+        regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|keyid|uuid|pk)$)
+    - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
+    - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -4384,11 +5035,7 @@ rules:
     severity: INFO
     languages: [go]
     patterns:
-      - pattern-either:
-          - pattern-inside: func $F(..., $P string, ...) { ... }
-          - pattern-inside: func $F(..., $P string, ...) $R { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) $R { ... }
+      - pattern-inside: func $F(..., $P string, ...) { ... }
       - pattern-either:
           - pattern: filepath.Join($BASE, ..., $P, ...)
           - pattern: path.Join($BASE, ..., $P, ...)
@@ -4734,7 +5381,7 @@ rules:
                   patterns:
                     - pattern-not: $ESC(...)
                     - pattern-not: $O.$ESC(...)
-              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
+              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s(?!(?:start|colspan|rowspan|tabindex|maxlength|cols|rows|span)\s*=)[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
           # A plain local is reported unless it was assigned from an escaper.
           - patterns:
               - pattern: '`...${$X}...`'
@@ -4743,7 +5390,7 @@ rules:
                   patterns:
                     - pattern-not: $ESC(...)
                     - pattern-not: $O.$ESC(...)
-              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
+              - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s(?!(?:start|colspan|rowspan|tabindex|maxlength|cols|rows|span)\s*=)[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
               - metavariable-comparison:
                   comparison: str($X) == str($VALUE)
               - pattern-not-inside: |
@@ -4809,7 +5456,7 @@ rules:
           # which are queries, not markup.
           - patterns:
               - pattern: $L + $X + $R
-              - pattern-regex: '(?:^|[^\w\[\-])[\w:-]*=(?:"''|\\"[''"]|\\''[''"])\s*\+\s*(?P<VALUE>[A-Za-z_$][\w$.]*(?:\[[^\]\n]{1,40}\])?)\s*\+\s*(?:''"|[''"]\\"|[''"]\\'')'
+              - pattern-regex: '(?:^|[^\w\[\-])(?!(?:start|colspan|rowspan|tabindex|maxlength|cols|rows|span)=)[\w:-]*=(?:"''|\\"[''"]|\\''[''"])\s*\+\s*(?P<VALUE>[A-Za-z_$][\w$.]*(?:\[[^\]\n]{1,40}\])?)\s*\+\s*(?:''"|[''"]\\"|[''"]\\'')'
               - metavariable-comparison:
                   comparison: str($X) == str($VALUE)
               # A local reassigned from an escaper or URL cleaner is no longer raw input.
@@ -4838,7 +5485,7 @@ rules:
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/docs/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js", "**/compiled/**", "**/*.development.js", "**/*.production.js"]
   - id: javascript.dom-innerhtml-from-variable
-    message: A non-literal value is assigned to innerHTML or outerHTML; use textContent, or sanitize the markup first.
+    message: Review dynamic HTML or a parameter URL opened in a new window without an opener policy.
     severity: INFO
     languages: [javascript, typescript]
     patterns:
@@ -4846,6 +5493,32 @@ rules:
           - pattern: $E.innerHTML = $V
           - pattern: $E.outerHTML = $V
           - pattern: $E.insertAdjacentHTML($POS, $V)
+          - patterns:
+              - pattern: window.open($V, "_blank")
+              - metavariable-pattern:
+                  metavariable: $V
+                  pattern: $INPUT.url
+              - pattern-either:
+                  - pattern-inside: ($INPUT) => { ... }
+                  - pattern-inside: function $F(..., $INPUT, ...) { ... }
+              - focus-metavariable: $V
+          - patterns:
+              - pattern-either:
+                  - pattern: <$TAG ... innerHTML={$V} ... />
+                  - pattern: <$TAG ... innerHTML={$V} ...>...</$TAG>
+              - metavariable-regex: {metavariable: $TAG, regex: '^[a-z][\w-]*$'}
+              - metavariable-regex:
+                  metavariable: $V
+                  regex: >-
+                    (?s)\A\s*(?:[\w$]+(?:\??\.[\w$]+)+|.*\?(?!\.)\s*[\w$]+(?:\??\.[\w$]+)+\s*:[^?]+)\s*\z
+              - metavariable-pattern:
+                  metavariable: $V
+                  patterns:
+                    - pattern-either:
+                        - pattern: $OBJECT.$PROPERTY
+                        - pattern: '$CONDITION ? $OBJECT.$PROPERTY : $DEFAULT'
+                        - pattern: '$CONDITION ? $DEFAULT : $OBJECT.$PROPERTY'
+              - focus-metavariable: $V
       - metavariable-pattern:
           metavariable: $V
           patterns:
@@ -4869,7 +5542,7 @@ rules:
       category: security
       confidence: LOW
       cwe: ["CWE-79"]
-      scope: innerHTML/outerHTML/insertAdjacentHTML with an identifier or member expression; call results are excluded.
+      scope: Dynamic HTML content or a parameter URL passed to the two-argument window.open call with a blank target.
   - id: go.tls-client-cert-requested-not-verified
     message: Client certificates are requested but not verified against a CA; any self-signed certificate is accepted. Use tls.VerifyClientCertIfGiven or tls.RequireAndVerifyClientCert with ClientCAs.
     severity: WARNING
@@ -4917,9 +5590,6 @@ rules:
               }
           - pattern-either:
               - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
-              - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
-              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
               - pattern-inside: func ($CS tls.ConnectionState) error { ... }
       # Unconditional insecure gRPC dial options.
       - patterns:

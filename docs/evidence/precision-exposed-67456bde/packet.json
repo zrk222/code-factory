@@ -1,0 +1,2714 @@
+{
+ "schema": "factory.label-packet.v1",
+ "cohort": "exposed-494-67456bde-unadjudicated",
+ "seed": 20261126,
+ "per_rule_cap": 40,
+ "rules_sha256": "67456bde8cff8920155195d910f00e3dad1679f8d262c7c6a806f09193adfdf8",
+ "instructions": "For each item, decide whether the marked line (>) is a real instance of the claimed weakness: attacker- or user-influenced data can reach it in a realistic deployment of this library or application, with no effective validation in the shown or implied code. If a span is present, it gives the start column, end-line offset, and end column. Answer TP, FP or UNCLEAR, with one sentence of reasoning. Judge each item on its own; do not look up advisories, fixes or other labels.",
+ "items": [
+  {
+   "item": "8e34467e78e9",
+   "repository_case": "GHSA-w62v-xxxg-mg59",
+   "file": "src/helper/css/index.ts",
+   "line": 85,
+   "span": [
+    39,
+    0,
+    56
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   80    const [cssJsxDomObject, StyleRenderToDom] = createCssJsxDomObjects({ id })\n   81  \n   82    const contextMap: WeakMap<object, usedClassNameData> = new WeakMap()\n   83    const nonceMap: WeakMap<object, string | undefined> = new WeakMap()\n   84  \n   85>   const replaceStyleRe = new RegExp(`(<style id=\"${id}\"(?: nonce=\"[^\"]*\")?>.*?)(</style>)`)\n   86  \n   87    const newCssClassNameObject = (cssClassName: CssClassNameCommon): Promise<string> => {\n   88      const appendStyle: HtmlEscapedCallback = ({ buffer, context }): Promise<string> | undefined => {\n   89        const [toAdd, added] = contextMap.get(context) as usedClassNameData\n   90        const names = Object.keys(toAdd)"
+  },
+  {
+   "item": "be590f0b67ea",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 963,
+   "span": [
+    44,
+    0,
+    75
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  958      const platform = process.platform;\n  959  \n  960      if (platform === 'win32') {\n  961        // Windows group details\n  962        try {\n  963>         const { stdout } = await execAsync(`net localgroup \"${groupname}\"`);\n  964          const lines = stdout.split('\\n');\n  965          const members: string[] = [];\n  966          let inMemberSection = false;\n  967  \n  968          for (const line of lines) {"
+  },
+  {
+   "item": "1bfbf815101b",
+   "repository_case": "GHSA-3vfr-4gwf-qxfp",
+   "file": "lib/util/index.js",
+   "line": 318,
+   "span": [
+    44,
+    0,
+    63
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  313  function wrapCss(css, charset, isUrl) {\n  314    if (!css) {\n  315      return '';\n  316    }\n  317    if (isUrl) {\n  318>     return toBuffer('<link rel=\"stylesheet\" href=\"' + css + '\" />', charset);\n  319    }\n  320    return Buffer.concat([STYLE_START, toBuffer(css, charset), STYLE_END]);\n  321  }\n  322  \n  323  var MAX_LEN = 1024 * 1024 * 5;"
+  },
+  {
+   "item": "8ecccfa47db4",
+   "repository_case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4447,
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 4442          Returns:\n 4443              Checkpoint data or None if not found\n 4444          \"\"\"\n 4445          import json\n 4446          \n 4447>         checkpoint_file = self._get_checkpoints_dir() / f\"{name}.json\"\n 4448          \n 4449          if not checkpoint_file.exists():\n 4450              self._log(f\"Checkpoint '{name}' not found\")\n 4451              return None\n 4452          "
+  },
+  {
+   "item": "863f46beadc6",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/crop.py",
+   "line": 192,
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  187      bottom = params.get('bottom')\n  188  \n  189      _validate_crop_params(input_path, output_path, left, top, right, bottom)\n  190  \n  191      def _crop():\n  192>         with Image.open(input_path) as img:\n  193              original_width, original_height = img.size\n  194  \n  195              # Clamp coordinates to image bounds\n  196              crop_left = max(0, int(left))\n  197              crop_top = max(0, int(top))"
+  },
+  {
+   "item": "04a136cad8ee",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/compress.py",
+   "line": 175,
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  170      def _compress():\n  171          with Image.open(input_path) as img:\n  172              if img.mode in ('RGBA', 'P') and output_format == 'jpeg':\n  173                  img = img.convert('RGB')\n  174  \n  175>             os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)\n  176              ext = os.path.splitext(output_path)[1].lower()\n  177              save_kwargs = _build_compress_kwargs(ext, output_format, quality, optimize)\n  178  \n  179              if max_size_kb:\n  180                  _compress_to_target_size("
+  },
+  {
+   "item": "edfa319cc9b9",
+   "repository_case": "GHSA-p853-83gj-wjj3",
+   "file": "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+   "line": 812,
+   "span": [
+    15,
+    0,
+    44
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  807                '${targetSchemaLiteral}',\n  808                '${srcSchemaLiteral}'\n  809              );\n  810          END IF;\n  811      END ${D$$};\"`.replace(/\\n/g, ' ');\n  812>     await run(updateCollectionSchemaCommand, this.getPasswordEnvVars(password, toolchain));\n  813    }\n  814  }\n  815  \n  816  class KingbaseAdapter extends PostgresAdapter {\n  817    get backupToolchain(): DBBackupToolchain {"
+  },
+  {
+   "item": "f71189b35e7d",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 776,
+   "span": [
+    9,
+    0,
+    72
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  771  \t\tprint '<input type=\"hidden\" name=\"login\" value=\"'.$ldap_login.'\">';\n  772  \t\tprint $ldap_login;\n  773  \t}\n  774  \telseif (! empty($ldap_loginsmb))\n  775  \t{\n  776> \t\tprint '<input type=\"hidden\" name=\"login\" value=\"'.$ldap_loginsmb.'\">';\n  777  \t\tprint $ldap_loginsmb;\n  778  \t}\n  779  \telse\n  780  \t{\n  781  \t\tprint '<input class=\"maxwidth200\" maxsize=\"24\" type=\"text\" name=\"login\" value=\"'.dol_escape_htmltag(GETPOST('login','alpha')).'\">';"
+  },
+  {
+   "item": "ab254a94ce79",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 235,
+   "span": [
+    9,
+    0,
+    58
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  230  \t\t\t\tprint $projectstatic->getNomUrl(1);\n  231  \t\t\t}\n  232  \t\t\telse print '&nbsp;';\n  233  \t\t\tprint \"</td>\\n\";\n  234  \t\t}\n  235> \t\tprint '<td align=\"right\">'.price($objp->amount).'</td>';\n  236  \t\tprint '<td align=\"right\">'.$donationstatic->LibStatut($objp->statut,5).'</td>';\n  237          print '<td></td>';\n  238  \t\tprint \"</tr>\";\n  239  \t\t$i++;\n  240  \t}"
+  },
+  {
+   "item": "b5a475a02570",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 612,
+   "span": [
+    8,
+    0,
+    101
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  607  \tprint yn($object->public);\n  608  \tprint '</td></tr>';\n  609  \n  610  \tprint '<tr><td>'.$langs->trans(\"Company\").'</td><td colspan=\"2\">'.$object->societe.'</td></tr>';\n  611  \tprint '<tr><td>'.$langs->trans(\"Lastname\").'</td><td colspan=\"2\">'.$object->lastname.'</td></tr>';\n  612> \tprint '<tr><td>'.$langs->trans(\"Firstname\").'</td><td colspan=\"2\">'.$object->firstname.'</td></tr>';\n  613  \n  614  \t// Payment mode\n  615  \tprint \"<tr><td>\".$langs->trans(\"PaymentMode\").\"</td><td>\";\n  616  \t$form->form_modes_reglement(null, $object->modepaymentid,'none');\n  617  \tprint \"</td></tr>\\n\";"
+  },
+  {
+   "item": "26f7fc63859e",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/resize.py",
+   "line": 154,
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  149      if not output_path:\n  150          base, ext = os.path.splitext(input_path)\n  151          output_path = f\"{base}_resized{ext}\"\n  152  \n  153      def _resize():\n  154>         with Image.open(input_path) as img:\n  155              original_width, original_height = img.size\n  156              new_width, new_height = _compute_new_dimensions(\n  157                  original_width, original_height,\n  158                  width, height, scale, maintain_aspect,\n  159              )"
+  },
+  {
+   "item": "59ed03a9e4d8",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1094,
+   "span": [
+    44,
+    0,
+    62
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1089      const platform = process.platform;\n 1090  \n 1091      if (platform === 'win32') {\n 1092        // Windows permissions (using icacls)\n 1093        try {\n 1094>         const { stdout } = await execAsync(`icacls \"${path}\"`);\n 1095          const lines = stdout.split('\\n');\n 1096  \n 1097          return {\n 1098            path,\n 1099            owner: 'N/A',"
+  },
+  {
+   "item": "7bc1d5ede5a5",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1074,
+   "span": [
+    44,
+    0,
+    66
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1069          return [];\n 1070        }\n 1071      } else {\n 1072        // Unix: Use id command\n 1073        try {\n 1074>         const { stdout } = await execAsync(`id -Gn \"${username}\"`);\n 1075          return stdout.trim().split(/\\s+/);\n 1076        } catch {\n 1077          return [];\n 1078        }\n 1079      }"
+  },
+  {
+   "item": "fadfe3afcddd",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 704,
+   "span": [
+    8,
+    0,
+    177
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  699  \n  700  \t// Actions buttons\n  701  \n  702  \tprint '<div class=\"tabsAction\">';\n  703  \n  704> \tprint '<div class=\"inline-block divButAction\"><a class=\"butAction\" href=\"' . $_SERVER[\"PHP_SELF\"] . '?action=edit&rowid='.$object->id.'\">'.$langs->trans('Modify').'</a></div>';\n  705  \n  706  \tif ($object->statut == 0)\n  707  \t{\n  708  \t\tprint '<div class=\"inline-block divButAction\"><a class=\"butAction\" href=\"' . $_SERVER[\"PHP_SELF\"] . '?rowid='.$object->id.'&action=valid_promesse\">'.$langs->trans(\"ValidPromess\").'</a></div>';\n  709  \t}"
+  },
+  {
+   "item": "a29843127af8",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 2471,
+   "span": [
+    10,
+    0,
+    167
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2466  \t\t\t$filedir = $conf->user->dir_output . \"/\" . dol_sanitizeFileName($object->ref);\n 2467  \t\t\t$urlsource = $_SERVER[\"PHP_SELF\"] . \"?id=\" . $object->id;\n 2468  \t\t\t$genallowed = $user->rights->user->user->lire;\n 2469  \t\t\t$delallowed = $user->rights->user->user->creer;\n 2470  \n 2471> \t\t\tprint $formfile->showdocuments('user', $filename, $filedir, $urlsource, $genallowed, $delallowed, $object->modelpdf, 1, 0, 0, 28, 0, '', 0, '', $soc->default_lang);\n 2472  \t\t\t$somethingshown = $formfile->numoffiles;\n 2473  \n 2474  \t\t\t// Show links to link elements\n 2475  \t\t\t$linktoelem = $form->showLinkToObjectBlock($object, null, null);\n 2476  \t\t\t$somethingshown = $form->showLinkedObjectBlock($object, $linktoelem);"
+  },
+  {
+   "item": "9ebec1776bbc",
+   "repository_case": "GHSA-rcv6-pvrj-4xcg",
+   "file": "packages/nodes-base/nodes/EmailSend/v2/send.operation.ts",
+   "line": 238,
+   "span": [
+    28,
+    0,
+    45
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  233  \t\t\t\t\t${mailOptions.html}\n  234  \t\t\t\t\t<br>\n  235  \t\t\t\t\t<br>\n  236  \t\t\t\t\t---\n  237  \t\t\t\t\t<br>\n  238> \t\t\t\t\t<em>${attributionText}<a href=\"${link}\" target=\"_blank\">n8n</a></em>\n  239  \t\t\t\t\t`;\n  240  \t\t\t\t} else {\n  241  \t\t\t\t\tmailOptions.text = `${mailOptions.text}\\n\\n---\\n${attributionText}n8n\\n${'https://n8n.io'}`;\n  242  \t\t\t\t}\n  243  \t\t\t}"
+  },
+  {
+   "item": "11f23bcd0cd8",
+   "repository_case": "GHSA-gxmw-5f7x-6g22",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4494,
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 4489              name: Checkpoint name\n 4490              \n 4491          Returns:\n 4492              True if deleted successfully\n 4493          \"\"\"\n 4494>         checkpoint_file = self._get_checkpoints_dir() / f\"{name}.json\"\n 4495          \n 4496          if checkpoint_file.exists():\n 4497              checkpoint_file.unlink()\n 4498              self._log(f\"Deleted checkpoint '{name}'\")\n 4499              return True"
+  },
+  {
+   "item": "8ee79fbaa242",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/compress.py",
+   "line": 171,
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  166  \n  167      original_size = os.path.getsize(input_path)\n  168      output_path = _resolve_compress_output(input_path, output_path, output_format)\n  169  \n  170      def _compress():\n  171>         with Image.open(input_path) as img:\n  172              if img.mode in ('RGBA', 'P') and output_format == 'jpeg':\n  173                  img = img.convert('RGB')\n  174  \n  175              os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)\n  176              ext = os.path.splitext(output_path)[1].lower()"
+  },
+  {
+   "item": "95f903da5ec9",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/crop.py",
+   "line": 203,
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  198              crop_right = min(original_width, int(right))\n  199              crop_bottom = min(original_height, int(bottom))\n  200  \n  201              cropped = img.crop((crop_left, crop_top, crop_right, crop_bottom))\n  202  \n  203>             os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)\n  204              cropped.save(output_path)\n  205  \n  206              return {\n  207                  'output_path': output_path,\n  208                  'width': cropped.width,"
+  },
+  {
+   "item": "2f3cd24d20c0",
+   "repository_case": "GHSA-2mhj-fhvg-v428",
+   "file": "models/DataObject/ClassDefinition/Data/Block.php",
+   "line": 750,
+   "span": [
+    35,
+    0,
+    41
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  745              } elseif ($containerType === 'objectbrick') {\n  746                  $query = 'select ' . $db->quoteIdentifier($field) . ' from object_brick_localized_' . $context['containerKey'] . '_' . $object->getClassId() . ' where language = ' . $db->quote($params['language']) . ' and  ooo_id  = ' . $object->getId() . ' and fieldname = ' . $db->quote($context['fieldname']);\n  747              } else {\n  748                  $query = 'select ' . $db->quoteIdentifier($field) . ' from object_localized_data_' . $object->getClassId() . ' where language = ' . $db->quote($params['language']) . ' and  ooo_id  = ' . $object->getId();\n  749              }\n  750>             $data = $db->fetchOne($query);\n  751              $data = $this->getDataFromResource($data, $object, $params);\n  752          } elseif ($object instanceof DataObject\\Objectbrick\\Data\\AbstractData) {\n  753              $context = $params['context'];\n  754  \n  755              $object = $context['object'];"
+  },
+  {
+   "item": "32e804de2adc",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 458,
+   "span": [
+    8,
+    0,
+    171
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  453  \tprint \"</td>\";\n  454  \tprint \"</tr>\\n\";\n  455  \n  456  \t$langs->load(\"companies\");\n  457  \tprint '<tr><td>'.$langs->trans(\"Company\").'</td><td><input type=\"text\" name=\"societe\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->societe).'\"></td></tr>';\n  458> \tprint '<tr><td>'.$langs->trans(\"Lastname\").'</td><td><input type=\"text\" name=\"lastname\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->lastname).'\"></td></tr>';\n  459  \tprint '<tr><td>'.$langs->trans(\"Firstname\").'</td><td><input type=\"text\" name=\"firstname\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->firstname).'\"></td></tr>';\n  460  \tprint '<tr><td>'.$langs->trans(\"Address\").'</td><td>';\n  461  \tprint '<textarea name=\"address\" wrap=\"soft\" class=\"quatrevingtpercent\" rows=\"'.ROWS_3.'\">'.dol_escape_htmltag($object->address).'</textarea></td></tr>';\n  462  \n  463      // Zip / Town"
+  },
+  {
+   "item": "aa545448ab61",
+   "repository_case": "GHSA-g5r6-gv6m-f5jv",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 41,
+   "span": [
+    9,
+    0,
+    39
+   ],
+   "claimed_weakness": "TLS / transport verification",
+   "context": "   36              block: Whether to block when the pool is full\n   37              pool_kwargs: Additional arguments for the pool manager\n   38          \"\"\"\n   39          # Configure SSL context to disable verification completely\n   40          context = ssl.create_default_context()\n   41>         context.check_hostname = False\n   42          context.verify_mode = ssl.CERT_NONE\n   43  \n   44          self.poolmanager = PoolManager(\n   45              num_pools=connections,\n   46              maxsize=maxsize,"
+  },
+  {
+   "item": "d018adb1fb23",
+   "repository_case": "GHSA-p6gw-4frg-j7jw",
+   "file": "wsgidav/samples/mysql_dav_provider.py",
+   "line": 376,
+   "span": [
+    24,
+    0,
+    48
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  371  \n  372      def _exists_record_by_primary_key(self, conn, table_name, pri_key_value):\n  373          pri_key = None\n  374          pri_field_type = None\n  375          cursor = conn.cursor(MySQLdb.cursors.DictCursor)\n  376>         cursor.execute(\"DESCRIBE \" + table_name)\n  377          result_set = cursor.fetchall()\n  378          for row in result_set:\n  379              if row[\"Key\"] == \"PRI\":\n  380                  if pri_key is None:\n  381                      pri_key = row[\"Field\"]"
+  },
+  {
+   "item": "be9f6a73e24e",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 417,
+   "span": [
+    8,
+    0,
+    82
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  412  \t}\n  413  \n  414  \t$hselected='card';\n  415  \t$head = donation_prepare_head($object);\n  416  \n  417> \tprint '<form name=\"update\" action=\"' . $_SERVER[\"PHP_SELF\"] . '\" method=\"POST\">';\n  418  \tprint '<input type=\"hidden\" name=\"token\" value=\"'.$_SESSION['newtoken'].'\">';\n  419  \tprint '<input type=\"hidden\" name=\"action\" value=\"update\">';\n  420  \tprint '<input type=\"hidden\" name=\"rowid\" value=\"'.$object->id.'\">';\n  421  \tprint '<input type=\"hidden\" name=\"amount\" value=\"'.$object->amount.'\">';\n  422  "
+  },
+  {
+   "item": "15e3ff46bf26",
+   "repository_case": "GHSA-jmv2-qgxf-f995",
+   "file": "packages/integrations/solid/src/server.ts",
+   "line": 70,
+   "span": [
+    23,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   65  \n   66  \tconst renderFn = () => {\n   67  \t\tconst slots: Record<string, any> = {};\n   68  \t\tfor (const [key, value] of Object.entries(slotted)) {\n   69  \t\t\tconst name = slotName(key);\n   70> \t\t\tslots[name] = ssr(`<${tagName} name=\"${name}\">${value}</${tagName}>`);\n   71  \t\t}\n   72  \t\t// Note: create newProps to avoid mutating `props` before they are serialized\n   73  \t\tconst newProps = {\n   74  \t\t\t...props,\n   75  \t\t\t...slots,"
+  },
+  {
+   "item": "69629160bb38",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 1188,
+   "span": [
+    28,
+    0,
+    32
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 1183  \t\t{\n 1184  \t\t\t$sql = \"UPDATE \".MAIN_DB_PREFIX.\"user\";\n 1185  \t\t\t$sql.= \" SET fk_socpeople=\".$contact->id;\n 1186  \t\t\tif ($contact->socid) $sql.=\", fk_soc=\".$contact->socid;\n 1187  \t\t\t$sql.= \" WHERE rowid=\".$this->id;\n 1188> \t\t\t$resql=$this->db->query($sql);\n 1189  \n 1190  \t\t\tdol_syslog(get_class($this).\"::create_from_contact\", LOG_DEBUG);\n 1191  \t\t\tif ($resql)\n 1192  \t\t\t{\n 1193  \t\t\t\t$this->context['createfromcontact']='createfromcontact';"
+  },
+  {
+   "item": "f26318e2becd",
+   "repository_case": "GHSA-g5r6-gv6m-f5jv",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 42,
+   "span": [
+    9,
+    0,
+    44
+   ],
+   "claimed_weakness": "TLS / transport verification",
+   "context": "   37              pool_kwargs: Additional arguments for the pool manager\n   38          \"\"\"\n   39          # Configure SSL context to disable verification completely\n   40          context = ssl.create_default_context()\n   41          context.check_hostname = False\n   42>         context.verify_mode = ssl.CERT_NONE\n   43  \n   44          self.poolmanager = PoolManager(\n   45              num_pools=connections,\n   46              maxsize=maxsize,\n   47              block=block,"
+  },
+  {
+   "item": "aefc95460065",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/resize.py",
+   "line": 161,
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  156              new_width, new_height = _compute_new_dimensions(\n  157                  original_width, original_height,\n  158                  width, height, scale, maintain_aspect,\n  159              )\n  160              resized = img.resize((new_width, new_height), resampling)\n  161>             os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)\n  162              resized.save(output_path)\n  163              return {\n  164                  'original_size': {'width': original_width, 'height': original_height},\n  165                  'new_size': {'width': new_width, 'height': new_height}\n  166              }"
+  },
+  {
+   "item": "d445c7d3c718",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/document/pdf_fill_form.py",
+   "line": 130,
+   "span": [
+    21,
+    0,
+    56
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  125      def _do_fill():\n  126          try:\n  127              from pypdf import PdfReader, PdfWriter\n  128          except ImportError:\n  129              raise ImportError(\"pypdf is required for pdf.fill_form. Install with: pip install pypdf\")\n  130>         os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)\n  131          reader = PdfReader(template_path)\n  132          writer = PdfWriter()\n  133          for page in reader.pages:\n  134              writer.add_page(page)\n  135          fields_filled = _fill_form_fields(writer, reader, fields)"
+  },
+  {
+   "item": "72ca226e3e9a",
+   "repository_case": "GHSA-2gx6-7gx2-wwcf",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 43,
+   "span": [
+    33,
+    0,
+    54
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   38                      href: item.url\n   39                  }\n   40              };\n   41              itemHTMLChunks.push(serializer.serialize(imageCard.render(cardOpts)));\n   42  \n   43>             let linkHTML = `<h4><a href=\"${item.url}\">${item.title}</a></h4>${item.description}`;\n   44              itemHTMLChunks.push(linkHTML);\n   45          } else if (type === 'tweet') {\n   46              // Should this be an oEmbed call? Probably.\n   47              itemHTMLChunks.push(`<figure class=\"kg-card kg-embed-card\">\n   48                  <blockquote class=\"twitter-tweet\"><a href=\"${item.url}\"></a></blockquote>"
+  },
+  {
+   "item": "116ced3f5b7a",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 357,
+   "span": [
+    9,
+    0,
+    72
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  352      };\n  353  \n  354      // Get dependencies\n  355      try {\n  356        const { stdout: depsOut } = await execAsync(\n  357>         `systemctl list-dependencies ${serviceName} --plain --no-pager`\n  358        );\n  359        info.dependencies = depsOut\n  360          .split('\\n')\n  361          .filter((line) => line.trim() && !line.includes('\u25cf'))\n  362          .map((line) => line.trim().replace(/^[\u251c\u2514\u2500\\s]+/, ''));"
+  },
+  {
+   "item": "97489d7e0492",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 579,
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  574  \t\t\t$sql = \"SELECT module, perms, subperms\";\n  575  \t\t\t$sql.= \" FROM \".MAIN_DB_PREFIX.\"rights_def\";\n  576  \t\t\t$sql.= \" WHERE id = '\".$this->db->escape($rid).\"'\";\n  577  \t\t\t$sql.= \" AND entity = \".$entity;\n  578  \n  579> \t\t\t$result=$this->db->query($sql);\n  580  \t\t\tif ($result) {\n  581  \t\t\t\t$obj = $this->db->fetch_object($result);\n  582  \t\t\t\t$module=$obj->module;\n  583  \t\t\t\t$perms=$obj->perms;\n  584  \t\t\t\t$subperms=$obj->subperms;"
+  },
+  {
+   "item": "5fa7ced4561d",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/output-formatting/smart-pretty.ts",
+   "line": 1189,
+   "span": [
+    10,
+    0,
+    36
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1184      };\n 1185  \n 1186      // Replace HTML spans with ANSI codes\n 1187      for (const [className, colorKey] of Object.entries(classToColor)) {\n 1188        const regex = new RegExp(\n 1189>         `<span class=\"${className}\">([^<]+)</span>`,\n 1190          'g'\n 1191        );\n 1192        result = result.replace(regex, (_, content) => {\n 1193          const colorFn = ansiCodes[colorKey];\n 1194          return colorFn ? colorFn(content) : content;"
+  },
+  {
+   "item": "ffab17dc5f81",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/watermark.py",
+   "line": 250,
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  245  \n  246      _validate_watermark_params(input_path, output_path, text, watermark_image_path)\n  247      opacity = max(0.0, min(1.0, float(opacity)))\n  248  \n  249      def _apply_watermark():\n  250>         with Image.open(input_path) as base_img:\n  251              if base_img.mode != 'RGBA':\n  252                  base_img = base_img.convert('RGBA')\n  253  \n  254              if watermark_image_path and os.path.exists(watermark_image_path):\n  255                  watermark_type = 'image'"
+  },
+  {
+   "item": "0047cf5ecdf9",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 464,
+   "span": [
+    33,
+    0,
+    47
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  459          break;\n  460        case 'windows':\n  461          command = `sc start \"${serviceName}\"`;\n  462          break;\n  463        case 'docker':\n  464>         command = `docker start ${serviceName}`;\n  465          break;\n  466        default:\n  467          throw new Error(`Unsupported service type: ${serviceType}`);\n  468      }\n  469  "
+  },
+  {
+   "item": "9593f952a125",
+   "repository_case": "GHSA-w93q-cq9w-58p7",
+   "file": "src/plugins/modal/embed.js",
+   "line": 876,
+   "span": [
+    5,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  871  \t\t\t\t</div>\n  872  \t\t\t\t<input class=\"se-input-control _se_size_x\" placeholder=\"auto\"${onlyPercentage ? ' type=\"number\" min=\"1\"' : 'type=\"text\"'}${onlyPercentage ? ' max=\"100\"' : ''}/>\n  873  \t\t\t\t<label class=\"se-modal-size-x\"${onlyWidthDisplay}>${onlyPercentage ? '%' : 'x'}</label>\n  874  \t\t\t\t<input class=\"se-input-control _se_size_y\" placeholder=\"auto\"\n  875  \t\t\t\t${onlyPercentage ? ' type=\"number\" min=\"1\"' : 'type=\"text\"'}${onlyPercentage ? ' max=\"100\"' : ''}${heightDisplay}/>\n  876> \t\t\t\t<button type=\"button\" title=\"${lang.revert}\" aria-label=\"${lang.revert}\" class=\"se-btn se-modal-btn-revert\">${icons.revert}</button>\n  877  \t\t\t</div>\n  878  \t\t\t<div class=\"se-modal-form se-modal-form-footer\"${onlyPercentDisplay}${onlyWidthDisplay}>\n  879  \t\t\t\t<label>\n  880  \t\t\t\t\t<input type=\"checkbox\" class=\"se-modal-btn-check _se_check_proportion\" />&nbsp;\n  881  \t\t\t\t\t<span>${lang.proportion}</span>"
+  },
+  {
+   "item": "0fdb1033ef22",
+   "repository_case": "GHSA-vvr2-h2jp-838m",
+   "file": "codebase_rag/mcp/tools.py",
+   "line": 562,
+   "span": [
+    29,
+    0,
+    64
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  557          self, file_path: str, offset: int | None = None, limit: int | None = None\n  558      ) -> str:\n  559          logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))\n  560          try:\n  561              if offset is not None or limit is not None:\n  562>                 full_path = Path(self.project_root) / file_path\n  563                  start = offset if offset is not None else 0\n  564  \n  565                  with open(full_path, encoding=cs.ENCODING_UTF8) as f:\n  566                      skipped_count = sum(1 for _ in itertools.islice(f, start))\n  567  "
+  },
+  {
+   "item": "6436e34ac372",
+   "repository_case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/Postgre/Builder.php",
+   "line": 107,
+   "span": [
+    37,
+    0,
+    41
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  102          $sql = $this->_update($this->QBFrom[0], [$column => \"CAST({$column} AS numeric) + {$value}\"]);\n  103  \n  104          if (! $this->testMode) {\n  105              $this->resetWrite();\n  106  \n  107>             return $this->db->query($sql, $this->binds, false);\n  108          }\n  109  \n  110          return true;\n  111      }\n  112  "
+  },
+  {
+   "item": "408293fa2e5d",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 567,
+   "span": [
+    35,
+    0,
+    49
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  562          await execAsync(`sc stop \"${serviceName}\"`);\n  563          await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait 2 seconds\n  564          command = `sc start \"${serviceName}\"`;\n  565          break;\n  566        case 'docker':\n  567>         command = `docker restart ${serviceName}`;\n  568          break;\n  569        default:\n  570          throw new Error(`Unsupported service type: ${serviceType}`);\n  571      }\n  572  "
+  },
+  {
+   "item": "447533ab1329",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack/cjs/react-server-dom-webpack-server.node.development.js",
+   "line": 2832,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2827                void 0 === value._debugTask\n 2828              ) {\n 2829                var key = \"\";\n 2830                null !== value.key &&\n 2831                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2832>                 (key = ' key=\"' + value.key + '\"');\n 2833                console.error(\n 2834                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2835                  value.type,\n 2836                  key,\n 2837                  value.props"
+  },
+  {
+   "item": "3e0007d2f667",
+   "repository_case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/android/icon_analysis.py",
+   "line": 357,
+   "span": [
+    18,
+    0,
+    37
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  352              vd2svg = userbin\n  353          else:\n  354              vd2svg = Path(tools_dir) / 'vd2svg-0.4.4.jar'\n  355          # When xml is android vector\n  356          values = app_dir / 'res' / 'values'\n  357>         direct = app_dir / icon_name\n  358          cwd = direct.parent.as_posix()\n  359  \n  360          # When xml is referencing to vector use apktool_res\n  361          files = []\n  362          if apktool_res:"
+  },
+  {
+   "item": "e90713e3f0d9",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1683,
+   "span": [
+    12,
+    0,
+    184
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1678  \t\t\t\t\t}\n 1679  \t\t\t\t}\n 1680  \t\t\t\telseif ($caneditpassword && ! $object->ldap_sid &&\n 1681  \t\t\t\t(empty($conf->multicompany->enabled) || ! $user->entity || ($object->entity == $conf->entity) || ($conf->global->MULTICOMPANY_TRANSVERSE_MODE && $conf->entity == 1)))\n 1682  \t\t\t\t{\n 1683> \t\t\t\t\tprint '<div class=\"inline-block divButAction\"><a class=\"butAction\" href=\"'.$_SERVER['PHP_SELF'].'?id='.$object->id.'&amp;action=edit\">'.$langs->trans(\"EditPassword\").'</a></div>';\n 1684  \t\t\t\t}\n 1685  \n 1686  \t\t\t\t// Si on a un gestionnaire de generation de mot de passe actif\n 1687  \t\t\t\tif ($conf->global->USER_PASSWORD_GENERATED != 'none')\n 1688  \t\t\t\t{"
+  },
+  {
+   "item": "e6e1fc760915",
+   "repository_case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 396,
+   "span": [
+    30,
+    0,
+    82
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  391  \n  392              if (line.listTypeName === 'number') {\n  393                if (olItemCounts[line.listLevel] != null && olItemCounts[line.listLevel] > 0) {\n  394                  // Continue numbering after an unordered-list interruption\n  395                  const startNum = olItemCounts[line.listLevel] + 1;\n  396>                 pieces.push(`<ol start=\"${startNum}\" class=\"${line.listTypeName}\">`);\n  397                } else if (olItemCounts[line.listLevel] != null) {\n  398                  // Counter exists but is 0 \u2014 level was explicitly reset (e.g. a\n  399                  // nested list was closed). Start fresh without a start attribute.\n  400                  pieces.push(`<ol class=\"${line.listTypeName}\">`);\n  401                } else {"
+  },
+  {
+   "item": "1d39a1f583d4",
+   "repository_case": "GHSA-rjjv-87mx-6x3h",
+   "file": "packages/kit/src/exports/vite/utils.js",
+   "line": 92,
+   "span": [
+    88,
+    0,
+    109
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   87  \tconst prefixed = base + req.url;\n   88  \n   89  \tif (type === 'text/html') {\n   90  \t\tres.setHeader('Content-Type', 'text/html');\n   91  \t\tres.end(\n   92> \t\t\t`The server is configured with a public base URL of ${base} - did you mean to visit <a href=\"${prefixed}\">${prefixed}</a> instead?`\n   93  \t\t);\n   94  \t} else {\n   95  \t\tres.end(\n   96  \t\t\t`The server is configured with a public base URL of ${base} - did you mean to visit ${prefixed} instead?`\n   97  \t\t);"
+  },
+  {
+   "item": "9154cb41862e",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack-experimental/cjs/react-server-dom-webpack-server.browser.development.js",
+   "line": 2577,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2572                void 0 === value._debugTask\n 2573              ) {\n 2574                var key = \"\";\n 2575                null !== value.key &&\n 2576                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2577>                 (key = ' key=\"' + value.key + '\"');\n 2578                console.error(\n 2579                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2580                  value.type,\n 2581                  key,\n 2582                  value.props"
+  },
+  {
+   "item": "c587306e1515",
+   "repository_case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 396,
+   "span": [
+    30,
+    0,
+    53
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  391  \n  392              if (line.listTypeName === 'number') {\n  393                if (olItemCounts[line.listLevel] != null && olItemCounts[line.listLevel] > 0) {\n  394                  // Continue numbering after an unordered-list interruption\n  395                  const startNum = olItemCounts[line.listLevel] + 1;\n  396>                 pieces.push(`<ol start=\"${startNum}\" class=\"${line.listTypeName}\">`);\n  397                } else if (olItemCounts[line.listLevel] != null) {\n  398                  // Counter exists but is 0 \u2014 level was explicitly reset (e.g. a\n  399                  // nested list was closed). Start fresh without a start attribute.\n  400                  pieces.push(`<ol class=\"${line.listTypeName}\">`);\n  401                } else {"
+  },
+  {
+   "item": "2c5c57ff42b0",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2003,
+   "span": [
+    30,
+    0,
+    34
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 1998  \t\t$sql = \"DELETE FROM \".MAIN_DB_PREFIX.\"usergroup_user\";\n 1999  \t\t$sql.= \" WHERE fk_user  = \".$this->id;\n 2000  \t\t$sql.= \" AND fk_usergroup = \".$group;\n 2001  \t\t$sql.= \" AND entity = \".$entity;\n 2002  \n 2003> \t\t$result = $this->db->query($sql);\n 2004  \n 2005  \t\t$sql = \"INSERT INTO \".MAIN_DB_PREFIX.\"usergroup_user (entity, fk_user, fk_usergroup)\";\n 2006  \t\t$sql.= \" VALUES (\".$entity.\",\".$this->id.\",\".$group.\")\";\n 2007  \n 2008  \t\t$result = $this->db->query($sql);"
+  },
+  {
+   "item": "d509faa7feab",
+   "repository_case": "GHSA-r7h9-qx4h-77j5",
+   "file": "src/Utils/ListFormatHelper.php",
+   "line": 129,
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  124              $contentTypes,\n  125              $order,\n  126              $amount\n  127          );\n  128  \n  129>         $rows = $this->connection->fetchAllAssociative($query);\n  130  \n  131          $options = [];\n  132  \n  133          foreach ($rows as $row) {\n  134              $options[] = ['key' => (int) $row['id'], 'value' => $row['list_format']];"
+  },
+  {
+   "item": "64b0b968e16b",
+   "repository_case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1201,
+   "span": [
+    24,
+    0,
+    54
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 1196              Path to saved session file\n 1197          \"\"\"\n 1198          sessions_path = self.user_path / \"sessions\"\n 1199          sessions_path.mkdir(parents=True, exist_ok=True)\n 1200          \n 1201>         session_file = sessions_path / f\"{name}.json\"\n 1202          \n 1203          # Take snapshots under lock for consistent session data\n 1204          with self._lock:\n 1205              short_term_data = [item.to_dict() for item in self._short_term]\n 1206              long_term_snapshot = [item.to_dict() for item in self._long_term[-50:]]  # Last 50"
+  },
+  {
+   "item": "8005930a3b15",
+   "repository_case": "GHSA-4g3v-8h47-v7g6",
+   "file": "packages/astro/src/runtime/server/render/server-islands.ts",
+   "line": 201,
+   "span": [
+    7,
+    0,
+    63
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  196  \n  197  \t\tif (useGETRequest) {\n  198  \t\t\tserverIslandUrl += '?' + potentialSearchParams.toString();\n  199  \t\t\tthis.result._metadata.extraHead.push(\n  200  \t\t\t\tmarkHTMLString(\n  201> \t\t\t\t\t`<link rel=\"preload\" as=\"fetch\" href=\"${serverIslandUrl}\" crossorigin=\"anonymous\">`,\n  202  \t\t\t\t),\n  203  \t\t\t);\n  204  \t\t}\n  205  \n  206  \t\t// Get adapter headers for inline script"
+  },
+  {
+   "item": "bff7eb50cade",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 1266,
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 1261  \t\t\t\t$sql = \"UPDATE \".MAIN_DB_PREFIX.\"user\";\n 1262  \t\t\t\t$sql.= \" SET fk_soc=\".$member->fk_soc;\n 1263  \t\t\t\t$sql.= \" WHERE rowid=\".$this->id;\n 1264  \n 1265  \t\t\t\tdol_syslog(get_class($this).\"::create_from_member\", LOG_DEBUG);\n 1266> \t\t\t\t$resql=$this->db->query($sql);\n 1267  \t\t\t\tif ($resql)\n 1268  \t\t\t\t{\n 1269  \t\t\t\t\t$this->db->commit();\n 1270  \t\t\t\t\treturn $this->id;\n 1271  \t\t\t\t}"
+  },
+  {
+   "item": "c97c9593d18a",
+   "repository_case": "GHSA-gxmw-5f7x-6g22",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1292,
+   "span": [
+    24,
+    0,
+    54
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 1287          return sessions\n 1288      \n 1289      def delete_session(self, name: str) -> bool:\n 1290          \"\"\"Delete a saved session.\"\"\"\n 1291          sessions_path = self.user_path / \"sessions\"\n 1292>         session_file = sessions_path / f\"{name}.json\"\n 1293          \n 1294          if session_file.exists():\n 1295              session_file.unlink()\n 1296              self._log(f\"Deleted session '{name}'\")\n 1297              return True"
+  },
+  {
+   "item": "265755a58b76",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 465,
+   "span": [
+    8,
+    0,
+    151
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  460  \tprint '<tr><td>'.$langs->trans(\"Address\").'</td><td>';\n  461  \tprint '<textarea name=\"address\" wrap=\"soft\" class=\"quatrevingtpercent\" rows=\"'.ROWS_3.'\">'.dol_escape_htmltag($object->address).'</textarea></td></tr>';\n  462  \n  463      // Zip / Town\n  464      print '<tr><td>'.$langs->trans(\"Zip\").' / '.$langs->trans(\"Town\").'</td><td>';\n  465> \tprint $formcompany->select_ziptown((isset($_POST[\"zipcode\"])?$_POST[\"zipcode\"]:$object->zip),'zipcode',array('town','selectcountry_id','state_id'),6);\n  466      print ' ';\n  467  \tprint $formcompany->select_ziptown((isset($_POST[\"town\"])?$_POST[\"town\"]:$object->town),'town',array('zipcode','selectcountry_id','state_id'));\n  468  \tprint '</tr>';\n  469  \n  470  \t// Country"
+  },
+  {
+   "item": "7cf3df6acccb",
+   "repository_case": "GHSA-jg4p-g6xj-4qmf",
+   "file": "src/extractors/x-article.ts",
+   "line": 114,
+   "span": [
+    11,
+    0,
+    63
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  109  \t\tconst src = headerPhoto.getAttribute('src');\n  110  \t\tif (!src) return '';\n  111  \n  112  \t\tconst alt = headerPhoto.getAttribute('alt')?.replace(/\\s+/g, ' ').trim() || 'Image';\n  113  \n  114> \t\treturn `<img src=\"${this.upgradeImageSrc(src)}\" alt=\"${alt}\">`;\n  115  \t}\n  116  \n  117  \tprivate cleanContent(container: HTMLElement): void {\n  118  \t\tconst ownerDoc = container.ownerDocument || this.document;\n  119  "
+  },
+  {
+   "item": "557d76ff5344",
+   "repository_case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 200,
+   "span": [
+    66,
+    0,
+    78
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  195                   WHERE sender_id = %d AND recipient_id = %d AND is_read = 0',\n  196                  $prefix,\n  197                  $partnerId,\n  198                  $userId,\n  199              );\n  200>             $unreadResult = $this->configuration->getDb()->query($unreadQuery);\n  201              $unreadRow = $this->configuration->getDb()->fetchObject($unreadResult);\n  202  \n  203              $conversations[] = [\n  204                  'userId' => $partnerId,\n  205                  'displayName' => $userInfo[$partnerId] ?? 'Unknown User',"
+  },
+  {
+   "item": "b8cd40a4c59b",
+   "repository_case": "GHSA-2mhj-fhvg-v428",
+   "file": "models/DataObject/ClassDefinition/Data/Block.php",
+   "line": 736,
+   "span": [
+    35,
+    0,
+    41
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  731          $db = Db::get();\n  732          $data = null;\n  733  \n  734          if ($object instanceof DataObject\\Concrete) {\n  735              $query = 'select ' . $db->quoteIdentifier($field) . ' from object_store_' . $object->getClassId() . ' where oo_id  = ' . $object->getId();\n  736>             $data = $db->fetchOne($query);\n  737              $data = $this->getDataFromResource($data, $object, $params);\n  738          } elseif ($object instanceof DataObject\\Localizedfield) {\n  739              $context = $params['context'];\n  740              $object = $context['object'];\n  741              $containerType = $context['containerType'] ?? null;"
+  },
+  {
+   "item": "402c4717eff3",
+   "repository_case": "GHSA-pr22-p9rp-2cqv",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 43,
+   "span": [
+    33,
+    0,
+    54
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   38                      href: item.url\n   39                  }\n   40              };\n   41              itemHTMLChunks.push(serializer.serialize(imageCard.render(cardOpts)));\n   42  \n   43>             let linkHTML = `<h4><a href=\"${item.url}\">${item.title}</a></h4>${item.description}`;\n   44              itemHTMLChunks.push(linkHTML);\n   45          } else if (type === 'tweet') {\n   46              // Should this be an oEmbed call? Probably.\n   47              itemHTMLChunks.push(`<figure class=\"kg-card kg-embed-card\">\n   48                  <blockquote class=\"twitter-tweet\"><a href=\"${item.url}\"></a></blockquote>"
+  },
+  {
+   "item": "edfdf6e58058",
+   "repository_case": "GHSA-p6gw-4frg-j7jw",
+   "file": "wsgidav/samples/mysql_dav_provider.py",
+   "line": 531,
+   "span": [
+    24,
+    0,
+    48
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  526          return dictRet\n  527  \n  528      def _find_primary_key(self, conn, table_name):\n  529          pri_key = None\n  530          cursor = conn.cursor(MySQLdb.cursors.DictCursor)\n  531>         cursor.execute(\"DESCRIBE \" + table_name)\n  532          result_set = cursor.fetchall()\n  533          for row in result_set:\n  534              fieldname = row[\"Field\"]\n  535              keyvalue = row[\"Key\"]\n  536              if keyvalue == \"PRI\":"
+  },
+  {
+   "item": "44138652c091",
+   "repository_case": "GHSA-4g3v-8h47-v7g6",
+   "file": "packages/astro/src/runtime/server/render/server-islands.ts",
+   "line": 88,
+   "span": [
+    5,
+    0,
+    70
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   83  \t\t\tif (name === 'fallback') {\n   84  \t\t\t\tawait renderChild(destination, this.slots.fallback(this.result));\n   85  \t\t\t}\n   86  \t\t}\n   87  \t\tdestination.write(\n   88> \t\t\t`<script type=\"module\" data-astro-rerun data-island-id=\"${hostId}\">${islandContent}</script>`,\n   89  \t\t);\n   90  \t}\n   91  \n   92  \tgetComponentPath(): string {\n   93  \t\tif (this.componentPath) {"
+  },
+  {
+   "item": "6f93ef01b3ab",
+   "repository_case": "GHSA-p853-83gj-wjj3",
+   "file": "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+   "line": 775,
+   "span": [
+    17,
+    0,
+    28
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  770  \n  771      await run(preCommand, this.getPasswordEnvVars(password, toolchain));\n  772      try {\n  773        await run(pgRestoreCommand, this.getPasswordEnvVars(password, toolchain));\n  774      } finally {\n  775>       await run(postCommand, this.getPasswordEnvVars(password, toolchain));\n  776      }\n  777      await this.syncCollectionSchemaMetadata(srcSchema, targetSchema, toolchain);\n  778    }\n  779  \n  780    protected async syncCollectionSchemaMetadata("
+  },
+  {
+   "item": "e3e5d6aa017e",
+   "repository_case": "GHSA-2mhj-fhvg-v428",
+   "file": "models/DataObject/ClassDefinition/Data/Block.php",
+   "line": 761,
+   "span": [
+    35,
+    0,
+    41
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  756              $brickType = $context['containerKey'];\n  757              $brickField = $context['brickField'];\n  758              $fieldname = $context['fieldname'];\n  759              $query = 'select ' . $db->quoteIdentifier($brickField) . ' from object_brick_store_' . $brickType . '_' . $object->getClassId()\n  760                  . ' where  id  = ' . $object->getId() . ' and fieldname = ' . $db->quote($fieldname);\n  761>             $data = $db->fetchOne($query);\n  762              $data = $this->getDataFromResource($data, $object, $params);\n  763          } elseif ($object instanceof DataObject\\Fieldcollection\\Data\\AbstractData) {\n  764              $context = $params['context'];\n  765              $collectionType = $context['containerKey'];\n  766              $object = $context['object'];"
+  },
+  {
+   "item": "8e9d9a75f009",
+   "repository_case": "GHSA-9qw7-j9xw-fv9c",
+   "file": "src/commands/checkout.js",
+   "line": 703,
+   "span": [
+    13,
+    0,
+    19
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  698  ) {\n  699    const filepath = `${dir}/${fullpath}`\n  700    if (method !== 'create-index' && method !== 'mkdir-index') {\n  701      const { object } = await readObject({ fs, cache, gitdir, oid })\n  702      if (chmod) {\n  703>       await fs.rm(filepath)\n  704      }\n  705      if (mode === 0o100644) {\n  706        // regular file\n  707        await fs.write(filepath, object)\n  708      } else if (mode === 0o100755) {"
+  },
+  {
+   "item": "cff637afe7bd",
+   "repository_case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 403,
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  398              'SELECT user_id, display_name FROM %sfaquserdata WHERE user_id IN (%s)',\n  399              Database::getTablePrefix(),\n  400              $idList,\n  401          );\n  402  \n  403>         $result = $this->configuration->getDb()->query($query);\n  404          $userInfo = [];\n  405  \n  406          while (true) {\n  407              $row = $this->configuration->getDb()->fetchObject($result);\n  408              if ($row === false || $row === null || $row === []) {"
+  },
+  {
+   "item": "a2730b53cfa5",
+   "repository_case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4417,
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 4412              Path to checkpoint file\n 4413          \"\"\"\n 4414          import json\n 4415          from datetime import datetime\n 4416          \n 4417>         checkpoint_file = self._get_checkpoints_dir() / f\"{name}.json\"\n 4418          \n 4419          checkpoint_data = {\n 4420              \"name\": name,\n 4421              \"workflow_name\": workflow_name,\n 4422              \"completed_steps\": completed_steps,"
+  },
+  {
+   "item": "e699301854f9",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 363,
+   "span": [
+    28,
+    0,
+    32
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  358  \t\t\t// Load user->conf for user\n  359  \t\t\t$sql = \"SELECT param, value FROM \".MAIN_DB_PREFIX.\"user_param\";\n  360  \t\t\t$sql.= \" WHERE fk_user = \".$this->id;\n  361  \t\t\t$sql.= \" AND entity = \".$conf->entity;\n  362  \t\t\t//dol_syslog(get_class($this).'::fetch load personalized conf', LOG_DEBUG);\n  363> \t\t\t$resql=$this->db->query($sql);\n  364  \t\t\tif ($resql)\n  365  \t\t\t{\n  366  \t\t\t\t$num = $this->db->num_rows($resql);\n  367  \t\t\t\t$i = 0;\n  368  \t\t\t\twhile ($i < $num)"
+  },
+  {
+   "item": "4d813df0e243",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 3031,
+   "span": [
+    27,
+    0,
+    31
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 3026  \n 3027  \t\t$sql = \"SELECT rowid, email, user_mobile, civility, lastname, firstname\";\n 3028  \t\t$sql.= \" FROM \".MAIN_DB_PREFIX.\"user\";\n 3029  \t\t$sql.= \" WHERE rowid = '\".$rowid.\"'\";\n 3030  \n 3031> \t\t$resql=$this->db->query($sql);\n 3032  \t\tif ($resql)\n 3033  \t\t{\n 3034  \t\t\t$nump = $this->db->num_rows($resql);\n 3035  \n 3036  \t\t\tif ($nump)"
+  },
+  {
+   "item": "39c31836b53a",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4161,
+   "span": [
+    95,
+    0,
+    119
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 4156              $vatratecleaned = $reg[1];\n 4157              $vatratecode = $reg[2];\n 4158          }\n 4159  \n 4160          $sql.=\", \".MAIN_DB_PREFIX.\"c_country as c\";\n 4161>         if ($mysoc->country_code == 'ES') $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$buyer->country_code.\"'\";    // local tax in spain use the buyer country ??\n 4162          else $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$seller->country_code.\"'\";\n 4163          $sql.= \" AND t.taux = \".((float) $vatratecleaned).\" AND t.active = 1\";\n 4164          if ($vatratecode) $sql.= \" AND t.code = '\".$vatratecode.\"'\";\n 4165      }\n 4166  "
+  },
+  {
+   "item": "70df1de56846",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 304,
+   "span": [
+    8,
+    0,
+    79
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  299  \n  300  if ($action == 'create')\n  301  {\n  302  \tprint load_fiche_titre($langs->trans(\"AddDonation\"));\n  303  \n  304> \tprint '<form name=\"add\" action=\"' . $_SERVER[\"PHP_SELF\"] . '\" method=\"POST\">';\n  305  \tprint '<input type=\"hidden\" name=\"token\" value=\"'.$_SESSION['newtoken'].'\">';\n  306  \tprint '<input type=\"hidden\" name=\"action\" value=\"add\">';\n  307  \n  308  \tdol_fiche_head('');\n  309  "
+  },
+  {
+   "item": "1ca443bbf865",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 599,
+   "span": [
+    8,
+    0,
+    43
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  594  \n  595      print '<table class=\"border\" width=\"100%\">';\n  596  \n  597  \t// Date\n  598  \tprint '<tr><td class=\"titlefield\">'.$langs->trans(\"Date\").'</td><td colspan=\"2\">';\n  599> \tprint dol_print_date($object->date,\"day\");\n  600  \tprint \"</td>\";\n  601  \n  602      print '<tr><td>'.$langs->trans(\"Amount\").'</td><td colspan=\"2\">';\n  603  \tprint price($object->amount,0,$langs,0,0,-1,$conf->currency);\n  604  \tprint '</td></tr>';"
+  },
+  {
+   "item": "ea8ffefbcc62",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 512,
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  507  \t\t\t\t{\n  508  \t\t\t\t\t$obj = $this->db->fetch_object($result);\n  509  \t\t\t\t\t$nid = $obj->id;\n  510  \n  511  \t\t\t\t\t$sql = \"DELETE FROM \".MAIN_DB_PREFIX.\"user_rights WHERE fk_user = \".$this->id.\" AND fk_id=\".$nid.\" AND entity = \".$entity;\n  512> \t\t\t\t\tif (! $this->db->query($sql)) $error++;\n  513  \t\t\t\t\t$sql = \"INSERT INTO \".MAIN_DB_PREFIX.\"user_rights (entity, fk_user, fk_id) VALUES (\".$entity.\", \".$this->id.\", \".$nid.\")\";\n  514  \t\t\t\t\tif (! $this->db->query($sql)) $error++;\n  515  \n  516  \t\t\t\t\t$i++;\n  517  \t\t\t\t}"
+  },
+  {
+   "item": "c81e5918cd39",
+   "repository_case": "GHSA-5xpp-75jx-m839",
+   "file": "lib/network.js",
+   "line": 422,
+   "span": [
+    35,
+    0,
+    81
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  417  \n  418      try {\n  419        const SSID = getWindowsWirelessIfaceSSID(iface);\n  420        if (SSID !== 'Unknown') {\n  421          const ifaceSanitized = util.sanitizeString(SSID);\n  422>         const profiles = execSync(`netsh wlan show profiles \"${ifaceSanitized}\"`, util.execOptsWin).split('\\r\\n');\n  423          i8021xState = (profiles.find((l) => l.indexOf('802.1X') >= 0) || '').trim();\n  424          i8021xProtocol = (profiles.find((l) => l.indexOf('EAP') >= 0) || '').trim();\n  425        }\n  426  \n  427        if (i8021xState.includes(':') && i8021xProtocol.includes(':')) {"
+  },
+  {
+   "item": "77061e4d20b6",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4215,
+   "span": [
+    92,
+    0,
+    116
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 4210  \t        $vatratecleaned = $reg[1];\n 4211  \t        $vatratecode = $reg[2];\n 4212  \t    }\n 4213  \n 4214  \t    $sql.=\", \".MAIN_DB_PREFIX.\"c_country as c\";\n 4215>     \tif ($mysoc->country_code == 'ES') $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$buyer->country_code.\"'\";    // local tax in spain use the buyer country ??\n 4216      \telse $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$seller->country_code.\"'\";\n 4217      \t$sql.= \" AND t.taux = \".((float) $vatratecleaned).\" AND t.active = 1\";\n 4218      \tif ($vatratecode) $sql.= \" AND t.code = '\".$vatratecode.\"'\";\n 4219  \t}\n 4220  "
+  },
+  {
+   "item": "fea8ff126fa8",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2779,
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 2774  \t\t\t$sql.= \" WHERE u.entity IN (\".getEntity('user').\")\";\n 2775  \t\t}\n 2776  \t\tif ($filter) $sql.=\" AND \".$filter;\n 2777  \n 2778  \t\tdol_syslog(get_class($this).\"::get_full_tree get user list\", LOG_DEBUG);\n 2779> \t\t$resql = $this->db->query($sql);\n 2780  \t\tif ($resql)\n 2781  \t\t{\n 2782  \t\t\t$i=0;\n 2783  \t\t\twhile ($obj = $this->db->fetch_object($resql))\n 2784  \t\t\t{"
+  },
+  {
+   "item": "c7624fdd7b86",
+   "repository_case": "GHSA-79cw-hfcc-7mw9",
+   "file": "src/Note/Service/FilterService.php",
+   "line": 66,
+   "span": [
+    44,
+    0,
+    107
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "   61                      );\n   62                  }\n   63  \n   64                  if ($filter['type'] === 'date' && $filter['operator'] === 'eq') {\n   65                      $maxTime = $value + (86400 - 1); //specifies the top point of the range used in the condition\n   66>                     $dateCondition = '`' . $filter[$propertyKey] . '` ' . ' BETWEEN :minTime AND :maxTime';\n   67                      $list->addConditionParam($dateCondition, ['minTime' => $value, 'maxTime' => $maxTime]);\n   68                  } else {\n   69                      $list->addConditionParam(\n   70                          '`' . $filter[$propertyKey] . '` ' . $operator . ' :' . $filter[$propertyKey],\n   71                          [$filter[$propertyKey] => $value]"
+  },
+  {
+   "item": "7f9811a3b175",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 3253,
+   "span": [
+    40,
+    0,
+    44
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 3248  \t\t$out.='Line: '.xdebug_call_line().\"<br>\\n\";\n 3249  \t\t$out.='Function: '.xdebug_call_function().\"<br>\\n\";\n 3250  \t\t$out.=\"<br>\\n\";\n 3251  \t}\n 3252  \n 3253> \tif (empty($dolibarr_main_prod)) print $out;\n 3254  \telse\n 3255  \t{\n 3256  \t\tprint $langs->trans(\"DolibarrHasDetectedError\").'. ';\n 3257  \t\tprint $langs->trans(\"YouCanSetOptionDolibarrMainProdToZero\");\n 3258  \t\tdefine(\"MAIN_CORE_ERROR\", 1);"
+  },
+  {
+   "item": "84f156dda918",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-process.ts",
+   "line": 452,
+   "span": [
+    40,
+    0,
+    45
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  447        ? `wmic process where \"ProcessId=${pid}\" get ProcessId,Name,CommandLine,HandleCount,ThreadCount,WorkingSetSize,KernelModeTime,UserModeTime /format:csv`\n  448        : name\n  449          ? `wmic process where \"Name='${name}'\" get ProcessId,Name,CommandLine,HandleCount,ThreadCount,WorkingSetSize,KernelModeTime,UserModeTime /format:csv`\n  450          : `wmic process get ProcessId,Name,CommandLine,HandleCount,ThreadCount,WorkingSetSize,KernelModeTime,UserModeTime /format:csv`;\n  451  \n  452>     const { stdout } = await execAsync(query);\n  453  \n  454      // Parse CSV output\n  455      const lines = stdout.trim().split('\\n').slice(1); // Skip header\n  456      const processes: ProcessInfo[] = [];\n  457  "
+  },
+  {
+   "item": "269c25092427",
+   "repository_case": "GHSA-jq3q-62jc-fqq9",
+   "file": "src/utils/githubProvider/cliProvider.ts",
+   "line": 40,
+   "span": [
+    11,
+    0,
+    124
+   ],
+   "claimed_weakness": "command injection",
+   "context": "   35        const prNumber = getPRNumberFromUrl(prUrl);\n   36        let combinedDiff = '';\n   37  \n   38        for (const file of files) {\n   39          const patch = execSync(\n   40>           `gh api repos/${owner}/${repo}/pulls/${prNumber}/files --jq '.[] | select(.filename == \"${file.path}\") | .patch'`,\n   41          ).toString();\n   42  \n   43          if (patch && patch.trim() !== '') {\n   44            combinedDiff += formatGitDiffOutput(file.path, patch);\n   45          }"
+  },
+  {
+   "item": "eef25fa2f939",
+   "repository_case": "GHSA-88pr-878c-24wf",
+   "file": "packages/components/nodes/documentloaders/S3File/S3File.ts",
+   "line": 756,
+   "span": [
+    30,
+    0,
+    57
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  751          })\n  752  \n  753          loader.load = async () => {\n  754              const tempDir = fsDefault.mkdtempSync(path.join(os.tmpdir(), 's3fileloader-'))\n  755  \n  756>             const filePath = path.join(tempDir, keyName)\n  757  \n  758              try {\n  759                  const s3Client = new S3Client(s3Config)\n  760  \n  761                  const getObjectCommand = new GetObjectCommand({"
+  },
+  {
+   "item": "58f0efe72caf",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack/cjs/react-server-dom-webpack-server.edge.development.js",
+   "line": 2555,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2550                void 0 === value._debugTask\n 2551              ) {\n 2552                var key = \"\";\n 2553                null !== value.key &&\n 2554                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2555>                 (key = ' key=\"' + value.key + '\"');\n 2556                console.error(\n 2557                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2558                  value.type,\n 2559                  key,\n 2560                  value.props"
+  },
+  {
+   "item": "0c2b369b6b25",
+   "repository_case": "GHSA-fhff-qmm8-h2fp",
+   "file": "mlflow/utils/file_utils.py",
+   "line": 980,
+   "span": [
+    15,
+    0,
+    44
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  975      NEVER TOUCH THIS FUNCTION. KEPT FOR BACKWARD COMPATIBILITY with\n  976      databricks-feature-engineering<=0.10.2\n  977      \"\"\"\n  978      import yaml\n  979  \n  980>     with open(os.path.join(root, file_name)) as f:\n  981          return yaml.safe_load(f)\n  982  \n  983  \n  984  class ExclusiveFileLock:\n  985      \"\"\""
+  },
+  {
+   "item": "b8848b8544fa",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 430,
+   "span": [
+    8,
+    0,
+    28
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  425  \n  426  \tprint '<table class=\"border\" width=\"100%\">';\n  427  \n  428  \t// Ref\n  429  \tprint '<tr><td>'.$langs->trans(\"Ref\").'</td><td colspan=\"2\">';\n  430> \tprint $object->getNomUrl();\n  431  \tprint '</td>';\n  432  \tprint '</tr>';\n  433  \n  434  \t// Date\n  435  \tprint '<tr><td class=\"titlefieldcreate fieldrequired\">'.$langs->trans(\"Date\").'</td><td>';"
+  },
+  {
+   "item": "567cf8187ccb",
+   "repository_case": "GHSA-v95x-xhq5-4929",
+   "file": "pkg/intercp/client/client.go",
+   "line": 39,
+   "span": [
+    31,
+    0,
+    87
+   ],
+   "claimed_weakness": "TLS / transport verification",
+   "context": "   34  \t\treturn nil, err\n   35  \t}\n   36  \tvar dialOpts []grpc.DialOption\n   37  \tswitch url.Scheme {\n   38  \tcase \"grpc\": // not used in production\n   39> \t\tdialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))\n   40  \tcase \"grpcs\":\n   41  \t\ttlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}\n   42  \t\tif tlsCfg != nil {\n   43  \t\t\tcp := x509.NewCertPool()\n   44  \t\t\tcp.AddCert(&tlsCfg.CaCert)"
+  },
+  {
+   "item": "9ace743e40b5",
+   "repository_case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/DynamicAnalyzer/views/ios/device/report.py",
+   "line": 104,
+   "span": [
+    16,
+    0,
+    47
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "   99          download_app_data_device(ios_device, checksum)\n  100          # Stop HTTPS Proxy\n  101          stop_httptools(get_http_tools_url(request))\n  102          # Move HTTP raw logs to download directory\n  103          flows = Path.home() / '.httptools' / 'flows'\n  104>         webf = flows / f'{bundle_id}.flow.txt'\n  105          dwd = Path(settings.DWD_DIR)\n  106          dweb = dwd / f'{checksum}-web_traffic.txt'\n  107          if webf.exists():\n  108              shutil.copyfile(webf, dweb)\n  109          data = {"
+  },
+  {
+   "item": "59a1814ecb3d",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4216,
+   "span": [
+    63,
+    0,
+    88
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 4211  \t        $vatratecode = $reg[2];\n 4212  \t    }\n 4213  \n 4214  \t    $sql.=\", \".MAIN_DB_PREFIX.\"c_country as c\";\n 4215      \tif ($mysoc->country_code == 'ES') $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$buyer->country_code.\"'\";    // local tax in spain use the buyer country ??\n 4216>     \telse $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$seller->country_code.\"'\";\n 4217      \t$sql.= \" AND t.taux = \".((float) $vatratecleaned).\" AND t.active = 1\";\n 4218      \tif ($vatratecode) $sql.= \" AND t.code = '\".$vatratecode.\"'\";\n 4219  \t}\n 4220  \n 4221  \t$resql=$db->query($sql);"
+  },
+  {
+   "item": "8e5709d8ef3d",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-cron.ts",
+   "line": 1020,
+   "span": [
+    11,
+    0,
+    58
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1015        }\n 1016      } else {\n 1017        // Windows Task Scheduler history\n 1018        try {\n 1019          const { stdout } = await execAsync(\n 1020>           `schtasks /query /tn \"${taskName}\" /fo LIST /v`\n 1021          );\n 1022  \n 1023          // Parse task history from verbose output\n 1024          const lastRunTimeMatch = stdout.match(/Last Run Time:\\s+(.+)/);\n 1025          const lastResultMatch = stdout.match(/Last Result:\\s+(\\d+)/);"
+  },
+  {
+   "item": "da999f336c54",
+   "repository_case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 109,
+   "span": [
+    8,
+    0,
+    90
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  104  \t\t}\n  105  \t\techo \"</table>\\n\";\n  106  \n  107  \t\techo \"<p>\";\n  108  \t\techo \"<input type='submit' class='button default' value='\" . lang('Login') . \"'>\";\n  109> \t\techo checkbox(\"auth[permanent]\", 1, $_COOKIE[\"neo_permanent\"], lang('Permanent login'));\n  110  \t\techo \"</p>\\n\";\n  111  \t}\n  112  \n  113  \t/**\n  114  \t * Returns field name used in select and edit."
+  },
+  {
+   "item": "3dbe5324ca54",
+   "repository_case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 189,
+   "span": [
+    67,
+    0,
+    80
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  184                  $userId,\n  185                  $partnerId,\n  186                  $partnerId,\n  187                  $userId,\n  188              );\n  189>             $lastMsgResult = $this->configuration->getDb()->query($lastMsgQuery);\n  190              $lastMsg = $this->configuration->getDb()->fetchObject($lastMsgResult);\n  191  \n  192              // Get unread count\n  193              $unreadQuery = sprintf(\n  194                  'SELECT COUNT(*) as cnt FROM %sfaqchat_messages"
+  },
+  {
+   "item": "9bb6f12d09ba",
+   "repository_case": "GHSA-3cgg-c5pp-57h6",
+   "file": "src/odt/to-html/html-renderer.ts",
+   "line": 197,
+   "span": [
+    22,
+    0,
+    42
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  192    if (span.superscript) html = `<sup>${html}</sup>`;\n  193    if (span.subscript) html = `<sub>${html}</sub>`;\n  194  \n  195    if (span.style !== undefined) {\n  196      const css = spanStyleToCss(span.style);\n  197>     if (css) html = `<span style=\"${css}\">${html}</span>`;\n  198    }\n  199  \n  200    if (span.href !== undefined) html = `<a href=\"${escapeHtml(span.href)}\">${html}</a>`;\n  201  \n  202    return html;"
+  },
+  {
+   "item": "d506bef2e14c",
+   "repository_case": "GHSA-h8fp-f39c-q6mh",
+   "file": "packages/react-router/lib/hooks.tsx",
+   "line": 816,
+   "span": [
+    35,
+    0,
+    62
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  811        `You rendered descendant <Routes> (or called \\`useRoutes()\\`) at ` +\n  812          `\"${parentPathname}\" (under <Route path=\"${parentPath}\">) but the ` +\n  813          `parent route path has no trailing \"*\". This means if you navigate ` +\n  814          `deeper, the parent won't match anymore and therefore the child ` +\n  815          `routes will never render.\\n\\n` +\n  816>         `Please change the parent <Route path=\"${parentPath}\"> to <Route ` +\n  817          `path=\"${parentPath === \"/\" ? \"*\" : `${parentPath}/*`}\">.`,\n  818      );\n  819    }\n  820  \n  821    let locationFromContext = useLocation();"
+  },
+  {
+   "item": "79bc7b9ee097",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1273,
+   "span": [
+    10,
+    0,
+    189
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1268  \t\t/*\n 1269           * Confirmation envoi mot de passe\n 1270           */\n 1271  \t\tif ($action == 'passwordsend')\n 1272  \t\t{\n 1273> \t\t\tprint $form->formconfirm($_SERVER['PHP_SELF'].\"?id=$object->id\",$langs->trans(\"SendNewPassword\"),$langs->trans(\"ConfirmSendNewPassword\",$object->login),\"confirm_passwordsend\", '', 0, 1);\n 1274  \t\t}\n 1275  \n 1276  \t\t/*\n 1277           * Confirm deactivation\n 1278           */"
+  },
+  {
+   "item": "e6c8b3e668bc",
+   "repository_case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 418,
+   "span": [
+    28,
+    0,
+    60
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  413              } else if (line.listTypeName === 'indent') {\n  414                // Indent lines are plain indented text, not list items.\n  415                // Use a ul with list-style-type:none so they don't show bullets.\n  416                pieces.push(`<ul class=\"${line.listTypeName}\" style=\"list-style-type: none;\">`);\n  417              } else {\n  418>               pieces.push(`<ul class=\"${line.listTypeName}\">`);\n  419              }\n  420            }\n  421          }\n  422        }\n  423        // if we're going up a level we shouldn't be adding.."
+  },
+  {
+   "item": "f9c2c982f6a0",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-log.ts",
+   "line": 479,
+   "span": [
+    31,
+    0,
+    73
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  474    private getCommitStats(\n  475      hash: string,\n  476      cwd: string\n  477    ): { additions: number; deletions: number } {\n  478      try {\n  479>       const output = execSync(`git show --shortstat --format=\"\" ${hash}`, {\n  480          cwd,\n  481          encoding: 'utf-8',\n  482        });\n  483  \n  484        const addMatch = output.match(/(\\d+) insertion/);"
+  },
+  {
+   "item": "780943d09b47",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 300,
+   "span": [
+    7,
+    0,
+    39
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  295      }\n  296  \n  297      const hooksDataPath = getHooksDataPath();\n  298      const jsonlFilePath = path.join(\n  299        hooksDataPath,\n  300>       `session-log-${sessionId}.jsonl`\n  301      );\n  302  \n  303      if (!fs.existsSync(jsonlFilePath)) {\n  304        return res.status(404).json({\n  305          success: false,"
+  },
+  {
+   "item": "6f80d130dceb",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 236,
+   "span": [
+    9,
+    0,
+    81
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  231  \t\t\t}\n  232  \t\t\telse print '&nbsp;';\n  233  \t\t\tprint \"</td>\\n\";\n  234  \t\t}\n  235  \t\tprint '<td align=\"right\">'.price($objp->amount).'</td>';\n  236> \t\tprint '<td align=\"right\">'.$donationstatic->LibStatut($objp->statut,5).'</td>';\n  237          print '<td></td>';\n  238  \t\tprint \"</tr>\";\n  239  \t\t$i++;\n  240  \t}\n  241  \tprint \"</table>\";"
+  },
+  {
+   "item": "d0fcfd4b5724",
+   "repository_case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1292,
+   "span": [
+    24,
+    0,
+    54
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 1287          return sessions\n 1288      \n 1289      def delete_session(self, name: str) -> bool:\n 1290          \"\"\"Delete a saved session.\"\"\"\n 1291          sessions_path = self.user_path / \"sessions\"\n 1292>         session_file = sessions_path / f\"{name}.json\"\n 1293          \n 1294          if session_file.exists():\n 1295              session_file.unlink()\n 1296              self._log(f\"Deleted session '{name}'\")\n 1297              return True"
+  },
+  {
+   "item": "959b53e305e5",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 963,
+   "span": [
+    44,
+    0,
+    75
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  958      const platform = process.platform;\n  959  \n  960      if (platform === 'win32') {\n  961        // Windows group details\n  962        try {\n  963>         const { stdout } = await execAsync(`net localgroup \"${groupname}\"`);\n  964          const lines = stdout.split('\\n');\n  965          const members: string[] = [];\n  966          let inMemberSection = false;\n  967  \n  968          for (const line of lines) {"
+  },
+  {
+   "item": "2c15b7e6cc24",
+   "repository_case": "GHSA-r7h9-qx4h-77j5",
+   "file": "src/Utils/ListFormatHelper.php",
+   "line": 72,
+   "span": [
+    13,
+    0,
+    33
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "   67          $order = $this->fixOrder($order);\n   68  \n   69          $query = sprintf(\n   70              'SELECT id, list_format FROM %scontent WHERE content_type = \"%s\" ORDER BY %s LIMIT %d ',\n   71              $this->prefix,\n   72>             $contentType['slug'],\n   73              $order,\n   74              $amount\n   75          );\n   76  \n   77          $rows = $this->connection->fetchAllAssociative($query);"
+  },
+  {
+   "item": "ff07029f80c8",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 230,
+   "span": [
+    11,
+    0,
+    39
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  225  \t\t\t\t$projectstatic->id=$objp->pid;\n  226  \t\t\t\t$projectstatic->ref=$objp->ref;\n  227  \t\t\t\t$projectstatic->id=$objp->pid;\n  228  \t\t\t\t$projectstatic->public=$objp->public;\n  229  \t\t\t\t$projectstatic->title=$objp->title;\n  230> \t\t\t\tprint $projectstatic->getNomUrl(1);\n  231  \t\t\t}\n  232  \t\t\telse print '&nbsp;';\n  233  \t\t\tprint \"</td>\\n\";\n  234  \t\t}\n  235  \t\tprint '<td align=\"right\">'.price($objp->amount).'</td>';"
+  },
+  {
+   "item": "9a1d1b693a06",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 871,
+   "span": [
+    11,
+    0,
+    84
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  866        }\n  867  \n  868        // Get dependents (services that require this service)\n  869        try {\n  870          const { stdout: revDepsOut } = await execAsync(\n  871>           `systemctl list-dependencies ${serviceName} --reverse --plain --no-pager`\n  872          );\n  873          graph.dependents = revDepsOut\n  874            .split('\\n')\n  875            .filter((line) => line.trim() && !line.includes('\u25cf'))\n  876            .map((line) => line.trim().replace(/^[\u251c\u2514\u2500\\s]+/, ''));"
+  },
+  {
+   "item": "ea47312ed217",
+   "repository_case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 1226,
+   "span": [
+    10,
+    0,
+    64
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1221  \t\t\t}\n 1222  \t\t\tif (DB != \"\" && $_GET[\"ns\"] !== \"\" && !$missing) {\n 1223  \t\t\t\t$actions[] = '<a href=\"' . h(ME) . 'create=\"' . bold($_GET[\"create\"] === \"\") . \">\" . icon(\"table-add\") . lang('Create table') . \"</a>\\n\";\n 1224  \t\t\t}\n 1225  \t\t\tif ($actions) {\n 1226> \t\t\t\techo \"<p class='links'>\" . implode(\"\\n\", $actions) . \"</p>\";\n 1227  \t\t\t}\n 1228  \n 1229  \t\t\t// Tables.\n 1230  \t\t\t$tables = [];\n 1231  \t\t\tif ($_GET[\"ns\"] !== \"\" && !$missing && DB != \"\") {"
+  },
+  {
+   "item": "407ef1436540",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-turbopack-experimental/cjs/react-server-dom-turbopack-server.node.development.js",
+   "line": 2914,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2909                void 0 === value._debugTask\n 2910              ) {\n 2911                var key = \"\";\n 2912                null !== value.key &&\n 2913                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2914>                 (key = ' key=\"' + value.key + '\"');\n 2915                console.error(\n 2916                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2917                  value.type,\n 2918                  key,\n 2919                  value.props"
+  },
+  {
+   "item": "da9f1fb16d3b",
+   "repository_case": "GHSA-3vfr-4gwf-qxfp",
+   "file": "lib/util/index.js",
+   "line": 308,
+   "span": [
+    58,
+    0,
+    75
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  303  function wrapJs(js, charset, isUrl, props) {\n  304    if (!js) {\n  305      return '';\n  306    }\n  307    if (isUrl) {\n  308>     return toBuffer('<script' + getScriptProps(props) + ' src=\"' + js + '\"></script>', charset);\n  309    }\n  310    return Buffer.concat([SCRIPT_START, toBuffer(getScriptProps(props) + '>'), toBuffer(js, charset), SCRIPT_END]);\n  311  }\n  312  \n  313  function wrapCss(css, charset, isUrl) {"
+  },
+  {
+   "item": "965176f9e73e",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-status.ts",
+   "line": 579,
+   "span": [
+    25,
+    0,
+    36
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  574     */\n  575    private getFileDiff(cwd: string, filePath: string, staged: boolean): string {\n  576      try {\n  577        const command = staged\n  578          ? `git diff --cached -- \"${filePath}\"`\n  579>         : `git diff -- \"${filePath}\"`;\n  580  \n  581        return execSync(command, { cwd, encoding: 'utf-8' });\n  582      } catch {\n  583        return '';\n  584      }"
+  },
+  {
+   "item": "4c5c5942a992",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/rotate.py",
+   "line": 195,
+   "span": [
+    25,
+    0,
+    60
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  190                  expand=expand,\n  191                  fillcolor=fill_value,\n  192                  resample=Image.Resampling.BICUBIC,\n  193              )\n  194  \n  195>             os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)\n  196              rotated.save(output_path)\n  197  \n  198              return {\n  199                  'output_path': output_path,\n  200                  'width': rotated.width,"
+  },
+  {
+   "item": "22237ed0638c",
+   "repository_case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 607,
+   "span": [
+    10,
+    6,
+    6
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  602  \n  603  \t\t$change_next = \"this.parentNode.firstChild.onchange();\";\n  604  \t\tforeach (array_merge((array)$_GET[\"where\"], [[]]) as $i => $val) {\n  605  \t\t\tif (!$val || (\"$val[col]$val[val]\" != \"\" && in_array($val[\"op\"], $this->getOperators()))) {\n  606  \t\t\t\techo \"<div>\";\n  607> \t\t\t\techo select_input(\n  608  \t\t\t\t\t\" name='where[$i][col]'\",\n  609  \t\t\t\t\t$columns,\n  610  \t\t\t\t\t$val[\"col\"],\n  611  \t\t\t\t\t($val ? \"selectFieldChange\" : \"selectAddRow\"),\n  612  \t\t\t\t\t\"(\" . lang('anywhere') . \")\""
+  },
+  {
+   "item": "d5a9e1353b92",
+   "repository_case": "GHSA-r7h9-qx4h-77j5",
+   "file": "src/Utils/ListFormatHelper.php",
+   "line": 77,
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "   72              $contentType['slug'],\n   73              $order,\n   74              $amount\n   75          );\n   76  \n   77>         $rows = $this->connection->fetchAllAssociative($query);\n   78  \n   79          $options = [];\n   80  \n   81          foreach ($rows as $row) {\n   82              $options[] = ['key' => (int) $row['id'], 'value' => $row['list_format']];"
+  },
+  {
+   "item": "9f5b9d074e1a",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4221,
+   "span": [
+    20,
+    0,
+    24
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 4216      \telse $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$seller->country_code.\"'\";\n 4217      \t$sql.= \" AND t.taux = \".((float) $vatratecleaned).\" AND t.active = 1\";\n 4218      \tif ($vatratecode) $sql.= \" AND t.code = '\".$vatratecode.\"'\";\n 4219  \t}\n 4220  \n 4221> \t$resql=$db->query($sql);\n 4222  \tif ($resql)\n 4223  \t{\n 4224  \t\t$obj = $db->fetch_object($resql);\n 4225  \t\tif ($local == 1)\n 4226  \t\t{"
+  },
+  {
+   "item": "01cf523da2a4",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2063,
+   "span": [
+    30,
+    0,
+    34
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 2058  \t\t$sql = \"DELETE FROM \".MAIN_DB_PREFIX.\"usergroup_user\";\n 2059  \t\t$sql.= \" WHERE fk_user  = \".$this->id;\n 2060  \t\t$sql.= \" AND fk_usergroup = \".$group;\n 2061  \t\t$sql.= \" AND entity = \".$entity;\n 2062  \n 2063> \t\t$result = $this->db->query($sql);\n 2064  \t\tif ($result)\n 2065  \t\t{\n 2066  \t\t\tif (! $error && ! $notrigger)\n 2067  \t\t\t{\n 2068  \t\t\t\t$this->oldgroupid=$group;    // deprecated. Remove this."
+  },
+  {
+   "item": "e4c090b25be5",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 76,
+   "span": [
+    7,
+    0,
+    39
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "   71      }\n   72  \n   73      const hooksDataPath = getHooksDataPath();\n   74      const jsonlFilePath = path.join(\n   75        hooksDataPath,\n   76>       `session-log-${sessionId}.jsonl`\n   77      );\n   78  \n   79      if (!fs.existsSync(jsonlFilePath)) {\n   80        return res.status(404).json({\n   81          success: false,"
+  },
+  {
+   "item": "bdcca0cb099f",
+   "repository_case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 645,
+   "span": [
+    9,
+    0,
+    109
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  640  \t\tforeach ((array)$_GET[\"order\"] as $key => $val) {\n  641  \t\t\tif ($key != \"\" && $val == \"\") continue;\n  642  \n  643  \t\t\techo \"<div \", ($key != \"\" ? \"\" : \"class='no-sort'\"), \">\";\n  644  \t\t\techo icon(\"handle\", \"handle jsonly\");\n  645> \t\t\techo select_input(\"name='order[$i]'\", $columns, $val, $key !== \"\" ? \"selectFieldChange\" : \"selectAddRow\");\n  646  \t\t\techo \" \", checkbox(\"desc[$i]\", 1, isset($_GET[\"desc\"][$key]), lang('descending'));\n  647  \t\t\techo \" <button class='button light remove jsonly' title='\", h(lang('Remove')), \"'>\", icon_solo(\"remove\"), \"</button>\";\n  648  \t\t\techo script('qsl(\"#fieldset-sort .remove\").onclick = selectRemoveRow;', \"\");\n  649  \t\t\techo \"</div>\\n\";\n  650  "
+  },
+  {
+   "item": "9d025778d311",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 514,
+   "span": [
+    32,
+    0,
+    46
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  509          break;\n  510        case 'windows':\n  511          command = `sc stop \"${serviceName}\"`;\n  512          break;\n  513        case 'docker':\n  514>         command = `docker stop ${serviceName}`;\n  515          break;\n  516        default:\n  517          throw new Error(`Unsupported service type: ${serviceType}`);\n  518      }\n  519  "
+  },
+  {
+   "item": "4208333a5e35",
+   "repository_case": "GHSA-6vmq-24h2-pj7j",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 42,
+   "span": [
+    9,
+    0,
+    44
+   ],
+   "claimed_weakness": "TLS / transport verification",
+   "context": "   37              pool_kwargs: Additional arguments for the pool manager\n   38          \"\"\"\n   39          # Configure SSL context to disable verification completely\n   40          context = ssl.create_default_context()\n   41          context.check_hostname = False\n   42>         context.verify_mode = ssl.CERT_NONE\n   43  \n   44          self.poolmanager = PoolManager(\n   45              num_pools=connections,\n   46              maxsize=maxsize,\n   47              block=block,"
+  },
+  {
+   "item": "99cafb7c97a1",
+   "repository_case": "GHSA-xrqw-3rrv-vx5w",
+   "file": "src/transformers/tokenization_utils_base.py",
+   "line": 3316,
+   "span": [
+    41,
+    0,
+    98
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 3311                          f.write(self.chat_template[\"default\"])\n 3312                      logger.info(f\"chat template saved in {chat_template_file}\")\n 3313                      saved_raw_chat_template_files.append(chat_template_file)\n 3314                  else:\n 3315                      Path(chat_template_dir).mkdir(exist_ok=True)\n 3316>                     template_filepath = os.path.join(chat_template_dir, f\"{template_name}.jinja\")\n 3317                      with open(template_filepath, \"w\", encoding=\"utf-8\") as f:\n 3318                          f.write(template)\n 3319                      logger.info(f\"chat template saved in {template_filepath}\")\n 3320                      saved_raw_chat_template_files.append(template_filepath)\n 3321              if \"chat_template\" in tokenizer_config:"
+  },
+  {
+   "item": "9eca1fb0e881",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 311,
+   "span": [
+    42,
+    0,
+    55
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  306          error: `JSONL log not found for session ${sessionId}`,\n  307        });\n  308      }\n  309  \n  310      // Parse JSONL file\n  311>     const jsonlContent = fs.readFileSync(jsonlFilePath, 'utf-8');\n  312      const lines = jsonlContent.trim().split('\\n');\n  313      const events = [];\n  314  \n  315      for (const line of lines) {\n  316        if (!line.trim()) continue;"
+  },
+  {
+   "item": "9894126eadbb",
+   "repository_case": "GHSA-22g5-r2x5-97cx",
+   "file": "src/subParsers/makehtml/cmInline.js",
+   "line": 765,
+   "span": [
+    54,
+    0,
+    74
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  760          txt = showdown.helper.encodeEmailAddress(raw);\n  761        } else {\n  762          href = 'mailto:' + escapeAngles(raw);\n  763          txt = escapeAngles(raw);\n  764        }\n  765>       return {html: showdown.helper._hashHTMLSpan('<a href=\"' + href + '\">' + txt + '</a>', globals), end: i + email[0].length};\n  766      }\n  767      return null;\n  768    }\n  769  \n  770    function escapeAngles (s) {"
+  },
+  {
+   "item": "2f1d22aa4b74",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 743,
+   "span": [
+    9,
+    0,
+    89
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  738  \tprint '<tr>';\n  739  \tprint '<td class=\"titlefieldcreate\"><span class=\"fieldrequired\">'.$langs->trans(\"Lastname\").'</span></td>';\n  740  \tprint '<td>';\n  741  \tif (! empty($ldap_lastname))\n  742  \t{\n  743> \t\tprint '<input type=\"hidden\" id=\"lastname\" name=\"lastname\" value=\"'.$ldap_lastname.'\">';\n  744  \t\tprint $ldap_lastname;\n  745  \t}\n  746  \telse\n  747  \t{\n  748  \t\tprint '<input class=\"minwidth100\" type=\"text\" id=\"lastname\" name=\"lastname\" value=\"'.GETPOST('lastname').'\">';"
+  },
+  {
+   "item": "37c465ad3ef6",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-log.ts",
+   "line": 459,
+   "span": [
+    9,
+    0,
+    62
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  454     * Get files changed in a commit\n  455     */\n  456    private getCommitFiles(hash: string, cwd: string): string[] {\n  457      try {\n  458        const output = execSync(\n  459>         `git diff-tree --no-commit-id --name-only -r ${hash}`,\n  460          {\n  461            cwd,\n  462            encoding: 'utf-8',\n  463          }\n  464        );"
+  },
+  {
+   "item": "3aaaa996f41c",
+   "repository_case": "GHSA-cj54-hpcc-gj6h",
+   "file": "thumbor/loaders/file_loader.py",
+   "line": 19,
+   "span": [
+    17,
+    2,
+    6
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "   14  \n   15  from thumbor.loaders import LoaderResult\n   16  \n   17  \n   18  async def load(context, path):\n   19>     file_path = join(\n   20          context.config.FILE_LOADER_ROOT_PATH.rstrip(\"/\"), path.lstrip(\"/\")\n   21      )\n   22      file_path = abspath(file_path)\n   23      inside_root_path = file_path.startswith(\n   24          abspath(context.config.FILE_LOADER_ROOT_PATH)"
+  },
+  {
+   "item": "dbc7680a17f9",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4167,
+   "span": [
+    23,
+    0,
+    27
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 4162          else $sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$seller->country_code.\"'\";\n 4163          $sql.= \" AND t.taux = \".((float) $vatratecleaned).\" AND t.active = 1\";\n 4164          if ($vatratecode) $sql.= \" AND t.code = '\".$vatratecode.\"'\";\n 4165      }\n 4166  \n 4167>     $resql=$db->query($sql);\n 4168      if ($resql)\n 4169      {\n 4170          $obj = $db->fetch_object($resql);\n 4171          if ($obj) return array('rowid'=>$obj->rowid, 'code'=>$obj->code, 'rate'=>$obj->rate, 'npr'=>$obj->npr, 'accountancy_code_sell'=>$obj->accountancy_code_sell, 'accountancy_code_buy'=>$obj->accountancy_code_buy);\n 4172          else return array();"
+  },
+  {
+   "item": "905dc781eda3",
+   "repository_case": "GHSA-w3fx-mc44-mf6j",
+   "file": "backend/chainlit/server.py",
+   "line": 290,
+   "span": [
+    17,
+    0,
+    39
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  285      filename: str,\n  286  ):\n  287      \"\"\"Serve a file from assets dir.\"\"\"\n  288  \n  289      base_path = Path(os.path.join(build_dir, \"assets\"))\n  290>     file_path = (base_path / filename).resolve()\n  291  \n  292      if not is_path_inside(file_path, base_path):\n  293          raise HTTPException(status_code=400, detail=\"Invalid filename\")\n  294  \n  295      if file_path.is_file():"
+  },
+  {
+   "item": "1cbd086d9208",
+   "repository_case": "GHSA-fhff-qmm8-h2fp",
+   "file": "mlflow/utils/file_utils.py",
+   "line": 963,
+   "span": [
+    15,
+    0,
+    44
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  958      NEVER TOUCH THIS FUNCTION. KEPT FOR BACKWARD COMPATIBILITY with\n  959      databricks-feature-engineering<=0.10.2\n  960      \"\"\"\n  961      import yaml\n  962  \n  963>     with open(os.path.join(root, file_name), \"w\") as f:\n  964          yaml.safe_dump(\n  965              data,\n  966              f,\n  967              default_flow_style=False,\n  968              allow_unicode=True,"
+  },
+  {
+   "item": "0e3ae08287e5",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-branch.ts",
+   "line": 437,
+   "span": [
+    31,
+    0,
+    62
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  432    /**\n  433     * Check if branch is merged into target\n  434     */\n  435    private isBranchMerged(branch: string, target: string, cwd: string): boolean {\n  436      try {\n  437>       const output = execSync(`git branch --merged ${target}`, {\n  438          cwd,\n  439          encoding: 'utf-8',\n  440        });\n  441  \n  442        return output.includes(branch);"
+  },
+  {
+   "item": "1fe46a9570dd",
+   "repository_case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 407,
+   "span": [
+    32,
+    0,
+    60
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  402                  // No counter yet. Use explicit start attribute when present\n  403                  // (e.g. from import or internal logic) and seed the counter so\n  404                  // subsequent continuations stay aligned.\n  405                  const explicitStart = Number(line.start);\n  406                  if (Number.isFinite(explicitStart) && explicitStart > 0) {\n  407>                   pieces.push(`<ol start=\"${explicitStart}\" class=\"${line.listTypeName}\">`);\n  408                    olItemCounts[line.listLevel] = explicitStart - 1;\n  409                  } else {\n  410                    pieces.push(`<ol class=\"${line.listTypeName}\">`);\n  411                  }\n  412                }"
+  },
+  {
+   "item": "bc13d9963c04",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 501,
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  496  \t\t\t$sql = \"SELECT id\";\n  497  \t\t\t$sql.= \" FROM \".MAIN_DB_PREFIX.\"rights_def\";\n  498  \t\t\t$sql.= \" WHERE \".$whereforadd;\n  499  \t\t\t$sql.= \" AND entity = \".$entity;\n  500  \n  501> \t\t\t$result=$this->db->query($sql);\n  502  \t\t\tif ($result)\n  503  \t\t\t{\n  504  \t\t\t\t$num = $this->db->num_rows($result);\n  505  \t\t\t\t$i = 0;\n  506  \t\t\t\twhile ($i < $num)"
+  },
+  {
+   "item": "c8ffb25221c7",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1115,
+   "span": [
+    51,
+    0,
+    69
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1110          );\n 1111        }\n 1112      } else {\n 1113        // Unix permissions\n 1114        try {\n 1115>         const { stdout: lsOut } = await execAsync(`ls -ld \"${path}\"`);\n 1116          const parts = lsOut.trim().split(/\\s+/);\n 1117  \n 1118          const permissions = parts[0];\n 1119          const owner = parts[2];\n 1120          const group = parts[3];"
+  },
+  {
+   "item": "6daad23ffe18",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1018,
+   "span": [
+    9,
+    0,
+    68
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1013  \t// EMail\n 1014  \tprint '<tr><td'.(! empty($conf->global->USER_MAIL_REQUIRED)?' class=\"fieldrequired\"':'').'>'.$langs->trans(\"EMail\").'</td>';\n 1015  \tprint '<td>';\n 1016  \tif (! empty($ldap_mail))\n 1017  \t{\n 1018> \t\tprint '<input type=\"hidden\" name=\"email\" value=\"'.$ldap_mail.'\">';\n 1019  \t\tprint $ldap_mail;\n 1020  \t}\n 1021  \telse\n 1022  \t{\n 1023  \t\tprint '<input size=\"40\" type=\"text\" name=\"email\" value=\"'.GETPOST('email').'\">';"
+  },
+  {
+   "item": "748f1d1d90f4",
+   "repository_case": "GHSA-4xm8-rg9h-jhq2",
+   "file": "packages/resources-provider-plugin/src/filestorage.ts",
+   "line": 123,
+   "span": [
+    24,
+    0,
+    70
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  118      property?: string\n  119    ): Promise<Resource<object>> {\n  120      await this.waitForInit()\n  121      try {\n  122        let result = JSON.parse(\n  123>         await readFile(path.join(this.resources[type].path, itemUuid), 'utf8')\n  124        )\n  125        if (property) {\n  126          const value = property.split('.').reduce((acc, val) => {\n  127            return acc[val]\n  128          }, result)"
+  },
+  {
+   "item": "626f75bd1ac5",
+   "repository_case": "GHSA-w93q-cq9w-58p7",
+   "file": "src/plugins/modal/embed.js",
+   "line": 847,
+   "span": [
+    4,
+    0,
+    96
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  842   */\n  843  function CreateHTML_modal({ lang, icons }, pluginOptions) {\n  844  \tlet html = /*html*/ `\n  845  \t<form method=\"post\" enctype=\"multipart/form-data\">\n  846  \t\t<div class=\"se-modal-header\">\n  847> \t\t\t<button type=\"button\" data-command=\"close\" class=\"se-btn se-close-btn\" title=\"${lang.close}\" aria-label=\"${lang.close}\">\n  848  \t\t\t${icons.cancel}\n  849  \t\t\t</button>\n  850  \t\t\t<span class=\"se-modal-title\">${lang.embed_modal_title}</span>\n  851  \t\t</div>\n  852  \t\t<div class=\"se-modal-body\">"
+  },
+  {
+   "item": "eb88e309fa3c",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1035,
+   "span": [
+    44,
+    0,
+    68
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1030      const platform = process.platform;\n 1031  \n 1032      if (platform === 'win32') {\n 1033        // Windows: Extract groups from net user output\n 1034        try {\n 1035>         const { stdout } = await execAsync(`net user \"${username}\"`);\n 1036          const lines = stdout.split('\\n');\n 1037          const groups: string[] = [];\n 1038          let inGroupSection = false;\n 1039  \n 1040          for (const line of lines) {"
+  },
+  {
+   "item": "9ef2e299c069",
+   "repository_case": "GHSA-rx7m-wxwq-vxr9",
+   "file": "admin/core/Admin.php",
+   "line": 565,
+   "span": [
+    10,
+    0,
+    21
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  560  \n  561  \t\t\tif (Driver::get()->getFunctions() || Driver::get()->getGrouping()) {\n  562  \t\t\t\techo html_select(\"columns[$i][fun]\", [-1 => \"\"] + array_filter([lang('Functions') => Driver::get()->getFunctions(), lang('Aggregation') => Driver::get()->getGrouping()]), $val[\"fun\"] ?? null);\n  563  \t\t\t\techo help_script_command(\"value && value.replace(/ |\\$/, '(') + ')'\", true);\n  564  \t\t\t\techo script(\"qsl('select').onchange = (event) => { \" . ($key !== \"\" ? \"\" : \" qsl('select, input:not(.remove)', event.target.parentNode).onchange();\") . \" };\", \"\");\n  565> \t\t\t\techo \"($column)\";\n  566  \t\t\t} else {\n  567  \t\t\t\techo $column;\n  568  \t\t\t}\n  569  \n  570  \t\t\techo \" <button class='button light remove jsonly' title='\", h(lang('Remove')), \"'>\", icon_solo(\"remove\"), \"</button>\";"
+  },
+  {
+   "item": "6770ef535742",
+   "repository_case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 137,
+   "span": [
+    64,
+    0,
+    78
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  132              $prefix,\n  133              $userId,\n  134              $userId,\n  135          );\n  136  \n  137>         $partnersResult = $this->configuration->getDb()->query($partnersQuery);\n  138          if (!$partnersResult) {\n  139              return [];\n  140          }\n  141  \n  142          $partnerIds = [];"
+  },
+  {
+   "item": "ae08e65f9ac3",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 918,
+   "span": [
+    11,
+    0,
+    76
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  913        }\n  914      } else {\n  915        // Unix user details\n  916        try {\n  917          const { stdout: passwdOut } = await execAsync(\n  918>           `getent passwd \"${username}\" || grep \"^${username}:\" /etc/passwd`\n  919          );\n  920          const parts = passwdOut.trim().split(':');\n  921  \n  922          if (parts.length < 7) {\n  923            throw new Error(`Invalid passwd entry for user: ${username}`);"
+  },
+  {
+   "item": "dda9e20536d4",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1266,
+   "span": [
+    13,
+    0,
+    51
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1261          }\n 1262  \n 1263          // Check sudoers file (requires sudo access)\n 1264          try {\n 1265            const { stdout } = await execAsync(\n 1266>             `sudo -l -U \"${username}\" 2>/dev/null`\n 1267            );\n 1268            return !stdout.includes('not allowed');\n 1269          } catch {\n 1270            return false;\n 1271          }"
+  },
+  {
+   "item": "9d9520e00b2e",
+   "repository_case": "GHSA-3cgg-c5pp-57h6",
+   "file": "src/odt/to-html/html-renderer.ts",
+   "line": 273,
+   "span": [
+    18,
+    0,
+    39
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  268  function renderNote(node: NoteNode, options?: HtmlOptions): string {\n  269    const refId = `odf-note-${escapeHtml(node.id)}-ref`;\n  270    const noteId = `odf-note-${escapeHtml(node.id)}`;\n  271    const citation = `<sup id=\"${refId}\"><a href=\"#${noteId}\">${escapeHtml(node.citation)}</a></sup>`;\n  272    const bodyHtml = node.body.map((n) => renderBodyNode(n, options)).join(\"\");\n  273>   const aside = `<aside id=\"${noteId}\" role=\"note\">${bodyHtml}</aside>`;\n  274    return citation + aside;\n  275  }\n  276  \n  277  /**\n  278   * Render a BookmarkNode as a zero-width named anchor."
+  },
+  {
+   "item": "8a1c6f8f69dc",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 854,
+   "span": [
+    30,
+    0,
+    34
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  849  \n  850  \t\t// Deactivate user\n  851  \t\t$sql = \"UPDATE \".MAIN_DB_PREFIX.\"user\";\n  852  \t\t$sql.= \" SET statut = \".$this->statut;\n  853  \t\t$sql.= \" WHERE rowid = \".$this->id;\n  854> \t\t$result = $this->db->query($sql);\n  855  \n  856  \t\tdol_syslog(get_class($this).\"::setstatus\", LOG_DEBUG);\n  857  \t\tif ($result)\n  858  \t\t{\n  859  \t\t\t// Call trigger"
+  },
+  {
+   "item": "ed131b76f7a1",
+   "repository_case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+   "line": 4494,
+   "span": [
+    27,
+    0,
+    71
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 4489              name: Checkpoint name\n 4490              \n 4491          Returns:\n 4492              True if deleted successfully\n 4493          \"\"\"\n 4494>         checkpoint_file = self._get_checkpoints_dir() / f\"{name}.json\"\n 4495          \n 4496          if checkpoint_file.exists():\n 4497              checkpoint_file.unlink()\n 4498              self._log(f\"Deleted checkpoint '{name}'\")\n 4499              return True"
+  },
+  {
+   "item": "d47ed6dcd53e",
+   "repository_case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/DynamicAnalyzer/views/ios/corellium_instance.py",
+   "line": 779,
+   "span": [
+    16,
+    0,
+    47
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  774          download_app_data(ci, checksum)\n  775          # Stop HTTPS Proxy\n  776          stop_httptools(get_http_tools_url(request))\n  777          # Move HTTP raw logs to download directory\n  778          flows = Path.home() / '.httptools' / 'flows'\n  779>         webf = flows / f'{bundle_id}.flow.txt'\n  780          dwd = Path(settings.DWD_DIR)\n  781          dweb = dwd / f'{checksum}-web_traffic.txt'\n  782          if webf.exists():\n  783              shutil.copyfile(webf, dweb)\n  784          # Pcap download"
+  },
+  {
+   "item": "18ef2cef1a35",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/image/rotate.py",
+   "line": 179,
+   "span": [
+    25,
+    0,
+    35
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  174      fill_color = params.get('fill_color', '#000000')\n  175  \n  176      _validate_rotate_params(input_path, output_path, angle)\n  177  \n  178      def _rotate():\n  179>         with Image.open(input_path) as img:\n  180              fill_rgb = _hex_to_rgb(fill_color)\n  181  \n  182              # Handle RGBA images\n  183              if img.mode == 'RGBA':\n  184                  fill_value = fill_rgb + (255,)"
+  },
+  {
+   "item": "41ff079e7a73",
+   "repository_case": "GHSA-4vjg-vx72-qq4g",
+   "file": "lib/network.js",
+   "line": 1408,
+   "span": [
+    18,
+    0,
+    21
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1403                ifaceSanitized +\n 1404                '/statistics/tx_dropped; ' +\n 1405                'cat /sys/class/net/' +\n 1406                ifaceSanitized +\n 1407                '/statistics/tx_errors; ';\n 1408>             exec(cmd, (error, stdout) => {\n 1409                if (!error) {\n 1410                  lines = stdout.toString().split('\\n');\n 1411                  operstate = lines[0].trim();\n 1412                  rx_bytes = parseInt(lines[1], 10);\n 1413                  tx_bytes = parseInt(lines[2], 10);"
+  },
+  {
+   "item": "4a991470fbaa",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 379,
+   "span": [
+    9,
+    0,
+    64
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  374      $parameters=array();\n  375      $reshook=$hookmanager->executeHooks('formObjectOptions',$parameters,$object,$action);    // Note that $action and $object may have been modified by hook\n  376      print $hookmanager->resPrint;\n  377      if (empty($reshook) && ! empty($extrafields->attribute_label))\n  378      {\n  379> \t\tprint $object->showOptionals($extrafields,'edit',$parameters);\n  380      }\n  381  \n  382      print '</tbody>';\n  383  \tprint \"</table>\\n\";\n  384  "
+  },
+  {
+   "item": "7aeeada44fb5",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-user.ts",
+   "line": 1244,
+   "span": [
+    44,
+    0,
+    68
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1239      const platform = process.platform;\n 1240  \n 1241      if (platform === 'win32') {\n 1242        // Windows: Check if user is in Administrators group\n 1243        try {\n 1244>         const { stdout } = await execAsync(`net user \"${username}\"`);\n 1245          return stdout.toLowerCase().includes('administrators');\n 1246        } catch {\n 1247          return false;\n 1248        }\n 1249      } else {"
+  },
+  {
+   "item": "7d003c2f9dc6",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-branch.ts",
+   "line": 485,
+   "span": [
+    9,
+    0,
+    61
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  480      branch: string,\n  481      cwd: string\n  482    ): { ahead: number; behind: number } {\n  483      try {\n  484        const output = execSync(\n  485>         `git rev-list --left-right --count ${branch}...@{u}`,\n  486          {\n  487            cwd,\n  488            encoding: 'utf-8',\n  489          }\n  490        );"
+  },
+  {
+   "item": "b4224d621e1e",
+   "repository_case": "GHSA-6vmq-24h2-pj7j",
+   "file": "src/mcp_atlassian/utils/ssl.py",
+   "line": 41,
+   "span": [
+    9,
+    0,
+    39
+   ],
+   "claimed_weakness": "TLS / transport verification",
+   "context": "   36              block: Whether to block when the pool is full\n   37              pool_kwargs: Additional arguments for the pool manager\n   38          \"\"\"\n   39          # Configure SSL context to disable verification completely\n   40          context = ssl.create_default_context()\n   41>         context.check_hostname = False\n   42          context.verify_mode = ssl.CERT_NONE\n   43  \n   44          self.poolmanager = PoolManager(\n   45              num_pools=connections,\n   46              maxsize=maxsize,"
+  },
+  {
+   "item": "6d42b5b1876b",
+   "repository_case": "GHSA-88pr-878c-24wf",
+   "file": "packages/components/nodes/documentloaders/S3Directory/S3Directory.ts",
+   "line": 191,
+   "span": [
+    38,
+    0,
+    61
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  186  \n  187              const keys: string[] = (listObjectsOutput?.Contents ?? []).filter((item) => item.Key && item.ETag).map((item) => item.Key!)\n  188  \n  189              await Promise.all(\n  190                  keys.map(async (key) => {\n  191>                     const filePath = path.join(tempDir, key)\n  192                      try {\n  193                          const response = await s3Client.send(\n  194                              new GetObjectCommand({\n  195                                  Bucket: bucketName,\n  196                                  Key: key"
+  },
+  {
+   "item": "daad7fd96bae",
+   "repository_case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/android/icon_analysis.py",
+   "line": 332,
+   "span": [
+    24,
+    0,
+    43
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  327  \n  328  def convert_axml_to_xml(app_dir, icon_file):\n  329      \"\"\"Convert AXML to XML for icons from /res.\"\"\"\n  330      try:\n  331          logger.info('Converting icon axml to xml')\n  332>         icon_bin_xml = app_dir / icon_file\n  333          out_xml = app_dir / icon_file\n  334          aobj = axml.AXMLPrinter(\n  335              icon_bin_xml.read_bytes()).get_xml_obj()\n  336          xml_txt = etree.tostring(\n  337              aobj, pretty_print=True, encoding='utf-8')"
+  },
+  {
+   "item": "0f2b3be2427b",
+   "repository_case": "GHSA-p34x-fmph-9fjx",
+   "file": "src/core/modules/atomic/data/csv_write.py",
+   "line": 118,
+   "span": [
+    19,
+    0,
+    28
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  113              os.makedirs(dir_path, exist_ok=True)\n  114  \n  115          # Get column names from first object\n  116          fieldnames = list(data[0].keys())\n  117  \n  118>         with open(file_path, 'w', encoding=encoding, newline='') as csvfile:\n  119              writer = csv.DictWriter(csvfile, fieldnames=fieldnames, delimiter=delimiter)\n  120              writer.writeheader()\n  121              writer.writerows(data)\n  122  \n  123          return {"
+  },
+  {
+   "item": "84952d1fa1d8",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/file-operations/smart-diff.ts",
+   "line": 444,
+   "span": [
+    31,
+    0,
+    38
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  439            command += ` ${opts.source}`;\n  440          }\n  441  \n  442          command += ` -- \"${file}\"`;\n  443  \n  444>         const diff = execSync(command, {\n  445            cwd: opts.cwd,\n  446            encoding: 'utf-8',\n  447            maxBuffer: 10 * 1024 * 1024, // 10MB\n  448          });\n  449  "
+  },
+  {
+   "item": "ddd1da22580c",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-cron.ts",
+   "line": 991,
+   "span": [
+    11,
+    0,
+    66
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  986  \n  987      if (schedulerType === 'cron') {\n  988        // Try to read from syslog/journalctl for cron execution logs\n  989        try {\n  990          const { stdout } = await execAsync(\n  991>           `journalctl -u cron -n ${limit} --no-pager | grep CRON`\n  992          );\n  993          const lines = stdout\n  994            .split('\\n')\n  995            .filter((line) => line.includes(taskName));\n  996  "
+  },
+  {
+   "item": "8c57a0c4e8a6",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2621,
+   "span": [
+    27,
+    0,
+    31
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 2616  \t\t\t$sql.=\" WHERE entity IN (\".getEntity('user',0).\")\";\n 2617  \t\t\tif ($limitTo == 'active') $sql.= \" AND statut = 1\";\n 2618  \t\t\tif ($admin >= 0) $sql.= \" AND admin = \".$admin;\n 2619  \t\t}\n 2620  \n 2621> \t\t$resql=$this->db->query($sql);\n 2622  \t\tif ($resql)\n 2623  \t\t{\n 2624  \t\t\t$obj = $this->db->fetch_object($resql);\n 2625  \t\t\t$nb=$obj->nb;\n 2626  "
+  },
+  {
+   "item": "c19425cdd0d3",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 2542,
+   "span": [
+    28,
+    0,
+    32
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 2537  \t\t$sql = \"SELECT u.rowid, u.login as ref, u.datec,\";\n 2538  \t\t$sql.= \" u.tms as date_modification, u.entity\";\n 2539  \t\t$sql.= \" FROM \".MAIN_DB_PREFIX.\"user as u\";\n 2540  \t\t$sql.= \" WHERE u.rowid = \".$id;\n 2541  \n 2542> \t\t$result=$this->db->query($sql);\n 2543  \t\tif ($result)\n 2544  \t\t{\n 2545  \t\t\tif ($this->db->num_rows($result))\n 2546  \t\t\t{\n 2547  \t\t\t\t$obj = $this->db->fetch_object($result);"
+  },
+  {
+   "item": "894186d0173e",
+   "repository_case": "GHSA-g3hq-hphg-8fhh",
+   "file": "pheditor.php",
+   "line": 334,
+   "span": [
+    21,
+    2,
+    19
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  329      }\n  330  \n  331      switch ($_POST['action']) {\n  332          case 'open':\n  333              if (isset($_POST['file']) && file_exists(MAIN_DIR . $_POST['file'])) {\n  334>                 die(json_success('OK', [\n  335                      'data' => file_get_contents(MAIN_DIR . $_POST['file']),\n  336                  ]));\n  337              }\n  338              break;\n  339  "
+  },
+  {
+   "item": "9f0e293a4f90",
+   "repository_case": "GHSA-2gx6-7gx2-wwcf",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 48,
+   "span": [
+    51,
+    0,
+    72
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   43              let linkHTML = `<h4><a href=\"${item.url}\">${item.title}</a></h4>${item.description}`;\n   44              itemHTMLChunks.push(linkHTML);\n   45          } else if (type === 'tweet') {\n   46              // Should this be an oEmbed call? Probably.\n   47              itemHTMLChunks.push(`<figure class=\"kg-card kg-embed-card\">\n   48>                 <blockquote class=\"twitter-tweet\"><a href=\"${item.url}\"></a></blockquote>\n   49                  <script async src=\"https://platform.twitter.com/widgets.js\" charset=\"utf-8\"></script>\n   50                  </figure>`);\n   51          } else if (type === 'video') {\n   52              const isLongYouTube = /youtube.com/.test(item.url);\n   53              const isShortYouTube = /youtu.be/.test(item.url);"
+  },
+  {
+   "item": "bfe7a697bf3d",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 974,
+   "span": [
+    9,
+    0,
+    21
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  969  \tprint '<tr><td>'.$langs->trans(\"PhoneMobile\").'</td>';\n  970  \tprint '<td>';\n  971  \tif (! empty($ldap_mobile))\n  972  \t{\n  973  \t\tprint '<input type=\"hidden\" name=\"user_mobile\" value=\"'.$ldap_mobile.'\">';\n  974> \t\tprint $ldap_mobile;\n  975  \t}\n  976  \telse\n  977  \t{\n  978  \t\tprint '<input size=\"20\" type=\"text\" name=\"user_mobile\" value=\"'.GETPOST('user_mobile').'\">';\n  979  \t}"
+  },
+  {
+   "item": "c450917e248b",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 521,
+   "span": [
+    50,
+    0,
+    57
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  516        default:\n  517          throw new Error(`Unsupported service type: ${serviceType}`);\n  518      }\n  519  \n  520      try {\n  521>       const { stdout, stderr } = await execAsync(command);\n  522        const output = stdout || stderr;\n  523        const tokensUsed = this.tokenCounter.count(output).tokens;\n  524  \n  525        // Invalidate cache\n  526        const cacheKey = `cache-${crypto.createHash('md5').update(`service-status:${serviceType}:${serviceName}`).digest('hex')}`;"
+  },
+  {
+   "item": "d31600eac605",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1019,
+   "span": [
+    9,
+    0,
+    19
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1014  \tprint '<tr><td'.(! empty($conf->global->USER_MAIL_REQUIRED)?' class=\"fieldrequired\"':'').'>'.$langs->trans(\"EMail\").'</td>';\n 1015  \tprint '<td>';\n 1016  \tif (! empty($ldap_mail))\n 1017  \t{\n 1018  \t\tprint '<input type=\"hidden\" name=\"email\" value=\"'.$ldap_mail.'\">';\n 1019> \t\tprint $ldap_mail;\n 1020  \t}\n 1021  \telse\n 1022  \t{\n 1023  \t\tprint '<input size=\"40\" type=\"text\" name=\"email\" value=\"'.GETPOST('email').'\">';\n 1024  \t}"
+  },
+  {
+   "item": "31ca3c3b7ea4",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1706,
+   "span": [
+    33,
+    0,
+    216
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1701  \t\t\t\t\t\tprint '<div class=\"inline-block divButAction\"><a class=\"butActionRefused\" href=\"#\" title=\"'.dol_escape_htmltag($langs->trans(\"UserDisabled\")).'\">'.$langs->trans(\"SendNewPassword\").'</a></div>';\n 1702  \t\t\t\t\t}\n 1703  \t\t\t\t\telse if (($user->id != $id && $caneditpassword) && $object->login && !$object->ldap_sid &&\n 1704  \t\t\t\t\t((empty($conf->multicompany->enabled) && $object->entity == $user->entity) || ! $user->entity || ($object->entity == $conf->entity) || ($conf->global->MULTICOMPANY_TRANSVERSE_MODE && $conf->entity == 1)))\n 1705  \t\t\t\t\t{\n 1706> \t\t\t\t\t\tif ($object->email) print '<div class=\"inline-block divButAction\"><a class=\"butAction\" href=\"'.$_SERVER['PHP_SELF'].'?id='.$object->id.'&amp;action=passwordsend\">'.$langs->trans(\"SendNewPassword\").'</a></div>';\n 1707  \t\t\t\t\t\telse print '<div class=\"inline-block divButAction\"><a class=\"butActionRefused\" href=\"#\" title=\"'.dol_escape_htmltag($langs->trans(\"NoEMail\")).'\">'.$langs->trans(\"SendNewPassword\").'</a></div>';\n 1708  \t\t\t\t\t}\n 1709  \t\t\t\t}\n 1710  \n 1711  \t\t\t\t// Activer"
+  },
+  {
+   "item": "92638e4c690c",
+   "repository_case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 230,
+   "span": [
+    60,
+    0,
+    66
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  225              Database::getTablePrefix(),\n  226              $messageId,\n  227              $userId,\n  228          );\n  229  \n  230>         return (bool) $this->configuration->getDb()->query($query);\n  231      }\n  232  \n  233      /**\n  234       * Marks all messages in a conversation as read.\n  235       */"
+  },
+  {
+   "item": "112dcb21c044",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-merge.ts",
+   "line": 348,
+   "span": [
+    23,
+    0,
+    45
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  343    /**\n  344     * Get git commit hash\n  345     */\n  346    private getGitHash(cwd: string, ref: string): string {\n  347      try {\n  348>       return execSync(`git rev-parse ${ref}`, {\n  349          cwd,\n  350          encoding: 'utf-8',\n  351        }).trim();\n  352      } catch {\n  353        return ref;"
+  },
+  {
+   "item": "7d7105d0099b",
+   "repository_case": "GHSA-ch89-h4r2-c8f8",
+   "file": "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+   "line": 1498,
+   "span": [
+    27,
+    0,
+    69
+   ],
+   "claimed_weakness": "path traversal",
+   "context": " 1493          return checkpoints\n 1494      \n 1495      def delete_checkpoint(self, checkpoint_id: str) -> bool:\n 1496          \"\"\"Delete a checkpoint.\"\"\"\n 1497          checkpoints_path = self.user_path / \"checkpoints\"\n 1498>         checkpoint_file = checkpoints_path / f\"{checkpoint_id}.json\"\n 1499          \n 1500          if checkpoint_file.exists():\n 1501              checkpoint_file.unlink()\n 1502              self._log(f\"Deleted checkpoint '{checkpoint_id}'\")\n 1503              return True"
+  },
+  {
+   "item": "bb34760d41fc",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-status.ts",
+   "line": 578,
+   "span": [
+    34,
+    0,
+    45
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  573     * Get diff for a specific file\n  574     */\n  575    private getFileDiff(cwd: string, filePath: string, staged: boolean): string {\n  576      try {\n  577        const command = staged\n  578>         ? `git diff --cached -- \"${filePath}\"`\n  579          : `git diff -- \"${filePath}\"`;\n  580  \n  581        return execSync(command, { cwd, encoding: 'utf-8' });\n  582      } catch {\n  583        return '';"
+  },
+  {
+   "item": "522539c51703",
+   "repository_case": "GHSA-f4j9-crrj-867q",
+   "file": "packages/integrations/svelte/src/server.ts",
+   "line": 48,
+   "span": [
+    20,
+    0,
+    45
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   43  \t\t\tchildren = createRawSnippet(() => ({\n   44  \t\t\t\trender: () => `<${tagName}>${value}</${tagName}>`,\n   45  \t\t\t}));\n   46  \t\t} else {\n   47  \t\t\t$$slots[key] = createRawSnippet(() => ({\n   48> \t\t\t\trender: () => `<${tagName} name=\"${key}\">${value}</${tagName}>`,\n   49  \t\t\t}));\n   50  \t\t}\n   51  \t\t// @render support for Svelte ^5.0\n   52  \t\tconst slotName = key === 'default' ? 'children' : key;\n   53  \t\trenderProps[slotName] = createRawSnippet(() => ({"
+  },
+  {
+   "item": "b9b5bd6e3d78",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/class/user.class.php",
+   "line": 613,
+   "span": [
+    29,
+    0,
+    33
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  608  \t\t\t$sql = \"SELECT id\";\n  609  \t\t\t$sql.= \" FROM \".MAIN_DB_PREFIX.\"rights_def\";\n  610  \t\t\t$sql.= \" WHERE $wherefordel\";\n  611  \t\t\t$sql.= \" AND entity = \".$entity;\n  612  \n  613> \t\t\t$result=$this->db->query($sql);\n  614  \t\t\tif ($result)\n  615  \t\t\t{\n  616  \t\t\t\t$num = $this->db->num_rows($result);\n  617  \t\t\t\t$i = 0;\n  618  \t\t\t\twhile ($i < $num)"
+  },
+  {
+   "item": "efe3b50ac18e",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 680,
+   "span": [
+    10,
+    0,
+    129
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  675  \t\t\tprint \"<tr><td colspan=\\\"3\\\" align=\\\"right\\\">\".$langs->trans(\"AmountExpected\").\" :</td><td align=\\\"right\\\">\".price($object->amount).\"</td></tr>\\n\";\n  676  \n  677  \t\t\t$remaintopay = $object->amount - $totalpaid;\n  678  \n  679  \t\t\tprint \"<tr><td colspan=\\\"3\\\" align=\\\"right\\\">\".$langs->trans(\"RemainderToPay\").\" :</td>\";\n  680> \t\t\tprint '<td align=\"right\"'.($resteapayeraffiche?' class=\"amountremaintopay\"':'').'><b>'.price($remaintopay).\"</b></td></tr>\\n\";\n  681  \t\t}\n  682  \t\tprint \"</table>\";\n  683  \t\t$db->free($resql);\n  684  \t}\n  685  \telse"
+  },
+  {
+   "item": "545a59ce22e8",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 447,
+   "span": [
+    9,
+    0,
+    63
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  442  \t\tprint \"<tr>\".'<td class=\"fieldrequired\">'.$langs->trans(\"Amount\").'</td><td><input type=\"text\" name=\"amount\" size=\"10\" value=\"'.dol_escape_htmltag($object->amount).'\"> '.$langs->trans(\"Currency\".$conf->currency).'</td></tr>';\n  443  \t}\n  444  \telse\n  445  \t{\n  446  \t\tprint '<tr><td>'.$langs->trans(\"Amount\").'</td><td>';\n  447> \t\tprint price($object->amount,0,$langs,0,0,-1,$conf->currency);\n  448  \t\tprint '</td></tr>';\n  449  \t}\n  450  \n  451  \tprint '<tr><td class=\"fieldrequired\">'.$langs->trans(\"PublicDonation\").\"</td><td>\";\n  452  \tprint $form->selectyesno(\"public\",1,1);"
+  },
+  {
+   "item": "a3644c356e0c",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack/cjs/react-server-dom-webpack-server.browser.development.js",
+   "line": 2495,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2490                void 0 === value._debugTask\n 2491              ) {\n 2492                var key = \"\";\n 2493                null !== value.key &&\n 2494                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2495>                 (key = ' key=\"' + value.key + '\"');\n 2496                console.error(\n 2497                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2498                  value.type,\n 2499                  key,\n 2500                  value.props"
+  },
+  {
+   "item": "05b5cc7f1aae",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1297,
+   "span": [
+    10,
+    0,
+    174
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1292  \t\t/*\n 1293           * Confirmation suppression\n 1294           */\n 1295  \t\tif ($action == 'delete')\n 1296  \t\t{\n 1297> \t\t\tprint $form->formconfirm($_SERVER['PHP_SELF'].\"?id=$object->id\",$langs->trans(\"DeleteAUser\"),$langs->trans(\"ConfirmDeleteUser\",$object->login),\"confirm_delete\", '', 0, 1);\n 1298  \t\t}\n 1299  \n 1300  \t\t/*\n 1301           * Fiche en mode visu\n 1302           */"
+  },
+  {
+   "item": "da7544295cc8",
+   "repository_case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 245,
+   "span": [
+    60,
+    0,
+    66
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  240              Database::getTablePrefix(),\n  241              $partnerId,\n  242              $userId,\n  243          );\n  244  \n  245>         return (bool) $this->configuration->getDb()->query($query);\n  246      }\n  247  \n  248      /**\n  249       * Gets the total count of unread messages for a user.\n  250       */"
+  },
+  {
+   "item": "9daa4333dfb3",
+   "repository_case": "GHSA-22g5-r2x5-97cx",
+   "file": "src/subParsers/makehtml/cmInline.js",
+   "line": 590,
+   "span": [
+    20,
+    0,
+    40
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  585      }\n  586  \n  587      function buildLink (innerHTML, dest, title) {\n  588        // safeMode: neutralize dangerous URL schemes (javascript:, vbscript:, data:, ...)\n  589        let href = (options.safeMode && !showdown.helper.isSafeUrl(dest)) ? '' : normalizeDest(dest);\n  590>       let attrs = ' href=\"' + href + '\"' + buildTitleAttr(title);\n  591        innerHTML = showdown.subParser('makehtml.hardLineBreaks')(innerHTML, options, globals);\n  592        return hashSpan('<a' + attrs + '>' + innerHTML + '</a>');\n  593      }\n  594  \n  595      function buildImage (innerHTML, dest, title, width, height) {"
+  },
+  {
+   "item": "e00b8ffe5785",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 472,
+   "span": [
+    8,
+    0,
+    114
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  467  \tprint $formcompany->select_ziptown((isset($_POST[\"town\"])?$_POST[\"town\"]:$object->town),'town',array('zipcode','selectcountry_id','state_id'));\n  468  \tprint '</tr>';\n  469  \n  470  \t// Country\n  471  \tprint '<tr><td class=\"titlefieldcreate\">'.$langs->trans('Country').'</td><td>';\n  472> \tprint $form->select_country((!empty($object->country_id)?$object->country_id:$mysoc->country_code),'country_id');\n  473  \tif ($user->admin) print info_admin($langs->trans(\"YouCanChangeValuesForThisListFromDictionarySetup\"),1);\n  474  \tprint '</td></tr>';\n  475  \n  476  \tprint \"<tr>\".'<td>'.$langs->trans(\"EMail\").'</td><td><input type=\"text\" name=\"email\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->email).'\"></td></tr>';\n  477  "
+  },
+  {
+   "item": "bf212a821829",
+   "repository_case": "GHSA-v5ff-xmfp-p245",
+   "file": "src/app/lib/fs.js",
+   "line": 117,
+   "span": [
+    16,
+    0,
+    34
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  112   * @param {string} localFolderPath absolute path of directory\n  113   */\n  114  const rmrf = (localFolderPath) => {\n  115    const cmd = isWin\n  116      ? `Remove-Item '${localFolderPath}' -Force -Recurse -ErrorAction SilentlyContinue`\n  117>     : `rm -rf \"${localFolderPath}\"`\n  118    return isWin ? runWinCmd(cmd) : run(cmd)\n  119  }\n  120  \n  121  /**\n  122   * mv from to"
+  },
+  {
+   "item": "f79501900c5f",
+   "repository_case": "GHSA-v95x-xhq5-4929",
+   "file": "pkg/intercp/client/client.go",
+   "line": 48,
+   "span": [
+    4,
+    0,
+    39
+   ],
+   "claimed_weakness": "TLS / transport verification",
+   "context": "   43  \t\t\tcp := x509.NewCertPool()\n   44  \t\t\tcp.AddCert(&tlsCfg.CaCert)\n   45  \t\t\ttlsConfig.RootCAs = cp\n   46  \t\t\ttlsConfig.Certificates = []tls.Certificate{tlsCfg.ClientCert}\n   47  \t\t} else {\n   48> \t\t\ttlsConfig.InsecureSkipVerify = true\n   49  \t\t}\n   50  \t\tdialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))\n   51  \tdefault:\n   52  \t\treturn nil, errors.Errorf(\"unsupported scheme %q. Use one of %s\", url.Scheme, []string{\"grpc\", \"grpcs\"})\n   53  \t}"
+  },
+  {
+   "item": "798739302c48",
+   "repository_case": "GHSA-pr22-p9rp-2cqv",
+   "file": "ghost/core/core/server/data/importer/importers/json-to-html.js",
+   "line": 48,
+   "span": [
+    51,
+    0,
+    72
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   43              let linkHTML = `<h4><a href=\"${item.url}\">${item.title}</a></h4>${item.description}`;\n   44              itemHTMLChunks.push(linkHTML);\n   45          } else if (type === 'tweet') {\n   46              // Should this be an oEmbed call? Probably.\n   47              itemHTMLChunks.push(`<figure class=\"kg-card kg-embed-card\">\n   48>                 <blockquote class=\"twitter-tweet\"><a href=\"${item.url}\"></a></blockquote>\n   49                  <script async src=\"https://platform.twitter.com/widgets.js\" charset=\"utf-8\"></script>\n   50                  </figure>`);\n   51          } else if (type === 'video') {\n   52              const isLongYouTube = /youtube.com/.test(item.url);\n   53              const isShortYouTube = /youtu.be/.test(item.url);"
+  },
+  {
+   "item": "1a60c6fc77a5",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1721,
+   "span": [
+    12,
+    0,
+    192
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1716  \t\t\t\t}\n 1717  \t\t\t\t// Desactiver\n 1718  \t\t\t\tif ($user->id <> $id && $candisableuser && $object->statut == 1 &&\n 1719  \t\t\t\t((empty($conf->multicompany->enabled) && $object->entity == $user->entity) || ! $user->entity || ($object->entity == $conf->entity) || ($conf->global->MULTICOMPANY_TRANSVERSE_MODE && $conf->entity == 1)))\n 1720  \t\t\t\t{\n 1721> \t\t\t\t\tprint '<div class=\"inline-block divButAction\"><a class=\"butActionDelete\" href=\"'.$_SERVER['PHP_SELF'].'?action=disable&amp;id='.$object->id.'\">'.$langs->trans(\"DisableUser\").'</a></div>';\n 1722  \t\t\t\t}\n 1723  \t\t\t\t// Delete\n 1724  \t\t\t\tif ($user->id <> $id && $candisableuser &&\n 1725  \t\t\t\t((empty($conf->multicompany->enabled) && $object->entity == $user->entity) || ! $user->entity || ($object->entity == $conf->entity) || ($conf->global->MULTICOMPANY_TRANSVERSE_MODE && $conf->entity == 1)))\n 1726  \t\t\t\t{"
+  },
+  {
+   "item": "b6e31235bd0d",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/file-operations/smart-branch.ts",
+   "line": 485,
+   "span": [
+    9,
+    0,
+    61
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  480      branch: string,\n  481      cwd: string\n  482    ): { ahead: number; behind: number } {\n  483      try {\n  484        const output = execSync(\n  485>         `git rev-list --left-right --count ${branch}...@{u}`,\n  486          {\n  487            cwd,\n  488            encoding: 'utf-8',\n  489          }\n  490        );"
+  },
+  {
+   "item": "dfa3d950b0c1",
+   "repository_case": "GHSA-6pvm-2vjj-rx4w",
+   "file": "phpmyfaq/src/phpMyFAQ/Chat.php",
+   "line": 316,
+   "span": [
+    56,
+    0,
+    62
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  311              $excludeUserId,\n  312              $escapedTerm,\n  313              $limit,\n  314          );\n  315  \n  316>         $result = $this->configuration->getDb()->query($query);\n  317          $users = [];\n  318  \n  319          while (true) {\n  320              $row = $this->configuration->getDb()->fetchObject($result);\n  321              if ($row === false || $row === null || $row === []) {"
+  },
+  {
+   "item": "886f97867dcf",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 420,
+   "span": [
+    8,
+    0,
+    68
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  415  \t$head = donation_prepare_head($object);\n  416  \n  417  \tprint '<form name=\"update\" action=\"' . $_SERVER[\"PHP_SELF\"] . '\" method=\"POST\">';\n  418  \tprint '<input type=\"hidden\" name=\"token\" value=\"'.$_SESSION['newtoken'].'\">';\n  419  \tprint '<input type=\"hidden\" name=\"action\" value=\"update\">';\n  420> \tprint '<input type=\"hidden\" name=\"rowid\" value=\"'.$object->id.'\">';\n  421  \tprint '<input type=\"hidden\" name=\"amount\" value=\"'.$object->amount.'\">';\n  422  \n  423  \n  424  \tdol_fiche_head($head, $hselected, $langs->trans(\"Donation\"), 0, 'generic');\n  425  "
+  },
+  {
+   "item": "860c9643c5ce",
+   "repository_case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/BaseBuilder.php",
+   "line": 1851,
+   "span": [
+    34,
+    0,
+    38
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 1846              }\n 1847  \n 1848              if ($this->testMode) {\n 1849                  $savedSQL[] = $sql;\n 1850              } else {\n 1851>                 $this->db->query($sql, null, false);\n 1852                  $affectedRows += $this->db->affectedRows();\n 1853              }\n 1854          }\n 1855  \n 1856          if (! $this->testMode) {"
+  },
+  {
+   "item": "856dde61206d",
+   "repository_case": "GHSA-22g5-r2x5-97cx",
+   "file": "src/subParsers/makehtml/cmInline.js",
+   "line": 603,
+   "span": [
+    20,
+    0,
+    38
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  598        let alt = showdown.subParser('makehtml.unhashHTMLSpans')(innerHTML, options, globals)\n  599          .replace(/<img\\b[^>]*?\\salt=\"([^\"]*)\"[^>]*?\\/?>/g, '$1')\n  600          .replace(/<[^>]*>/g, '');\n  601        // safeMode: neutralize dangerous URL schemes; data:image/* stays allowed\n  602        let src = (options.safeMode && !showdown.helper.isSafeUrl(dest, {allowDataImage: true})) ? '' : normalizeDest(dest);\n  603>       let attrs = ' src=\"' + src + '\" alt=\"' + alt + '\"' + buildTitleAttr(title);\n  604        // width/height gating copied from writeImageTag in image.js (parseImgDimensions)\n  605        if (options.parseImgDimensions) {\n  606          if (width)  { attrs += ' width=\"'  + (width  === '*' ? 'auto' : width)  + '\"'; }\n  607          if (height) { attrs += ' height=\"' + (height === '*' ? 'auto' : height) + '\"'; }\n  608        }"
+  },
+  {
+   "item": "39312718e81a",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-cron.ts",
+   "line": 817,
+   "span": [
+    7,
+    0,
+    51
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  812    /**\n  813     * Enable a Windows scheduled task\n  814     */\n  815    private async enableWindowsTask(taskName: string): Promise<string> {\n  816      const { stdout } = await execAsync(\n  817>       `schtasks /change /tn \"${taskName}\" /enable`\n  818      );\n  819      return stdout;\n  820    }\n  821  \n  822    /**"
+  },
+  {
+   "item": "71d7c7e8bce1",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-turbopack/cjs/react-server-dom-turbopack-server.node.development.js",
+   "line": 2832,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2827                void 0 === value._debugTask\n 2828              ) {\n 2829                var key = \"\";\n 2830                null !== value.key &&\n 2831                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2832>                 (key = ' key=\"' + value.key + '\"');\n 2833                console.error(\n 2834                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2835                  value.type,\n 2836                  key,\n 2837                  value.props"
+  },
+  {
+   "item": "fccf1398e772",
+   "repository_case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/ios/views/view_source.py",
+   "line": 72,
+   "span": [
+    42,
+    0,
+    50
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "   67          if not viewsource_form.is_valid():\n   68              err = FormUtil.errors_message(viewsource_form)\n   69              if api:\n   70                  return err\n   71              return print_n_send_error_response(request, err, False, exp)\n   72>         base = Path(settings.UPLD_DIR) / md5_hash\n   73          if mode == 'ipa':\n   74              src1 = base / 'payload'\n   75              src2 = base / 'Payload'\n   76              if src1.exists():\n   77                  src = src1"
+  },
+  {
+   "item": "7491d652bf0e",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/core/lib/functions.lib.php",
+   "line": 4058,
+   "span": [
+    57,
+    0,
+    93
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 4053  \t}\n 4054  \n 4055  \t// By default, search value of local tax on line of common tax\n 4056  \t$sql  = \"SELECT t.localtax1, t.localtax2, t.localtax1_type, t.localtax2_type\";\n 4057     \t$sql .= \" FROM \".MAIN_DB_PREFIX.\"c_tva as t, \".MAIN_DB_PREFIX.\"c_country as c\";\n 4058>    \t$sql .= \" WHERE t.fk_pays = c.rowid AND c.code = '\".$thirdparty_seller->country_code.\"'\";\n 4059     \t$sql .= \" AND t.taux = \".((float) $vatratecleaned).\" AND t.active = 1\";\n 4060     \tif ($vatratecode) $sql.= \" AND t.code ='\".$vatratecode.\"'\";\t\t// If we have the code, we use it in priority\n 4061     \telse $sql.= \" AND t.recuperableonly ='\".$vatnpr.\"'\";\n 4062     \tdol_syslog(\"get_localtax\", LOG_DEBUG);\n 4063     \t$resql=$db->query($sql);"
+  },
+  {
+   "item": "1859066a20e8",
+   "repository_case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/Postgre/Builder.php",
+   "line": 129,
+   "span": [
+    37,
+    0,
+    41
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "  124          $sql = $this->_update($this->QBFrom[0], [$column => \"CAST({$column} AS numeric) - {$value}\"]);\n  125  \n  126          if (! $this->testMode) {\n  127              $this->resetWrite();\n  128  \n  129>             return $this->db->query($sql, $this->binds, false);\n  130          }\n  131  \n  132          return true;\n  133      }\n  134  "
+  },
+  {
+   "item": "92c0dccf7dc0",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 459,
+   "span": [
+    8,
+    0,
+    174
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  454  \tprint \"</tr>\\n\";\n  455  \n  456  \t$langs->load(\"companies\");\n  457  \tprint '<tr><td>'.$langs->trans(\"Company\").'</td><td><input type=\"text\" name=\"societe\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->societe).'\"></td></tr>';\n  458  \tprint '<tr><td>'.$langs->trans(\"Lastname\").'</td><td><input type=\"text\" name=\"lastname\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->lastname).'\"></td></tr>';\n  459> \tprint '<tr><td>'.$langs->trans(\"Firstname\").'</td><td><input type=\"text\" name=\"firstname\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->firstname).'\"></td></tr>';\n  460  \tprint '<tr><td>'.$langs->trans(\"Address\").'</td><td>';\n  461  \tprint '<textarea name=\"address\" wrap=\"soft\" class=\"quatrevingtpercent\" rows=\"'.ROWS_3.'\">'.dol_escape_htmltag($object->address).'</textarea></td></tr>';\n  462  \n  463      // Zip / Town\n  464      print '<tr><td>'.$langs->trans(\"Zip\").' / '.$langs->trans(\"Town\").'</td><td>';"
+  },
+  {
+   "item": "1ea24838e5ef",
+   "repository_case": "GHSA-8j49-mmcx-4mp5",
+   "file": "mobsf/StaticAnalyzer/views/ios/views/view_source.py",
+   "line": 138,
+   "span": [
+    26,
+    0,
+    31
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  133                      dat = flip.read()\n  134              else:\n  135                  dat = 'Class Dump result not Found'\n  136          elif typ == 'txt':\n  137              file_format = 'text'\n  138>             with io.open(sfile,\n  139                           mode='r',\n  140                           encoding='utf8',\n  141                           errors='ignore') as flip:\n  142                  dat = flip.read()\n  143          else:"
+  },
+  {
+   "item": "736dcc264880",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-webpack-experimental/cjs/react-server-dom-webpack-server.node.development.js",
+   "line": 2914,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2909                void 0 === value._debugTask\n 2910              ) {\n 2911                var key = \"\";\n 2912                null !== value.key &&\n 2913                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2914>                 (key = ' key=\"' + value.key + '\"');\n 2915                console.error(\n 2916                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2917                  value.type,\n 2918                  key,\n 2919                  value.props"
+  },
+  {
+   "item": "23b175c5a0b2",
+   "repository_case": "GHSA-76pc-mqxp-3rq5",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 624,
+   "span": [
+    50,
+    0,
+    57
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  619        default:\n  620          throw new Error(`Unsupported service type: ${serviceType}`);\n  621      }\n  622  \n  623      try {\n  624>       const { stdout, stderr } = await execAsync(command);\n  625        const output = stdout || stderr;\n  626        const tokensUsed = this.tokenCounter.count(output).tokens;\n  627  \n  628        return {\n  629          success: true,"
+  },
+  {
+   "item": "704a137065c8",
+   "repository_case": "GHSA-gr4j-r575-g665",
+   "file": "js/parts/SVGRenderer.js",
+   "line": 830,
+   "span": [
+    61,
+    0,
+    92
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  825                              attr(tspan, 'style', styleAttribute);\n  826                          }\n  827                          // Not for export - #1529\n  828                          hrefAttribute = parseAttribute(span, 'href');\n  829                          if (hrefAttribute && !forExport) {\n  830>                             attr(tspan, 'onclick', 'location.href=\\\"' + hrefAttribute + '\\\"');\n  831                              attr(tspan, 'class', 'highcharts-anchor');\n  832                              if (!renderer.styledMode) {\n  833                                  css(tspan, { cursor: 'pointer' });\n  834                              }\n  835                          }"
+  },
+  {
+   "item": "eab57ef19005",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 1265,
+   "span": [
+    10,
+    0,
+    183
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1260  \t\t/*\n 1261           * Confirmation reinitialisation mot de passe\n 1262           */\n 1263  \t\tif ($action == 'password')\n 1264  \t\t{\n 1265> \t\t\tprint $form->formconfirm($_SERVER['PHP_SELF'].\"?id=$object->id\",$langs->trans(\"ReinitPassword\"),$langs->trans(\"ConfirmReinitPassword\",$object->login),\"confirm_password\", '', 0, 1);\n 1266  \t\t}\n 1267  \n 1268  \t\t/*\n 1269           * Confirmation envoi mot de passe\n 1270           */"
+  },
+  {
+   "item": "0c950c8a135d",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 670,
+   "span": [
+    50,
+    0,
+    57
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  665        default:\n  666          throw new Error(`Unsupported service type: ${serviceType}`);\n  667      }\n  668  \n  669      try {\n  670>       const { stdout, stderr } = await execAsync(command);\n  671        const output = stdout || stderr;\n  672        const tokensUsed = this.tokenCounter.count(output).tokens;\n  673  \n  674        return {\n  675          success: true,"
+  },
+  {
+   "item": "cecde6b571bb",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/server/web-server.ts",
+   "line": 88,
+   "span": [
+    42,
+    0,
+    55
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "   83          sessionId,\n   84        });\n   85      }\n   86  \n   87      // Parse JSONL file\n   88>     const jsonlContent = fs.readFileSync(jsonlFilePath, 'utf-8');\n   89      const lines = jsonlContent.trim().split('\\n');\n   90  \n   91      // Initialize statistics\n   92      let sessionStartTime = '';\n   93      let sessionEndTime = '';"
+  },
+  {
+   "item": "9850439a8373",
+   "repository_case": "GHSA-2956-977x-2w3r",
+   "file": "src/core/modules/atomic/document/pdf_fill_form.py",
+   "line": 137,
+   "span": [
+    19,
+    0,
+    30
+   ],
+   "claimed_weakness": "path traversal",
+   "context": "  132          writer = PdfWriter()\n  133          for page in reader.pages:\n  134              writer.add_page(page)\n  135          fields_filled = _fill_form_fields(writer, reader, fields)\n  136          images_inserted = _insert_form_images(writer, images)\n  137>         with open(output_path, 'wb') as f:\n  138              writer.write(f)\n  139          return fields_filled, images_inserted\n  140  \n  141      fields_filled, images_inserted = await asyncio.to_thread(_do_fill)\n  142      file_size = os.path.getsize(output_path)"
+  },
+  {
+   "item": "4acf18d38b1d",
+   "repository_case": "GHSA-97jv-2hp6-3frj",
+   "file": "htdocs/user/card.php",
+   "line": 959,
+   "span": [
+    9,
+    0,
+    76
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  954  \t// Tel\n  955  \tprint '<tr><td>'.$langs->trans(\"PhonePro\").'</td>';\n  956  \tprint '<td>';\n  957  \tif (! empty($ldap_phone))\n  958  \t{\n  959> \t\tprint '<input type=\"hidden\" name=\"office_phone\" value=\"'.$ldap_phone.'\">';\n  960  \t\tprint $ldap_phone;\n  961  \t}\n  962  \telse\n  963  \t{\n  964  \t\tprint '<input size=\"20\" type=\"text\" name=\"office_phone\" value=\"'.GETPOST('office_phone').'\">';"
+  },
+  {
+   "item": "0dc0d6ee6538",
+   "repository_case": "GHSA-3cgg-c5pp-57h6",
+   "file": "src/odt/to-html/html-renderer.ts",
+   "line": 252,
+   "span": [
+    19,
+    0,
+    39
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  247  \n  248    if (node.description !== undefined && node.name !== undefined) {\n  249      const descId = `odf-img-${escapeHtml(node.name)}`;\n  250      attrs.push(`aria-describedby=\"${descId}\"`);\n  251      const img = `<img ${attrs.join(\" \")}>`;\n  252>     const desc = `<span id=\"${descId}\" hidden>${escapeHtml(node.description)}</span>`;\n  253      return img + desc;\n  254    }\n  255  \n  256    return `<img ${attrs.join(\" \")}>`;\n  257  }"
+  },
+  {
+   "item": "58f5174b8e3b",
+   "repository_case": "GHSA-v5ff-xmfp-p245",
+   "file": "src/app/lib/fs.js",
+   "line": 140,
+   "span": [
+    39,
+    0,
+    42
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  135   */\n  136  const cp = (from, to) => {\n  137    const cmd = isWin\n  138      ? `Copy-Item '${from}' -Destination '${to}' -Recurse`\n  139      : `cp -r \"${from}\" \"${to}\"`\n  140>   return isWin ? runWinCmd(cmd) : run(cmd)\n  141  }\n  142  \n  143  /**\n  144   * touch file\n  145   * @param {string} localFolderPath absolute path"
+  },
+  {
+   "item": "8a891467318c",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 461,
+   "span": [
+    8,
+    0,
+    153
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  456  \t$langs->load(\"companies\");\n  457  \tprint '<tr><td>'.$langs->trans(\"Company\").'</td><td><input type=\"text\" name=\"societe\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->societe).'\"></td></tr>';\n  458  \tprint '<tr><td>'.$langs->trans(\"Lastname\").'</td><td><input type=\"text\" name=\"lastname\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->lastname).'\"></td></tr>';\n  459  \tprint '<tr><td>'.$langs->trans(\"Firstname\").'</td><td><input type=\"text\" name=\"firstname\" class=\"maxwidth200\" value=\"'.dol_escape_htmltag($object->firstname).'\"></td></tr>';\n  460  \tprint '<tr><td>'.$langs->trans(\"Address\").'</td><td>';\n  461> \tprint '<textarea name=\"address\" wrap=\"soft\" class=\"quatrevingtpercent\" rows=\"'.ROWS_3.'\">'.dol_escape_htmltag($object->address).'</textarea></td></tr>';\n  462  \n  463      // Zip / Town\n  464      print '<tr><td>'.$langs->trans(\"Zip\").' / '.$langs->trans(\"Town\").'</td><td>';\n  465  \tprint $formcompany->select_ziptown((isset($_POST[\"zipcode\"])?$_POST[\"zipcode\"]:$object->zip),'zipcode',array('town','selectcountry_id','state_id'),6);\n  466      print ' ';"
+  },
+  {
+   "item": "13c795b0c1e5",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/card.php",
+   "line": 530,
+   "span": [
+    15,
+    0,
+    138
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  525  {\n  526  \t// Confirmation delete\n  527      if ($action == 'delete')\n  528      {\n  529          $text=$langs->trans(\"ConfirmDeleteADonation\");\n  530>         print $form->formconfirm($_SERVER[\"PHP_SELF\"].\"?id=\".$object->id,$langs->trans(\"DeleteADonation\"),$text,\"confirm_delete\",'','',1);\n  531      }\n  532  \n  533  \t$result=$object->fetch($id);\n  534  \tif ($result < 0) {\n  535  \t\tdol_print_error($db,$object->error); exit;"
+  },
+  {
+   "item": "e9eb558d0274",
+   "repository_case": "GHSA-c9w5-rwh3-7pm9",
+   "file": "system/Database/BaseBuilder.php",
+   "line": 3018,
+   "span": [
+    37,
+    0,
+    41
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": " 3013          $sql = $this->_update($this->QBFrom[0], [$column => \"{$column}-{$value}\"]);\n 3014  \n 3015          if (! $this->testMode) {\n 3016              $this->resetWrite();\n 3017  \n 3018>             return $this->db->query($sql, $this->binds, false);\n 3019          }\n 3020  \n 3021          return true;\n 3022      }\n 3023  "
+  },
+  {
+   "item": "1c77fd7884cc",
+   "repository_case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 416,
+   "span": [
+    28,
+    0,
+    60
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  411                  }\n  412                }\n  413              } else if (line.listTypeName === 'indent') {\n  414                // Indent lines are plain indented text, not list items.\n  415                // Use a ul with list-style-type:none so they don't show bullets.\n  416>               pieces.push(`<ul class=\"${line.listTypeName}\" style=\"list-style-type: none;\">`);\n  417              } else {\n  418                pieces.push(`<ul class=\"${line.listTypeName}\">`);\n  419              }\n  420            }\n  421          }"
+  },
+  {
+   "item": "baac06766b90",
+   "repository_case": "GHSA-5m6h-8g35-p3m7",
+   "file": "app-vite/templates/entry/ssg-script.js",
+   "line": 56,
+   "span": [
+    8,
+    0,
+    41
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   51  <% if (quasarConf.metaConf.hasStore && quasarConf.ssg.manualStoreSerialization !== true) { %>\n   52  const autoRemove = 'document.currentScript.remove()'\n   53  \n   54  function renderStoreState (ssrContext) {\n   55    const nonce = ssrContext.nonce !== void 0\n   56>     ? ' nonce=\"' + ssrContext.nonce + '\"'\n   57      : ''\n   58  \n   59    const state = serialize(ssrContext.state, { isJSON: true })\n   60    return '<script' + nonce + '>window.__INITIAL_STATE__=' + state + ';' + autoRemove + '</script>'\n   61  }"
+  },
+  {
+   "item": "1986404e851a",
+   "repository_case": "GHSA-5xpp-75jx-m839",
+   "file": "lib/network.js",
+   "line": 1449,
+   "span": [
+    18,
+    0,
+    21
+   ],
+   "claimed_weakness": "command injection",
+   "context": " 1444            exec(cmd, (error, stdout) => {\n 1445              result.operstate = (stdout.toString().split(':')[1] || '').trim();\n 1446              result.operstate = (result.operstate || '').toLowerCase();\n 1447              result.operstate = result.operstate === 'active' ? 'up' : result.operstate === 'inactive' ? 'down' : 'unknown';\n 1448              cmd = 'netstat -bdnI ' + ifaceSanitized; // lgtm [js/shell-command-constructed-from-input]\n 1449>             exec(cmd, (error, stdout) => {\n 1450                if (!error) {\n 1451                  lines = stdout.toString().split('\\n');\n 1452                  // if there is less than 2 lines, no information for this interface was found\n 1453                  if (lines.length > 1 && lines[1].trim() !== '') {\n 1454                    // skip header line"
+  },
+  {
+   "item": "a84259a71984",
+   "repository_case": "GHSA-jq3q-62jc-fqq9",
+   "file": "src/utils/getGitHandler.ts",
+   "line": 340,
+   "span": [
+    34,
+    0,
+    82
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  335      if (!remoteBranches) {\n  336        return false;\n  337      }\n  338  \n  339      // Check if local branch and remote branch are in sync\n  340>     const localCommit = execSync(`git -C \"${folderPath}\" rev-parse ${branchName}`, {\n  341        encoding: 'utf-8',\n  342      }).trim();\n  343  \n  344      const remoteCommit = execSync(`git -C \"${folderPath}\" rev-parse origin/${branchName}`, {\n  345        encoding: 'utf-8',"
+  },
+  {
+   "item": "dea62e4c9e3e",
+   "repository_case": "GHSA-49mq-fc6q-3h46",
+   "file": "src/tools/system-operations/smart-service.ts",
+   "line": 412,
+   "span": [
+    40,
+    0,
+    71
+   ],
+   "claimed_weakness": "command injection",
+   "context": "  407     * Get Docker container information\n  408     */\n  409    private async getDockerServiceInfo(\n  410      serviceName: string\n  411    ): Promise<ServiceInfo> {\n  412>     const { stdout } = await execAsync(`docker inspect ${serviceName}`);\n  413      const containers = JSON.parse(stdout);\n  414  \n  415      if (!containers || containers.length === 0) {\n  416        throw new Error(`Container not found: ${serviceName}`);\n  417      }"
+  },
+  {
+   "item": "9fb1dfd9fa61",
+   "repository_case": "GHSA-79cw-hfcc-7mw9",
+   "file": "src/Note/Service/FilterService.php",
+   "line": 70,
+   "span": [
+    31,
+    0,
+    102
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "   65                      $maxTime = $value + (86400 - 1); //specifies the top point of the range used in the condition\n   66                      $dateCondition = '`' . $filter[$propertyKey] . '` ' . ' BETWEEN :minTime AND :maxTime';\n   67                      $list->addConditionParam($dateCondition, ['minTime' => $value, 'maxTime' => $maxTime]);\n   68                  } else {\n   69                      $list->addConditionParam(\n   70>                         '`' . $filter[$propertyKey] . '` ' . $operator . ' :' . $filter[$propertyKey],\n   71                          [$filter[$propertyKey] => $value]\n   72                      );\n   73                  }\n   74              }\n   75          } catch (Exception) {"
+  },
+  {
+   "item": "d3d27f8a15d3",
+   "repository_case": "GHSA-79cw-hfcc-7mw9",
+   "file": "src/Listing/Filter/EqualsFilter.php",
+   "line": 42,
+   "span": [
+    23,
+    0,
+    58
+   ],
+   "claimed_weakness": "SQL injection",
+   "context": "   37          }\n   38  \n   39          foreach ($equalsColumns as $equalsColumn) {\n   40              $columnName = $equalsColumn->getKey();\n   41              $listing->addConditionParam(\n   42>                 '`' . $columnName . '` = :' . $columnName,\n   43                  [$columnName => $equalsColumn->getFilterValue()]\n   44              );\n   45          }\n   46  \n   47          return $listing;"
+  },
+  {
+   "item": "74eaa726883a",
+   "repository_case": "GHSA-673q-mjm6-r5xr",
+   "file": "packages/next/src/compiled/react-server-dom-turbopack-experimental/cjs/react-server-dom-turbopack-server.edge.development.js",
+   "line": 2637,
+   "span": [
+    25,
+    0,
+    49
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 2632                void 0 === value._debugTask\n 2633              ) {\n 2634                var key = \"\";\n 2635                null !== value.key &&\n 2636                  value.key !== REACT_OPTIMISTIC_KEY &&\n 2637>                 (key = ' key=\"' + value.key + '\"');\n 2638                console.error(\n 2639                  \"Attempted to render <%s%s> without development properties. This is not supported. It can happen if:\\n- The element is created with a production version of React but rendered in development.\\n- The element was cloned with a custom function instead of `React.cloneElement`.\\nThe props of this element may help locate this element: %o\",\n 2640                  value.type,\n 2641                  key,\n 2642                  value.props"
+  },
+  {
+   "item": "5515079d6a16",
+   "repository_case": "GHSA-2jp7-wwpg-3p9w",
+   "file": "src/node/utils/ExportHtml.ts",
+   "line": 407,
+   "span": [
+    32,
+    0,
+    89
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  402                  // No counter yet. Use explicit start attribute when present\n  403                  // (e.g. from import or internal logic) and seed the counter so\n  404                  // subsequent continuations stay aligned.\n  405                  const explicitStart = Number(line.start);\n  406                  if (Number.isFinite(explicitStart) && explicitStart > 0) {\n  407>                   pieces.push(`<ol start=\"${explicitStart}\" class=\"${line.listTypeName}\">`);\n  408                    olItemCounts[line.listLevel] = explicitStart - 1;\n  409                  } else {\n  410                    pieces.push(`<ol class=\"${line.listTypeName}\">`);\n  411                  }\n  412                }"
+  },
+  {
+   "item": "a824ea59599e",
+   "repository_case": "GHSA-jjgq-jq8g-24w4",
+   "file": "htdocs/don/list.php",
+   "line": 219,
+   "span": [
+    9,
+    0,
+    87
+   ],
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  214  \t\t$donationstatic->lastname=$objp->lastname;\n  215  \t\t$donationstatic->firstname=$objp->firstname;\n  216  \t\tprint \"<td>\".$donationstatic->getNomUrl(1).\"</td>\\n\";\n  217          print \"<td>\".$objp->societe.\"</td>\\n\";\n  218  \t\tprint \"<td>\".$donationstatic->getFullName($langs).\"</td>\\n\";\n  219> \t\tprint '<td align=\"center\">'.dol_print_date($db->jdate($objp->datedon),'day').'</td>';\n  220  \t\tif (! empty($conf->projet->enabled))\n  221  \t\t{\n  222  \t\t\tprint \"<td>\";\n  223  \t\t\tif ($objp->pid)\n  224  \t\t\t{"
+  }
+ ]
+}

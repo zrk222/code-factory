@@ -6,6 +6,7 @@
 //            [--exclude-dir docs/evidence] [--per-repo 3] [--per-ecosystem N]
 //   score    --manifest manifest.json --rules ruleset.yml --out results.json
 //            [--opengrep BIN] [--profile profile.json] [--workdir DIR] [--jobs 6] [--extra-arg ARG]...
+//            [--scanner-path-policy true]
 //   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... [--control-timeout SECONDS]
 //            [--parallel-controls WORKERS_PER_ARM] [--control-plan plan.json] --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
@@ -17,6 +18,7 @@
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   review-alerts --score result.json --score-sha256 HEX --workdir DIR --out alerts.json
+//                 [--side fixed --rules ruleset.yml]
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
@@ -33,7 +35,8 @@ import { availableParallelism, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, completeFixedCoverage, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
+import { engineTargetIgnores, PARSER_LANGUAGE, readRuleMetadata, scannerPathPolicy } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
@@ -168,17 +171,19 @@ export function parseHunks(diff, extensions, editedLines = null) {
   return files;
 }
 
-// Rule id -> scored families, read from the ruleset without a YAML dependency.
+function requireRuleMetadata(rules) {
+  const records = readRuleMetadata(rules);
+  if (!records?.length) throw new Error('Recall requires parseable YAML rules with unique ids. Check the rules and Code Factory Python runtime.');
+  return records;
+}
+
+function familiesByRule(records) {
+  return Object.fromEntries(records.map(({ id, cwes }) => [id,
+    familiesFor(cwes.map(cwe => cwe.replace(/[-\s"']/g, '').replace(/^CWE/, 'CWE-')))]));
+}
+
 export function ruleFamilies(rulesText) {
-  const out = {};
-  for (const block of rulesText.split(/\n  - id: /).slice(1)) {
-    const id = block.split('\n', 1)[0].trim();
-    const inline = block.match(/\n\s+cwe:\s*\[([^\]]*)\]/);
-    const listed = block.match(/\n(\s+)cwe:\s*\n((?:\1\s*- .*\n?)+)/);
-    const cwes = inline ? inline[1].split(',') : listed ? listed[2].split('\n') : [];
-    out[id] = familiesFor(cwes.map(item => item.replace(/[-\s"']/g, '').replace(/^CWE/, 'CWE-')).filter(Boolean));
-  }
-  return out;
+  return familiesByRule(requireRuleMetadata(rulesText));
 }
 
 // Earlier advisory IDs and earlier repository@fix pairs from every manifest
@@ -286,10 +291,11 @@ function regionSpan({ startLine, startColumn, endLine, endColumn }) {
   return [startColumn ?? null, lineOffset, endColumn ?? null];
 }
 
-export function sarifFindings(sarif, packetPaths) {
+export function sarifFindings(sarif, packetPaths, normalizeRuleId = id => id.split('.').slice(-2).join('.'),
+  resolveArtifact = artifact => sarifPath(artifact.uri, packetPaths)) {
   const out = [];
-  const clean = loc => sarifPath(loc.artifactLocation.uri, packetPaths);
   for (const run of sarif.runs ?? []) {
+    const clean = loc => resolveArtifact(loc.artifactLocation, run);
     for (const result of run.results ?? []) {
       const location = result.locations?.[0]?.physicalLocation;
       if (!location) continue;
@@ -297,7 +303,7 @@ export function sarifFindings(sarif, packetPaths) {
         .flatMap(thread => thread.locations ?? []).map(step => step.location?.physicalLocation)
         .filter(step => step?.artifactLocation && step.region).map(step => [clean(step), step.region.startLine]);
       const span = regionSpan(location.region);
-      out.push({ rule: result.ruleId.split('.').slice(-2).join('.'), path: clean(location),
+      out.push({ rule: normalizeRuleId(result.ruleId), path: clean(location),
         line: location.region.startLine, ...(span ? { span } : {}), trace });
     }
   }
@@ -318,6 +324,7 @@ export function scoreCase({ families, hunks, editedLines, oldFindings, newFindin
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
   const hunkSpans = hunkHits.map(f => f.span ?? null);
+  const residualSpans = residual.map(f => f.span ?? null);
   const editedLineEvidence = editedLines?.deleted && {
     deleted_line_hit: hunkHits.some(f => editedLines.deleted.get(f.path)?.has(f.line)),
     added_line_residuals: residual.filter(f => editedLines.added.get(f.path)?.has(f.line)).map(f => [f.rule, f.path, f.line]),
@@ -327,6 +334,7 @@ export function scoreCase({ families, hunks, editedLines, oldFindings, newFindin
     ...(hunkSpans.some(Boolean) ? { hunk_spans: hunkSpans } : {}), matched_hunk_families: matchedFamilies,
     alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
     fix_side_residual: residual.map(f => [f.rule, f.path, f.line]),
+    ...(residualSpans.some(Boolean) ? { fix_side_residual_spans: residualSpans } : {}),
     ...(editedLineEvidence ? { edited_lines: editedLineEvidence } : {}) };
 }
 
@@ -600,10 +608,12 @@ export function scanNotes(sarif) {
   return notes;
 }
 
-function readPreparedInventory(directory, digest) {
-  const raw = readFileSync(join(directory, 'changes.z'));
-  if (sha256(raw) !== digest) throw new Error('Prepared changed-file inventory fingerprint differs');
-  return changedFiles(raw);
+function readPreparedEvidence(read, record) {
+  const patch = read('diff.patch');
+  if (sha256(patch) !== record.diff_sha256) throw new Error('Prepared diff byte fingerprint differs');
+  const inventory = read('changes.z');
+  if (sha256(inventory) !== record.changed_files_sha256) throw new Error('Prepared changed-file inventory fingerprint differs');
+  return { patch, inventory };
 }
 
 // Fetch once per case and keep the old/new trees, so several rulesets can be
@@ -614,11 +624,10 @@ function bindPreparedCase(directory, record, key, row, scope) {
   if (record.revisions?.fixed !== row.fix || !/^[0-9a-f]{40}$/.test(record.revisions?.old ?? '')) {
     throw new Error('Prepared source revisions differ');
   }
-  const patch = readFileSync(join(directory, 'diff.patch'));
-  if (sha256(patch) !== record.diff_sha256) throw new Error('Prepared diff byte fingerprint differs');
+  const { patch, inventory } = readPreparedEvidence(name => readFileSync(join(directory, name)), record);
   const editedLines = {};
   const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(row.ecosystem, scope), editedLines);
-  return { ...record, changes: readPreparedInventory(directory, record.changed_files_sha256), hunks, editedLines,
+  return { ...record, changes: changedFiles(inventory), hunks, editedLines,
     old: record.source_packets.old.length ? join(directory, 'old') : null,
     new: record.source_packets.fixed.length ? join(directory, 'new') : null };
 }
@@ -689,9 +698,13 @@ export async function publishPreparedCase(staging, directory, { rename = renameS
   }
 }
 
+function preparedCaseDirectory(workdir, key, scope) {
+  return join(workdir, scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4', key);
+}
+
 async function prepareCase(workdir, row, scope = 'ecosystem') {
   const key = caseDigest([row]);
-  const cache = join(workdir, scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4'), directory = join(cache, key);
+  const directory = preparedCaseDirectory(workdir, key, scope), cache = dirname(directory);
   const record = join(directory, 'case.json');
   const read = () => bindPreparedCase(directory, JSON.parse(readFileSync(record, 'utf8')), key, row, scope);
   if (existsSync(record)) return read();
@@ -724,7 +737,60 @@ function reportReferences(context, report, diagnostics) {
   const coverage = coverageReportPath(context.profile, report, true);
   return { sarif: diagnostics.report_sha256 ? { path: local(report), sha256: diagnostics.report_sha256 } : null,
     native_report: coverage && diagnostics.coverage_report_sha256
-      ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null };
+      ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null,
+    ...(diagnostics.target_inventory_sha256 ? {
+      target_inventory: { path: local(`${report}.targets`), sha256: diagnostics.target_inventory_sha256 },
+    } : {}) };
+}
+
+function uncoveredPolicyPaths(paths, findings, ruleExcludes) {
+  const { coverage, notes } = findings;
+  if (!coverage || notes.failed_exit !== false || notes.timeouts || notes.other || notes.blocking_parse_errors) return [];
+  const reported = new Set(findings.map(finding => finding.path));
+  return [...paths].filter(path => {
+    if (reported.has(path) || coverage.scanned.has(path) || coverage.problems.has(path)) return false;
+    const skip = coverage.skipped.get(path);
+    // A generic engine skip needs independent proof from the applicable rules.
+    return !coverage.skipped.has(path) || skip === 'semgrepignore_patterns_match'
+      || (skip === 'always_skipped' && ruleExcludes(path));
+  });
+}
+
+function confirmPathExclusions(coverage, unresolved, policy, ignored = null) {
+  coverage.policyExclusions = new Map();
+  for (const path of unresolved) {
+    if (policy.ruleExcludes(path)) coverage.policyExclusions.set(path, 'rule_path_exclusions');
+    else if (policy.usesTargetInventory) {
+      if (ignored?.(path)) coverage.policyExclusions.set(path, 'engine_target_ignore');
+    } else if (coverage.skipped.get(path) === 'semgrepignore_patterns_match') {
+      coverage.policyExclusions.set(path, 'engine_coverage_ignore');
+    }
+  }
+}
+
+async function observePathPolicy(context, source, report, paths, findings) {
+  const policy = context.pathPolicy;
+  if (!policy) return;
+  const unresolved = uncoveredPolicyPaths(paths, findings, policy.ruleExcludes);
+  if (!unresolved.length) return;
+  const { coverage, notes } = findings;
+  let ignored = null;
+  if (policy.usesTargetInventory && unresolved.some(path => !policy.ruleExcludes(path))) {
+    const [bin, ...argv] = profileArgv(context.profile, { bin: context.bin, rules: context.rules,
+      report, source: '.', extra: context.extra });
+    const outputArg = argv.indexOf('--sarif-output');
+    if (outputArg >= 0) {
+      argv.splice(outputArg, 2);
+      argv.splice(argv.length - 1, 0, '--x-ls-long');
+      const observed = await runProcess(bin, argv, { cwd: source, timeout: 30000 });
+      if (observed.status === 0) ignored = engineTargetIgnores(observed.stdout, source);
+      if (ignored) {
+        writeFileSync(`${report}.targets`, observed.stdout);
+        notes.target_inventory_sha256 = sha256(observed.stdout);
+      }
+    }
+  }
+  confirmPathExclusions(coverage, unresolved, policy, ignored);
 }
 
 function captureReference(context, source, report, diagnostics) {
@@ -758,6 +824,7 @@ async function observeSide(context, source, report, expected) {
     const packetPaths = new Set(expected.map(row => row.path));
     const findings = await withOpenGrepSource(context.profile, source, packetPaths, async scanSource => {
       const result = await scan({ ...context, packetPaths }, scanSource, report, true);
+      await observePathPolicy(context, scanSource, report, packetPaths, result);
       if (scanSource !== source) result.notes.windows_source_alias = true;
       return result;
     });
@@ -773,6 +840,12 @@ async function observeSide(context, source, report, expected) {
   }
 }
 
+function classifyCaseScore(result, old, fixed) {
+  const status = old.length ? 'scored' : fixed.length ? 'no_old_side_source' : 'no_in_language_source_change';
+  const outcome = outcomeOf({ ...result, status });
+  return { status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
+}
+
 async function scoreOne(context, row) {
   const prepared = await prepareCase(context.workdir, row, context.scope);
   if (prepared.status !== 'ready') return { status: prepared.status };
@@ -785,14 +858,12 @@ async function scoreOne(context, row) {
     newFindings: fixed.findings, rules: context.ruleMap });
   const coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
     scans: { old, fixed }, extensions: scopeExtensions(row.ecosystem, context.scope), isTestPath });
-  const status = oldPackets.length ? 'scored' : fixedPackets.length ? 'no_old_side_source' : 'no_in_language_source_change';
-  const rowResult = { status, families, changed_files: Object.keys(prepared.hunks).sort(),
+  const rowResult = { families, changed_files: Object.keys(prepared.hunks).sort(),
     revisions: prepared.revisions, source_packets: prepared.source_packets, diff_sha256: prepared.diff_sha256,
     changed_files_sha256: prepared.changed_files_sha256, file_coverage: coverage,
     scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics },
     captures: { old: old.capture ?? null, fixed: fixed.capture ?? null }, ...result };
-  const outcome = outcomeOf(rowResult);
-  return { ...rowResult, status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
+  return { ...rowResult, ...classifyCaseScore(rowResult, oldPackets, fixedPackets) };
 }
 
 async function pool(items, jobs, worker) {
@@ -825,7 +896,7 @@ function options(argv) {
 
 
 const scoreOptions = new Set(['manifest', 'rules', 'out', 'opengrep', 'profile', 'workdir', 'jobs',
-  'extra-arg', 'checkpoint-dir', 'scope']);
+  'extra-arg', 'checkpoint-dir', 'scope', 'scanner-path-policy']);
 
 function scoreWorkers(opts) {
   const jobs = Number(opts.jobs ?? 6);
@@ -875,14 +946,24 @@ function freeze(opts) {
 
 function scoringContext(opts, rulesPath) {
   const rulesBytes = readFileSync(rulesPath);
+  const records = requireRuleMetadata(rulesBytes);
   // evaluate() reads the profile once so a working-tree edit during a long
   // paired run cannot give the two sides different profiles.
   const profileBytes = opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
-  return { profile: JSON.parse(utf8(profileBytes)), profileSha256: sha256(profileBytes),
+  const profile = JSON.parse(utf8(profileBytes));
+  return { profile, profileSha256: sha256(profileBytes),
+    pathPolicy: optionalScannerPolicy(opts, profile, records),
     bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', rules: resolve(rulesPath),
-    rulesSha256: sha256(rulesBytes), ruleMap: ruleFamilies(utf8(rulesBytes)),
+    rulesSha256: sha256(rulesBytes), ruleMap: familiesByRule(records),
     extra: [].concat(opts['extra-arg'] ?? []), workdir: resolve(opts.workdir ?? '.factory/recall-work'),
     scope: opts.scope === 'scannable' ? 'scannable' : 'ecosystem' };
+}
+
+function optionalScannerPolicy(opts, profile, records) {
+  if (opts['scanner-path-policy'] !== 'true') return null;
+  const policy = scannerPathPolicy(profile, records);
+  if (!policy) throw new Error('Scanner path evidence requires a verified OpenGrep coverage profile');
+  return policy;
 }
 
 // Restartable qualification: a completed scored case (or control pair) is
@@ -934,33 +1015,58 @@ export function scorerSha256() {
 
 // A saved row is reusable only while the captures and source packets it cites
 // are still present in this work directory with the same bytes.
-function checkpointCaptureIntact(root, capture, notes, packets, checkedSources) {
-  if (!capture) return packets.length === 0;
+function checkpointCaptureIntact(root, capture, notes, packets, checkedSources, retained, initial = false) {
+  if (!capture) {
+    if (notes?.report_sha256 || notes?.coverage_report_sha256 || notes?.target_inventory_sha256) return false;
+    return packets.length === 0 || (initial && notes?.watchdog_timeout === true
+      && notes.failed_exit === true && notes.timeouts > 0);
+  }
   if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
     || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
-  const artifacts = [capture.sarif, capture.native_report].filter(Boolean);
-  if (!artifacts.every(artifact => sha256(readFileSync(reviewCapturePath(root, artifact.path))) === artifact.sha256)) return false;
+  if (capture.target_inventory?.sha256 !== notes?.target_inventory_sha256) return false;
+  for (const kind of ['sarif', 'native_report', 'target_inventory']) {
+    const artifact = capture[kind];
+    if (!artifact) continue;
+    const raw = readFileSync(reviewCapturePath(root, artifact.path));
+    if (sha256(raw) !== artifact.sha256) return false;
+    if (retained) retained[kind] = raw;
+  }
   const source = reviewCapturePath(root, capture.source_root);
   if (!checkedSources.has(source)) {
     verifyPreparedBytes(source, packets);
     checkedSources.add(source);
   }
+  if (retained) retained.source = source;
   return true;
 }
 
-export function checkpointArtifactsIntact(workdir, row) {
+function checkpointSideIntact(root, row, side, retained) {
+  const packets = row.source_packets?.[side] ?? [];
+  const checkedSources = new Set();
+  const captured = retained ? (retained[side] = {}) : null;
+  if (!checkpointCaptureIntact(root, row.captures?.[side], row.scan_sides?.[side], packets, checkedSources, captured)) return false;
+  return !row.retried_serially || checkpointCaptureIntact(root, row.initial_captures?.[side],
+    row.initial_scan_sides?.[side], packets, checkedSources, null, true);
+}
+
+export function checkpointArtifactsIntact(workdir, row, retained) {
   try {
     const root = realpathSync(workdir);
-    const attempts = [[row.captures, row.scan_sides]];
-    if (row.retried_serially) attempts.push([row.initial_captures, row.initial_scan_sides]);
-    for (const side of ['old', 'fixed']) {
-      const packets = row.source_packets?.[side] ?? [];
-      const checkedSources = new Set();
-      for (const [captures, diagnostics] of attempts) {
-        if (!checkpointCaptureIntact(root, captures?.[side], diagnostics?.[side], packets, checkedSources)) return false;
-      }
-    }
-    return true;
+    return ['old', 'fixed'].every(side => checkpointSideIntact(root, row, side, retained));
+  } catch { return false; }
+}
+
+function checkpointScoreIntact(workdir, row, input, scope) {
+  try {
+    const root = realpathSync(workdir);
+    const key = caseDigest([input]);
+    const directory = preparedCaseDirectory(root, key, scope);
+    const read = name => readFileSync(reviewCapturePath(root, relative(root, join(directory, name))));
+    const record = JSON.parse(utf8(read('case.json')));
+    if (record.status !== 'ready' || record.case_sha256 !== key || record.revisions?.fixed !== input.fix
+      || !/^[0-9a-f]{40}$/.test(record.revisions?.old ?? '') || caseInputFingerprint(record) !== caseInputFingerprint(row)) return false;
+    readPreparedEvidence(read, record);
+    return checkpointArtifactsIntact(root, row);
   } catch { return false; }
 }
 
@@ -997,11 +1103,11 @@ async function scorePreparedManifest(manifest, opts, context) {
   const checkpointInputs = row => ({ schema: 'factory.recall-case-checkpoint.v3', scorer_sha256: scorerSha256(),
     manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
     profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
-    engine_args: context.extra, scope: context.scope, case_workers: jobs });
+    engine_args: context.extra, scope: context.scope, case_workers: jobs, scanner_path_policy: Boolean(context.pathPolicy) });
   const checkpointed = async (row, staged) => {
     const inputs = checkpointInputs(row);
     const saved = readCheckpoint(checkpoints, inputs);
-    if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
+    if (saved && checkpointable(saved) && checkpointScoreIntact(context.workdir, saved, row, context.scope)) {
       resumed.push(row.ghsa);
       return saved;
     }
@@ -1011,15 +1117,25 @@ async function scorePreparedManifest(manifest, opts, context) {
   };
   const rows = [];
   if (checkpoints) {
-    // Publish only after the group still matches the inputs used in its keys.
-    const groupSize = Math.max(16, jobs);
-    for (let start = 0; start < manifest.cases.length; start += groupSize) {
-      const staged = [];
-      const group = manifest.cases.slice(start, start + groupSize);
-      rows.push(...await pool(group, jobs, row => checkpointed(row, staged)));
-      await verifyPins('case checkpoint');
-      for (const { inputs, result } of staged) writeCheckpoint(checkpoints, inputs, result);
-    }
+    const staged = [];
+    let publishing = Promise.resolve();
+    const publish = () => {
+      const batch = staged.splice(0);
+      publishing = publishing.then(async () => {
+        await verifyPins('case checkpoint');
+        for (const { inputs, result } of batch) writeCheckpoint(checkpoints, inputs, result);
+      });
+      return publishing;
+    };
+    const batchSize = Math.max(16, jobs);
+    // A slow case does not keep idle workers at a checkpoint boundary.
+    rows.push(...await pool(manifest.cases, jobs, async row => {
+      const result = await checkpointed(row, staged);
+      if (staged.length >= batchSize) await publish();
+      return result;
+    }));
+    if (staged.length) await publish();
+    else await verifyPins('case scoring');
   } else {
     rows.push(...await pool(manifest.cases, jobs, row => one(row)));
   }
@@ -1035,7 +1151,7 @@ async function scorePreparedManifest(manifest, opts, context) {
     const recovered = { ...(await one(row, serial)), retried_serially: true,
       initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
     rows[index] = recovered;
-    if (checkpoints && checkpointable(recovered) && checkpointArtifactsIntact(context.workdir, recovered)) {
+    if (checkpoints && checkpointable(recovered) && checkpointScoreIntact(context.workdir, recovered, row, context.scope)) {
       await verifyPins('serial case checkpoint');
       writeCheckpoint(checkpoints, checkpointInputs(row), recovered);
     }
@@ -1044,6 +1160,7 @@ async function scorePreparedManifest(manifest, opts, context) {
   return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
     manifest_sha256: manifest.sha256, ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scope: context.scope, engine_args: context.extra, case_workers: jobs,
+    ...(context.pathPolicy ? { scanner_path_policy: context.pathPolicy.proof } : {}),
     scan_directory: basename(context.scanRoot),
     ...(checkpoints ? { resumed_cases: resumed.sort() } : {}),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
@@ -1106,13 +1223,13 @@ function recordLostHit(changes, pair, old, row) {
 function newCoverageEntries(before, after, side) {
   const key = ({ path, state, reason }) => JSON.stringify([path, state, reason]);
   const previous = new Set(coverageGapEntries(before.file_coverage?.[side]).map(key));
-  return coverageGapEntries(after.file_coverage?.[side]).filter(file => !previous.has(key(file)));
+  const candidate = after.file_coverage?.[side] ?? [];
+  const nativeScanned = new Set((before.file_coverage?.[side] ?? [])
+    .filter(file => file.state === 'reported_scanned').map(file => file.path));
+  const lostScope = candidate.filter(file => file.reason === 'scanner_path_policy' && nativeScanned.has(file.path))
+    .map(file => ({ ...file, state: 'partial', reason: 'scanner_policy_scope_loss' }));
+  return [...coverageGapEntries(candidate).filter(file => !previous.has(key(file))), ...lostScope];
 }
-
-const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
-  go: 'go', java: 'java', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
-  php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
-  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' };
 
 const isParserGap = file => file.state === 'partial' && file.reason === 'parse';
 
@@ -1208,6 +1325,41 @@ function measureFamilies(old, row, families, transitions) {
   }
 }
 
+function fixedSpanFindings(row) {
+  const findings = row.fix_side_residual, spans = row.fix_side_residual_spans;
+  const packets = row.source_packets?.fixed;
+  if (scanIssue(row.scan_sides?.fixed) || !Array.isArray(findings)
+    || !completeFixedCoverage(row.file_coverage?.fixed, packets)) return null;
+  if (!findings.length) return [];
+  if (!hunkAdjudicationIdentity({ hunk_findings: findings, hunk_spans: spans }, true)) return null;
+  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
+  const bound = findings.map(([rule, path, line], index) => ({
+    rule, path, line, span: spans[index], source_sha256: hashes.get(path),
+  }));
+  return bound.every(finding => /^[a-f0-9]{64}$/.test(finding.source_sha256 ?? '')) ? bound : null;
+}
+
+function measureFixedSpanChange(old, row, ledger) {
+  const baseline = fixedSpanFindings(old), candidate = fixedSpanFindings(row);
+  if (!baseline || !candidate) {
+    ledger.unresolved_advisories.push(row.ghsa);
+    return;
+  }
+  ledger.compared_cases++;
+  const counts = new Map();
+  for (const [findings, direction] of [[baseline, -1], [candidate, 1]]) {
+    for (const finding of findings) {
+      const key = JSON.stringify(finding);
+      counts.set(key, (counts.get(key) ?? 0) + direction);
+    }
+  }
+  for (const [key, count] of counts) {
+    if (count) ledger[count > 0 ? 'added' : 'removed'].push({
+      advisory: row.ghsa, ...JSON.parse(key), count: Math.abs(count),
+    });
+  }
+}
+
 function measureCaseChange(old, row, pair, changes) {
   const { gained, newErrors, newCoverageGaps, failures, seenAdvisories } = changes;
   if (seenAdvisories.has(row.ghsa)) {
@@ -1225,6 +1377,7 @@ function measureCaseChange(old, row, pair, changes) {
     return;
   }
   measureFamilies(old, row, families, changes.familyTransitions);
+  measureFixedSpanChange(old, row, changes.fixedSpans);
   const previous = measuredOutcome(old), current = measuredOutcome(row);
   if (previous === 'hit' && current !== 'hit') recordLostHit(changes, pair, old, row);
   if (previous === 'miss' && current === 'hit') gained.push(row.ghsa);
@@ -1259,8 +1412,9 @@ function measureDevPair({ before, after }, changes) {
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1, lossPolicy = null }) {
   const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [], lostFpOnly = [], rawLost = [];
   const familyTransitions = {};
+  const fixedSpans = { compared_cases: 0, added: [], removed: [], unresolved_advisories: [] };
   const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost,
-    familyTransitions, seenAdvisories: new Set() };
+    familyTransitions, fixedSpans, seenAdvisories: new Set() };
   for (const pair of dev) measureDevPair(pair, changes);
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
@@ -1283,7 +1437,7 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
     ...(lossPolicy ? { lost_fp_only: lostFpOnly, raw_lost_baseline_hits: rawLost,
       adjudicated_loss_basis: lossPolicy.receipt } : {}),
     new_coverage_gaps: newCoverageGaps,
-    family_transitions: familyTransitions,
+    family_transitions: familyTransitions, fixed_side_span_delta: fixedSpans,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
     control_increase: controlIncrease, max_control_increase: maxControlIncrease };
 }
@@ -1311,6 +1465,7 @@ function pairedCaseEvidence({ before, after }) {
         ...(previous.hunk_spans ? { baseline_hunk_spans: previous.hunk_spans } : {}) } : {}),
       registered_families: registeredFamilies(row), baseline_matched_hunk_families: baselineFamilies,
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
+      ...(row.fix_side_residual_spans ? { fix_side_residual_spans: row.fix_side_residual_spans } : {}),
       ...(previous?.edited_lines && scoredCase(previous) ? { before_edited_lines: previous.edited_lines } : {}),
       ...(scoredCase(row) && row.edited_lines ? { after_edited_lines: row.edited_lines } : {}),
       retried_serially: Boolean(row.retried_serially) };
@@ -1382,6 +1537,13 @@ function recordedGainsIn(block, required, engineArgs) {
           profile_sha256: block.after_evidence.profile_sha256, ruleset_sha256: block.after_evidence.ruleset_sha256,
           engine_args: engineArgs } }];
     });
+}
+
+// Gains are only comparable on one scanner binary: a retention checkpoint must name the bound engine.
+export function assertPinnedRetention(bytes, engineSha256) {
+  const pin = JSON.parse(utf8(bytes))?.engine?.executable_sha256;
+  if (!/^[a-f0-9]{64}$/.test(pin ?? '')) throw new Error('Retention checkpoint is not engine-pinned');
+  if (pin !== engineSha256) throw new Error('Retention checkpoint engine differs from the current execution');
 }
 
 function recordedGains(reference) {
@@ -1505,6 +1667,7 @@ async function evaluate(input) {
   }
   const manifests = readEvaluationManifests(opts.manifest);
   const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  if (checkpoint) assertPinnedRetention(checkpoint, engine.receipt.executable_sha256);
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
   const gainPolicy = gainPlan
@@ -1676,6 +1839,7 @@ function controlScanCoverage(eligible, engine) {
   const gaps = [];
   for (const path of eligible) {
     const reason = !engine ? 'missing_engine_coverage' : engine.problems.get(path)
+      ?? (engine.policyExclusions?.has(path) ? 'scanner_policy_scope_loss' : null)
       ?? (engine.skipped.has(path) ? engine.skipped.get(path) ?? 'engine_reported_skip' : null)
       ?? (engine.scanned.has(path) ? null : 'absent_from_engine_paths');
     if (reason) gaps.push({ path, reason });
@@ -1689,6 +1853,7 @@ async function controlObservation(context, directory, report, source) {
   try {
     if (context.rulesSha256) verifyRulesBytes(context);
     findings = await scan({ ...context, packetPaths: source.paths }, directory, report, true);
+    await observePathPolicy(context, directory, report, source.eligible, findings);
     notes = findings.notes;
     coverage = findings.coverage;
     if (context.rulesSha256) verifyRulesBytes(context);
@@ -1717,6 +1882,14 @@ async function controlObservation(context, directory, report, source) {
   return { findings, notes, coverage };
 }
 
+function sharedControlPathExclusion(sides, path) {
+  const [left, right] = sides.map(({ coverage }) => coverage.policyExclusions?.get(path));
+  if (left && left === right) return `shared_${left}`;
+  const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
+    && !coverage.scanned.has(path) && !coverage.problems.has(path));
+  return agreed ? 'shared_semgrepignore_patterns_match' : null;
+}
+
 function pairedControlScope(source, sides) {
   const exclusions = new Map(source.excluded);
   const targets = new Set(source.plan?.targets);
@@ -1726,9 +1899,8 @@ function pairedControlScope(source, sides) {
     const reported = new Set(sides.flatMap(side => side.findings.map(finding => finding.path)));
     for (const path of source.eligible) {
       if (targets.has(path) || (registered.size && !registered.has(path))) continue;
-      const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
-        && !coverage.scanned.has(path) && !coverage.problems.has(path));
-      if (agreed && !reported.has(path)) exclusions.set(path, 'shared_semgrepignore_patterns_match');
+      const reason = sharedControlPathExclusion(sides, path);
+      if (reason && !reported.has(path)) exclusions.set(path, reason);
     }
   }
   const eligible = source.eligible.filter(path => !exclusions.has(path));
@@ -1919,6 +2091,7 @@ async function controlReportsIntact(root, notes, required) {
   const matches = await Promise.all([
     retainedReportMatches(root, notes.reports?.sarif, notes.report_sha256, required),
     retainedReportMatches(root, notes.reports?.native_report, notes.coverage_report_sha256, required),
+    retainedReportMatches(root, notes.reports?.target_inventory, notes.target_inventory_sha256, false),
   ]);
   return matches.every(Boolean);
 }
@@ -1943,11 +2116,14 @@ async function controlDeltas_(opts, engine, controlSettings, plan = null) {
   const parallel = control_parallel_workers_per_arm !== undefined;
   const firstPass = parallel ? [`--jobs=${control_parallel_workers_per_arm}`] : [];
   const rules = opts.ruleFingerprints;
-  const base = { profile: JSON.parse(utf8(opts.profileBytes)),
+  const profile = JSON.parse(utf8(opts.profileBytes));
+  const pathPolicy = name => opts['scanner-path-policy'] === 'true'
+    ? optionalScannerPolicy(opts, profile, readFileSync(name)) : null;
+  const base = { profile,
     bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
-    rules: resolve(before), rulesSha256: rules.baseline_sha256 };
+    rules: resolve(before), rulesSha256: rules.baseline_sha256, pathPolicy: pathPolicy(before) };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
-    rules: resolve(after), rulesSha256: rules.candidate_sha256 };
+    rules: resolve(after), rulesSha256: rules.candidate_sha256, pathPolicy: pathPolicy(after) };
   const checkpointProfile = sha256(Buffer.from(JSON.stringify(base.profile)));
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
@@ -1998,6 +2174,7 @@ async function controlDeltas_(opts, engine, controlSettings, plan = null) {
         source_tree: source.evidence, excluded: excludedDirs, ...rules, ...controlSettings,
         ...(plan ? { control_plan_sha256: plan.digest } : {}), ...scope,
         profile_sha256: checkpointProfile,
+        scanner_path_policy: Boolean(base.pathPolicy),
         engine_sha256: engine.receipt.executable_sha256, extra: effectiveBase.extra,
         candidate_extra: effectiveCandidate.extra } : null;
       const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
@@ -2212,7 +2389,7 @@ async function observe(opts) {
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
-function reviewCapturePath(root, name) {
+export function reviewCapturePath(root, name) {
   if (typeof name !== 'string' || isAbsolute(name) || !insideControl(root, resolve(root, name))) {
     throw new Error('Review capture path leaves the work directory');
   }
@@ -2221,23 +2398,86 @@ function reviewCapturePath(root, name) {
   return target;
 }
 
-function oldReviewAlerts(root, row, rulesSha256) {
-  const capture = row.captures?.old;
-  const notes = row.scan_sides?.old;
+function capturedFindings(report, packets) {
+  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
+  const sarif = JSON.parse(utf8(report));
+  if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Review SARIF has no run');
+  const findings = sarifFindings(sarif, new Set(hashes.keys()));
+  if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
+  return { hashes, findings, diagnostics: scanNotes(sarif) };
+}
+
+function reviewFindings(root, row, side) {
+  const capture = row.captures?.[side];
+  const notes = row.scan_sides?.[side];
   if (!notes || notes.failed_exit !== false || ![0, 1].includes(notes.exit_code) || scanIssue(notes) || !capture?.sarif) {
-    throw new Error('Review score has no successful old-side capture');
+    throw new Error('Review score has no successful ' + side + '-side capture');
   }
   const source = reviewCapturePath(root, capture.source_root);
-  const packets = row.source_packets.old;
+  const packets = row.source_packets[side];
   verifyPreparedBytes(source, packets);
-  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
   const report = readFileSync(reviewCapturePath(root, capture.sarif.path));
   if (sha256(report) !== capture.sarif.sha256 || capture.sarif.sha256 !== notes.report_sha256) {
     throw new Error('Review SARIF digest differs from score capture');
   }
+  return { source, ...capturedFindings(report, packets) };
+}
+
+function replayCaseSide(row, side, retained, preparedSource, pathPolicy) {
+  const notes = row.scan_sides?.[side];
+  if (!preparedSource && !retained.source && notes == null) {
+    return { findings: [], submitted: false };
+  }
+  if (!notes || notes.failed_exit !== false || ![0, 1].includes(notes.exit_code) || scanIssue(notes)
+    || !retained.sarif || retained.source !== realpathSync(preparedSource)) {
+    throw new Error('Replay has no successful capture of the prepared source');
+  }
+  const { hashes, findings, diagnostics } = capturedFindings(retained.sarif, row.source_packets[side]);
+  const coverage = retained.native_report ? engineCoverage(JSON.parse(utf8(retained.native_report))) : null;
+  diagnostics.timeouts = Math.max(diagnostics.timeouts, coverage?.timeouts ?? 0);
+  if (Object.entries(diagnostics).some(([key, value]) => value !== notes[key])) {
+    throw new Error('Scan diagnostics differ from retained reports');
+  }
+  if (pathPolicy) {
+    const unresolved = uncoveredPolicyPaths(hashes.keys(), Object.assign(findings, { coverage, notes }), pathPolicy.ruleExcludes);
+    if (unresolved.length) {
+      const ignored = pathPolicy.usesTargetInventory && retained.target_inventory
+        ? engineTargetIgnores(utf8(retained.target_inventory), retained.source) : null;
+      confirmPathExclusions(coverage, unresolved, pathPolicy, ignored);
+    }
+  }
+  return { findings, coverage, submitted: true, verified: true };
+}
+
+export function replayCaseScore(root, input, row, retained, rules, scope, pathPolicy = null) {
+  const key = caseDigest([input]);
+  const directory = preparedCaseDirectory(root, key, scope);
+  const recordPath = reviewCapturePath(root, relative(root, join(directory, 'case.json')));
+  const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+  const prepared = bindPreparedCase(dirname(recordPath), record, key, input, scope);
+  if (prepared.status !== 'ready') throw new Error('Prepared case is unavailable for replay');
+  const bindings = ['revisions', 'source_packets', 'diff_sha256', 'changed_files_sha256'];
+  if (Object.keys(input).some(field => caseDigest([input[field]]) !== caseDigest([row[field]]))
+    || bindings.some(field => caseDigest([prepared[field]]) !== caseDigest([row[field]]))) {
+    throw new Error('Replay inputs differ from the manifest or prepared case');
+  }
+  const old = replayCaseSide(row, 'old', retained.old, prepared.old, pathPolicy);
+  const fixed = replayCaseSide(row, 'fixed', retained.fixed, prepared.new, pathPolicy);
+  const families = familiesFor(input.cwes);
+  const file_coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
+    scans: { old, fixed }, extensions: scopeExtensions(input.ecosystem, scope), isTestPath });
+  const scored = scoreCase({ families, hunks: prepared.hunks, editedLines: prepared.editedLines,
+    oldFindings: old.findings, newFindings: fixed.findings, rules });
+  const classification = classifyCaseScore({ ...scored, file_coverage,
+    scan_sides: { old: row.scan_sides?.old, fixed: row.scan_sides?.fixed } },
+  prepared.source_packets.old, prepared.source_packets.fixed);
+  return { ...scored, hunk_spans: scored.hunk_spans, fix_side_residual_spans: scored.fix_side_residual_spans,
+    ...classification, families, file_coverage, changed_files: Object.keys(prepared.hunks).sort() };
+}
+
+function oldReviewAlerts(root, row, rulesSha256) {
+  const { source, hashes, findings } = reviewFindings(root, row, 'old');
   const changed = new Set(row.changed_files);
-  const findings = sarifFindings(JSON.parse(utf8(report)), new Set(hashes.keys()));
-  if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
   const selected = findings.filter(finding => changed.has(finding.path));
   if (selected.length !== row.alerts_in_changed_files || (row.hunk_spans && row.hunk_spans.length !== row.hunk_findings.length)) {
     throw new Error('Review findings differ from score capture');
@@ -2262,15 +2502,49 @@ function oldReviewAlerts(root, row, rulesSha256) {
   return alerts;
 }
 
-// The export never replaces its pinned score receipt or a retained capture it reads.
-export function assertReviewOutput(out, score, workRoot) {
+function fixedReviewAlerts(root, row, rulesSha256, rules, scope) {
+  const packets = row.source_packets?.fixed;
+  if (!Array.isArray(packets) || !Array.isArray(row.fix_side_residual)) {
+    throw new Error('Review score has no fixed-side packet or residual evidence');
+  }
+  if (!packets.length && !row.fix_side_residual.length && !row.captures?.fixed) return [];
+  const { source, hashes, findings } = reviewFindings(root, row, 'fixed');
+  const diffPath = reviewCapturePath(root, relative(root, join(dirname(source), 'diff.patch')));
+  const diff = readFileSync(diffPath);
+  if (sha256(diff) !== row.diff_sha256) throw new Error('Review diff digest differs from score capture');
+  const hunks = parseHunks(utf8(diff), scopeExtensions(row.ecosystem, scope));
+  const computed = scoreCase({ families: familiesFor(row.cwes), hunks, oldFindings: [], newFindings: findings, rules });
+  const spans = computed.fix_side_residual_spans;
+  if (caseDigest(row.fix_side_residual) !== caseDigest(computed.fix_side_residual)
+    || (row.fix_side_residual_spans && caseDigest(row.fix_side_residual_spans) !== caseDigest(spans ?? []))) {
+    throw new Error('Review fixed-side hunk positions or spans differ from score capture');
+  }
+  return computed.fix_side_residual.map(([rule, path, line], index) => {
+    const span = spans?.[index];
+    return { case: row.ghsa, root: source, path, line, rule, ...(span ? { span } : {}),
+      source_sha256: hashes.get(path), rules_sha256: rulesSha256, on_fix_hunk: true, side: 'fixed' };
+  });
+}
+
+function requireDistinctOutput(real, output, input, label) {
+  if (!input) return;
+  const canonical = realpathSync(resolve(input));
+  const identity = statSync(canonical, { bigint: true });
+  if (real === canonical || (output && identity.ino !== 0n && output.dev === identity.dev && output.ino === identity.ino)) {
+    throw new Error('Review export output is the ' + label);
+  }
+}
+
+// The export never replaces its pinned score, ruleset or retained captures.
+export function assertReviewOutput(out, score, workRoot, rules) {
   if (typeof out !== 'string' || !out) throw new Error('Review export requires --out');
   const parent = realpathSync(dirname(resolve(out)));
   const target = join(parent, basename(resolve(out)));
   const real = existsSync(target) ? realpathSync(target) : target;
-  if (real === realpathSync(resolve(score))) throw new Error('Review export output is the score receipt');
-  const inside = relative(workRoot, real);
-  if (!inside.startsWith('..') && !isAbsolute(inside)) throw new Error('Review export output is inside the capture workdir');
+  const output = existsSync(real) ? statSync(real, { bigint: true }) : null;
+  requireDistinctOutput(real, output, score, 'score receipt');
+  requireDistinctOutput(real, output, rules, 'ruleset');
+  if (insideControl(workRoot, real)) throw new Error('Review export output is inside the capture workdir');
 }
 
 function reviewAlerts(opts) {
@@ -2282,9 +2556,19 @@ function reviewAlerts(opts) {
     throw new Error('Review export requires a pinned standalone score receipt');
   }
   const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
-  assertReviewOutput(opts.out, opts.score, root);
-  const cases = saved.cases.filter(scoredCase);
-  const alerts = cases.flatMap(row => oldReviewAlerts(root, row, saved.ruleset_sha256));
+  const side = opts.side ?? 'old';
+  if (!['old', 'fixed'].includes(side)) throw new Error('Review --side must be old or fixed');
+  if (side === 'fixed' && typeof opts.rules !== 'string') throw new Error('Fixed-side review requires --rules');
+  assertReviewOutput(opts.out, opts.score, root, side === 'fixed' ? opts.rules : undefined);
+  let rules;
+  if (side === 'fixed') {
+    const ruleBytes = readFileSync(opts.rules);
+    if (sha256(ruleBytes) !== saved.ruleset_sha256) throw new Error('Review rules digest differs from score capture');
+    rules = ruleFamilies(utf8(ruleBytes));
+  }
+  const cases = saved.cases.filter(row => scoredCase(row) && (side === 'old' || checkpointable(row)));
+  const alerts = cases.flatMap(row => side === 'old' ? oldReviewAlerts(root, row, saved.ruleset_sha256)
+    : fixedReviewAlerts(root, row, saved.ruleset_sha256, rules, saved.scope));
   writeFileSync(opts.out, `${JSON.stringify(alerts, null, 1)}\n`);
   console.log(JSON.stringify({ alerts: alerts.length, scored_cases: cases.length, omitted_cases: saved.cases.length - cases.length }));
 }

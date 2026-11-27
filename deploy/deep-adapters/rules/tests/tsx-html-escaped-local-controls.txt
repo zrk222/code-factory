@@ -65,3 +65,16 @@ export function warnParent(parent: { path: string }) {
   // ok: javascript.html-template-unescaped-interpolation
   console.warn(`Please change the parent <Route path="${parent.path}"> to a splat route.`);
 }
+
+export function orderedList(opts: { start: number }) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<ol start="${opts.start}"></ol>`;
+}
+
+export function spannedCell(cell: { span: number }) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return '<td colspan="' + cell.span + '"></td>';
+}
+
+// ok: javascript.parameter-shell-command
+export const installCommand = (name: string, version: string) => `npm install -D ${name}@${version}`;

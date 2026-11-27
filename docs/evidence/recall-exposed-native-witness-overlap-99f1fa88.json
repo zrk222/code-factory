@@ -1,0 +1,274 @@
+{
+  "schema": "factory.recall-exposed-native-witness-overlap.v1",
+  "scope": "supplemental overlap calculation on seven selected native pairs and the pinned pattern replay",
+  "qualification": "NOT_RUN",
+  "denominator": 161,
+  "pattern_strict_hunk_hits": 53,
+  "selected_native_hunk_hits": 7,
+  "already_counted": [
+    "GHSA-85gf-wr67-f83w",
+    "GHSA-jppv-gw3r-w3q8",
+    "GHSA-mc7w-4cjf-c973",
+    "GHSA-v222-6mr4-qj29"
+  ],
+  "distinct_native_additions": [
+    "GHSA-g72f-jw3w-mgh7",
+    "GHSA-h36j-8vv3-cj52",
+    "GHSA-jj45-24rw-v6jw"
+  ],
+  "observed_union_hits": 56,
+  "native_fixed_side_residuals": 6,
+  "pattern_receipt_sha256": "c22e693ea4b4d70ca9a52f4ee93da1e543809aa5de549d898d4f2f344b332eb5",
+  "native_pair_receipt_sha256": "8c58b31833d62fb472fbf3ee48bce618c0e91351bf886ec8563cbfbae50bea90",
+  "native_pair_input_sha256": "d148a26a8ff6a962218ed11ef7db5965c9646b280a195772010a48a7f525cc05",
+  "reference_sha256": "0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf",
+  "witnesses": [
+    {
+      "advisory": "GHSA-85gf-wr67-f83w",
+      "reference": "miss",
+      "query_id": "rb/sql-injection",
+      "hunk_hit": true,
+      "trace_hit": true,
+      "matched_hunk_families": [
+        "sql"
+      ],
+      "hunk_matches": [
+        [
+          "rb/sql-injection",
+          "app/controllers/curupira/passwords_controller.rb",
+          9
+        ]
+      ],
+      "fixed_hunk_matches": [],
+      "deleted_line_hit": true,
+      "fixed_hunk_residuals": 0,
+      "native_alerts": {
+        "old": 1,
+        "fixed": 0
+      },
+      "packets": {
+        "old": 1,
+        "fixed": 1
+      },
+      "pattern_candidate_outcome": "hit"
+    },
+    {
+      "advisory": "GHSA-g72f-jw3w-mgh7",
+      "reference": "miss",
+      "query_id": "js/path-injection",
+      "hunk_hit": true,
+      "trace_hit": true,
+      "matched_hunk_families": [
+        "path"
+      ],
+      "hunk_matches": [
+        [
+          "js/path-injection",
+          "packages/server/src/store.ts",
+          78
+        ],
+        [
+          "js/path-injection",
+          "packages/server/src/store.ts",
+          105
+        ]
+      ],
+      "fixed_hunk_matches": [
+        [
+          "js/path-injection",
+          "packages/server/src/store.ts",
+          80
+        ],
+        [
+          "js/path-injection",
+          "packages/server/src/store.ts",
+          108
+        ]
+      ],
+      "deleted_line_hit": false,
+      "fixed_hunk_residuals": 2,
+      "native_alerts": {
+        "old": 3,
+        "fixed": 3
+      },
+      "packets": {
+        "old": 3,
+        "fixed": 4
+      },
+      "pattern_candidate_outcome": "miss"
+    },
+    {
+      "advisory": "GHSA-h36j-8vv3-cj52",
+      "reference": "miss",
+      "query_id": "py/tarslip",
+      "hunk_hit": true,
+      "trace_hit": true,
+      "matched_hunk_families": [
+        "path"
+      ],
+      "hunk_matches": [
+        [
+          "py/tarslip",
+          "onnx/hub.py",
+          409
+        ]
+      ],
+      "fixed_hunk_matches": [
+        [
+          "py/tarslip",
+          "onnx/utils.py",
+          294
+        ]
+      ],
+      "deleted_line_hit": true,
+      "fixed_hunk_residuals": 1,
+      "native_alerts": {
+        "old": 2,
+        "fixed": 1
+      },
+      "packets": {
+        "old": 2,
+        "fixed": 2
+      },
+      "pattern_candidate_outcome": "miss"
+    },
+    {
+      "advisory": "GHSA-jj45-24rw-v6jw",
+      "reference": "miss",
+      "query_id": "js/incomplete-sanitization",
+      "hunk_hit": true,
+      "trace_hit": true,
+      "matched_hunk_families": [
+        "xss"
+      ],
+      "hunk_matches": [
+        [
+          "js/incomplete-sanitization",
+          "internal.js",
+          962
+        ]
+      ],
+      "fixed_hunk_matches": [
+        [
+          "js/incomplete-sanitization",
+          "internal.js",
+          962
+        ]
+      ],
+      "deleted_line_hit": true,
+      "fixed_hunk_residuals": 1,
+      "native_alerts": {
+        "old": 9,
+        "fixed": 9
+      },
+      "packets": {
+        "old": 1,
+        "fixed": 1
+      },
+      "pattern_candidate_outcome": "miss"
+    },
+    {
+      "advisory": "GHSA-jppv-gw3r-w3q8",
+      "reference": "miss",
+      "query_id": "rb/non-constant-kernel-open",
+      "hunk_hit": true,
+      "trace_hit": true,
+      "matched_hunk_families": [
+        "cmd"
+      ],
+      "hunk_matches": [
+        [
+          "rb/non-constant-kernel-open",
+          "lib/rake/file_list.rb",
+          297
+        ]
+      ],
+      "fixed_hunk_matches": [],
+      "deleted_line_hit": true,
+      "fixed_hunk_residuals": 0,
+      "native_alerts": {
+        "old": 3,
+        "fixed": 2
+      },
+      "packets": {
+        "old": 1,
+        "fixed": 1
+      },
+      "pattern_candidate_outcome": "hit"
+    },
+    {
+      "advisory": "GHSA-mc7w-4cjf-c973",
+      "reference": "miss",
+      "query_id": "js/indirect-command-line-injection",
+      "hunk_hit": true,
+      "trace_hit": true,
+      "matched_hunk_families": [
+        "cmd"
+      ],
+      "hunk_matches": [
+        [
+          "js/indirect-command-line-injection",
+          "utils/find-opencv.js",
+          15
+        ]
+      ],
+      "fixed_hunk_matches": [],
+      "deleted_line_hit": false,
+      "fixed_hunk_residuals": 0,
+      "native_alerts": {
+        "old": 1,
+        "fixed": 0
+      },
+      "packets": {
+        "old": 1,
+        "fixed": 1
+      },
+      "pattern_candidate_outcome": "hit"
+    },
+    {
+      "advisory": "GHSA-v222-6mr4-qj29",
+      "reference": "miss",
+      "query_id": "rb/non-constant-kernel-open",
+      "hunk_hit": true,
+      "trace_hit": true,
+      "matched_hunk_families": [
+        "cmd"
+      ],
+      "hunk_matches": [
+        [
+          "rb/non-constant-kernel-open",
+          "lib/asciidoctor/include_ext/include_processor.rb",
+          116
+        ],
+        [
+          "rb/non-constant-kernel-open",
+          "lib/asciidoctor/include_ext/include_processor.rb",
+          118
+        ]
+      ],
+      "fixed_hunk_matches": [
+        [
+          "rb/non-constant-kernel-open",
+          "lib/asciidoctor/include_ext/include_processor.rb",
+          117
+        ],
+        [
+          "rb/non-constant-kernel-open",
+          "lib/asciidoctor/include_ext/include_processor.rb",
+          119
+        ]
+      ],
+      "deleted_line_hit": true,
+      "fixed_hunk_residuals": 2,
+      "native_alerts": {
+        "old": 2,
+        "fixed": 2
+      },
+      "packets": {
+        "old": 1,
+        "fixed": 1
+      },
+      "pattern_candidate_outcome": "hit"
+    }
+  ]
+}

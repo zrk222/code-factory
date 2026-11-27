@@ -1,0 +1,61 @@
+// Quoted SQL identifiers, identifier escaping helpers and placeholder lists are not values.
+export async function quotedIdentifiers(db: any, tableName: string, column: string, id: string) {
+  // ok: javascript.parameter-sql-text
+  return db.query(`SELECT * FROM "${tableName}" WHERE "${column}" = $1`, [id]);
+}
+
+export function schemaQualified(schema: string, table: string) {
+  // ok: javascript.parameter-sql-text
+  return `SELECT * FROM "${schema}"."${table}" WHERE id = $1`;
+}
+
+export function concatenatedIdentifier(table: string) {
+  // ok: javascript.parameter-sql-text
+  return 'SELECT * FROM "' + table + '" WHERE id = $1';
+}
+
+export function escapedIdentifier(table: string, key: string) {
+  // ok: javascript.parameter-sql-text
+  return `DELETE FROM ${escapeIdentifier(table)} WHERE ${quoteIdent(key)} = $1`;
+}
+
+export async function positionalList(db: any, ids: string[]) {
+  // ok: javascript.parameter-sql-text
+  return db.query(`SELECT * FROM t WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`, ids);
+}
+
+export function positionalOffsets(offset: number) {
+  // ok: javascript.parameter-sql-text
+  return `SELECT * FROM t WHERE a = $${offset + 1} AND b = $${offset + 2}`;
+}
+
+export function placeholderLists(placeholders: string[], rows: string[]) {
+  // ok: javascript.parameter-sql-text
+  const one = `SELECT * FROM t WHERE id IN (${placeholders.join(', ')})`;
+  // ok: javascript.parameter-sql-text
+  const many = `INSERT INTO t (a) VALUES ${rows.map(() => '(?)').join(', ')}`;
+  return [one, many];
+}
+
+export async function quotedValue(db: any, name: string) {
+  // ruleid: javascript.parameter-sql-text
+  return db.query(`SELECT * FROM t WHERE name = '${name}'`);
+}
+
+export function doubleQuotedComparison(name: string, pattern: string) {
+  // ruleid: javascript.parameter-sql-text
+  const equal = `SELECT * FROM t WHERE name = "${name}"`;
+  // ruleid: javascript.parameter-sql-text
+  const like = `SELECT * FROM t WHERE name LIKE "${pattern}"`;
+  return [equal, like];
+}
+
+export function quotedValueList(ids: string[]) {
+  // ruleid: javascript.parameter-sql-text
+  return `SELECT * FROM t WHERE id IN (${ids.map((id) => "'" + id + "'").join(", ")})`;
+}
+
+export function identifierAndValue(table: string, id: string) {
+  // ruleid: javascript.parameter-sql-text
+  return 'SELECT * FROM "' + table + '" WHERE id = ' + id;
+}

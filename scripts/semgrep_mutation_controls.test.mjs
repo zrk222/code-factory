@@ -138,7 +138,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 272);
+  assert.equal(balancedReplacement.length, 344);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
@@ -151,10 +151,12 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
   assert.equal(manifest.filter(item => item.path === 'semgrep-pattern-limited.ts').length, 30);
   assert.deepEqual(manifest.filter(item => item.path.startsWith('typescript-shell-')).map(({ path, line }) =>
     [path, line]), [['typescript-shell-wrapper.ts', 7], ['typescript-shell-binding.ts', 5]]);
-  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 37);
+  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 42);
+  assert.deepEqual(manifest.filter(item => item.path === 'typescript-sql-identifier.ts').map(item => item.line),
+    [42, 47, 49, 55, 60]);
   assert.equal(manifest.find(item => item.path === 'typescript-html-escaped-local.ts').line, 10);
-  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 12);
-  assert.deepEqual(manifest.filter(item => item.path.endsWith('.tsx')).slice(-2).map(item =>
+  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 15);
+  assert.deepEqual(manifest.filter(item => item.path === 'semgrep-pattern-limited.tsx').slice(-2).map(item =>
     [item.source_line, item.line]), [[159, 162], [163, 165]]);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.js')).slice(-3).map(item =>
     [item.source_line, item.line]), [[106, 106], [110, 112], [116, 118]]);
@@ -167,7 +169,8 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
 test('reviewed TSX endpoints bind actual JSX, Unicode, imported aliases and rebound controls', () => {
   const source = readFileSync(new URL('../deploy/deep-adapters/rules/tests/javascript-controls.js', import.meta.url), 'utf8') + tsxQualificationSuffix;
   const lines = source.split(/\r?\n/);
-  for (const expected of javascriptControlManifest().filter(item => item.path.endsWith('.tsx'))) {
+  const manifest = javascriptControlManifest();
+  for (const expected of manifest.filter(item => item.path === 'semgrep-pattern-limited.tsx')) {
     assert.match(lines[expected.source_line - 1], /req\.(query|params|body)/);
     assert.match(lines[expected.line - 2], /ruleid: javascript\.request-/);
   }
@@ -176,6 +179,11 @@ test('reviewed TSX endpoints bind actual JSX, Unicode, imported aliases and rebo
   assert.match(lines[164], /fileAlias\.readFileSync\(path\)/);
   assert.match(source, /safe = "echo fixed"/);
   assert.match(source, /function shadowed\(processAlias, req\)/);
+  const reportSource = readFileSync(new URL('../deploy/deep-adapters/rules/tests/report-cli-markup-tsx.txt', import.meta.url), 'utf8');
+  const reportLines = reportSource.split(/\r?\n/);
+  for (const expected of manifest.filter(item => item.path === 'report-cli-markup.tsx')) {
+    assert.equal(reportLines[expected.line - 2].trim(), `// ruleid: ${expected.rule.replace('opt.factory.rules.', '')}`);
+  }
 });
 
 test('rule-family controls append as one parseable source per language at fixed lines', () => {
@@ -183,6 +191,7 @@ test('rule-family controls append as one parseable source per language at fixed 
     ['/t/semgrep-pattern-limited.ts', readFileSync(new URL('../deploy/deep-adapters/rules/tests/javascript-controls.js', import.meta.url), 'utf8')],
     ['/t/semgrep-pattern-limited.go', 'package controls\nimport "crypto/tls"\nfunc controls() {}\n'],
     ['/t/semgrep-pattern-limited.java', 'class Controls {}\n'],
+    ['/t/semgrep-pattern-limited.cs', 'class Controls {}\n'],
     ['/t/semgrep-pattern-limited.php', '<?php\n$x = 1;\n'],
     ['/t/semgrep-pattern-limited.py', 'import os\n'],
     ['/t/semgrep-pattern-limited.rb', '# controls\n'],
@@ -194,11 +203,12 @@ test('rule-family controls append as one parseable source per language at fixed 
   assert.ok(go.indexOf('import "archive/zip"') < go.indexOf('func controls'));
   assert.equal(files.get('/t/semgrep-pattern-limited.php').match(/<\?php/g).length, 1);
   assert.ok(!/^package /m.test(files.get('/t/semgrep-pattern-limited.java')));
+  assert.match(files.get('/t/semgrep-pattern-limited.cs'), /class LibrarySqlControls/);
   const ts = files.get('/t/semgrep-pattern-limited.ts').split(/\r?\n/);
   for (const [rule, line] of typescriptExtensionEndpoints) {
     assert.ok(ts[line - 2].includes(`ruleid: javascript.${rule}`), `${rule} at ${line}`);
   }
-  for (const name of ['shell-wrapper', 'shell-binding', 'shell-helper', 'html-escaped-local']) {
+  for (const name of ['shell-wrapper', 'shell-binding', 'shell-helper', 'html-escaped-local', 'sql-identifier']) {
     const separate = readFileSync(`${root}/tsx-${name}-controls.txt`, 'utf8');
     assert.equal(files.get(`/t/typescript-${name}.ts`), separate);
     assert.equal(ts.join('\n').includes(separate), false);

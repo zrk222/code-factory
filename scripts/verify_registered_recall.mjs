@@ -3,8 +3,8 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { coverageGaps } from './recall_coverage.mjs';
-import { caseDigest, checkpointArtifactsIntact, outcomeOf, sha256, sortKeys } from './recall_harness.mjs';
+import { completeFixedCoverage, scannerPathPolicy } from './recall_coverage.mjs';
+import { caseDigest, checkpointArtifactsIntact, outcomeOf, replayCaseScore, ruleFamilies, sha256, sortKeys, validateRecallManifest } from './recall_harness.mjs';
 
 const referenceSha256 = '0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf';
 const engineSha256 = 'fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a';
@@ -48,20 +48,9 @@ function candidateOutcome(row) {
   return outcome;
 }
 
-function inputFingerprint({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 }) {
+export function inputFingerprint({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 }) {
   // The published receipt hashes the advisory and its source bindings as one object.
   return sha256(JSON.stringify(sortKeys({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 })));
-}
-
-function completeFixedCoverage(files, packets) {
-  if (!Array.isArray(files) || !Array.isArray(packets)
-    || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
-  const byPath = new Map(files.map(file => [file.path, file]));
-  return byPath.size === files.length && packets.every(packet => {
-    const file = byPath.get(packet?.path);
-    return file?.submitted === true && file.state === 'reported_scanned'
-      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
-  });
 }
 
 function readCandidateCases(cases, failures) {
@@ -163,12 +152,32 @@ export function verifyRegisteredRecall(reference, candidate, candidateRulesSha25
   return { decision: failures.length ? 'REJECT' : 'ACCEPT', summary, ...changes, failures };
 }
 
-function captureLedger(candidate, captureRoot) {
+export function replayRegisteredCaptures(candidate, captureRoot, manifest, rulesText) {
+  const root = realpathSync(captureRoot);
+  const inputs = new Map(manifest.cases.map(row => [row.ghsa, row]));
+  const rules = ruleFamilies(rulesText);
+  const pathPolicy = candidate.scanner_path_policy === undefined ? null
+    : scannerPathPolicy({ engine: 'semgrep', tool_version: candidate.engine?.version }, rulesText);
+  if (pathPolicy?.proof !== candidate.scanner_path_policy) throw new Error('Replay scanner path policy differs from the engine');
   const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
-  const rows = cases.filter(row => row?.source_packets?.old?.length || row?.source_packets?.fixed?.length);
-  const invalid = rows.filter(row => !checkpointArtifactsIntact(captureRoot, row));
-  return { verified_capture_cases: rows.length - invalid.length,
-    invalid: invalid.map(row => row.ghsa).sort() };
+  const invalid = [], unreproduced = [];
+  let verified_capture_cases = 0;
+  for (const row of cases) {
+    const retained = {};
+    if (!checkpointArtifactsIntact(root, row, retained)) {
+      invalid.push(row.ghsa);
+      continue;
+    }
+    if (row.source_packets?.old?.length || row.source_packets?.fixed?.length) verified_capture_cases++;
+    try {
+      const replay = replayCaseScore(root, inputs.get(row.ghsa), row, retained, rules, candidate.scope, pathPolicy);
+      if (caseDigest([replay]) !== caseDigest([Object.fromEntries(Object.keys(replay).map(key => [key, row[key]]))])) {
+        throw new Error('Case score differs from replay');
+      }
+    } catch { unreproduced.push(row.ghsa); }
+  }
+  return { verified_capture_cases, replayed_case_scores: cases.length - invalid.length - unreproduced.length,
+    invalid: invalid.sort(), unreproduced: unreproduced.sort() };
 }
 
 function evidenceFrom(paths, captureRoot) {
@@ -183,9 +192,18 @@ function evidenceFrom(paths, captureRoot) {
     }
     const candidate = JSON.parse(candidateBytes);
     const result = verifyRegisteredRecall(JSON.parse(referenceBytes), candidate, evidence.candidate_rules_sha256);
-    const { verified_capture_cases, invalid } = captureLedger(candidate, captureRoot);
+    const manifestBytes = readFileSync(new URL('../docs/evidence/recall-registered-exposed-161-manifest.json', import.meta.url));
+    const manifest = JSON.parse(manifestBytes);
+    if (sha256(manifestBytes) !== scoringPins.manifest_sha256
+      || validateRecallManifest(manifest) !== scoringPins.manifest_cases_sha256) {
+      return { ...evidence, decision: 'REJECT', failures: [{ code: 'MANIFEST_BYTES_MISMATCH' }] };
+    }
+    const { verified_capture_cases, replayed_case_scores, invalid, unreproduced } =
+      replayRegisteredCaptures(candidate, captureRoot, manifest, rulesBytes.toString('utf8'));
     if (invalid.length) result.failures.push({ code: 'CASE_CAPTURE_INTEGRITY_FAILED', advisory_ids: invalid });
-    return { ...evidence, ...result, decision: result.failures.length ? 'REJECT' : 'ACCEPT', verified_capture_cases };
+    if (unreproduced.length) result.failures.push({ code: 'CASE_SCORE_REPLAY_FAILED', advisory_ids: unreproduced });
+    return { ...evidence, ...result, decision: result.failures.length ? 'REJECT' : 'ACCEPT',
+      verified_capture_cases, replayed_case_scores };
   } catch {
     return { ...evidence, decision: 'REJECT', failures: [{ code: 'UNREADABLE_OR_INVALID_EVIDENCE' }] };
   }

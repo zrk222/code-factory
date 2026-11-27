@@ -1,0 +1,62 @@
+class LibrarySqlControls
+{
+    public void ConfigureCommand(ICommandBuilder builder, string label)
+    {
+        builder.Append("select id from records where label = '");
+        // ruleid: csharp.request-sql-injection
+        builder.Append(label);
+        builder.Append("'");
+    }
+
+    public void ConfigureBound(ICommandBuilder builder, string label)
+    {
+        builder.Append("select id from records where label = ");
+        // ok: csharp.request-sql-injection
+        builder.AppendParameter(label);
+    }
+
+    public void ConfigureEscaped(ICommandBuilder builder, string label)
+    {
+        builder.Append("select id from records where label = '");
+        // ok: csharp.request-sql-injection
+        builder.Append(label.Replace("'", "''"));
+        builder.Append("'");
+    }
+
+    public void ConfigureConstant(ICommandBuilder builder)
+    {
+        builder.Append("select id from records where label = '");
+        // ok: csharp.request-sql-injection
+        builder.Append("default");
+        builder.Append("'");
+    }
+
+    public void RenderStatus(System.Text.StringBuilder builder, string label)
+    {
+        builder.Append("select label '");
+        // ok: csharp.request-sql-injection
+        builder.Append(label);
+        builder.Append("'");
+    }
+
+    public string ObjectToSQLString(object value, Dialect.Dialect dialect)
+    {
+        // ruleid: csharp.request-sql-injection
+        return "'" + (string)value + "'";
+    }
+
+    public string RenderLabel(object value)
+    {
+        // ok: csharp.request-sql-injection
+        return "'" + (string)value + "'";
+    }
+}
+
+class BoundSqlLiteral
+{
+    public string ObjectToSQLString(object value, Dialect.Dialect dialect)
+    {
+        // ok: csharp.request-sql-injection
+        return dialect.ToStringLiteral((string)value);
+    }
+}
