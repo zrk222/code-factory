@@ -304,6 +304,54 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         assert (
             schema["required"] == assigned and schema["additionalProperties"] is False
         )
+        if "path_evidence" in payload:
+            assert mode == "challenge_receipts" and payload["family"] in {"fuzz", "runtime"}
+            assert set(payload["path_evidence"]) == set(assigned)
+            family_obligation = next(
+                row for row in plan["obligations"] if row["family"] == payload["family"]
+            )
+            observed = receipts["lanes"][lane_ids[family_obligation["engine"]]]["observations"]
+            for path in assigned:
+                source = packet["sources"][path]
+                assert payload["sources"][path] == source
+                path_evidence = payload["path_evidence"][path]
+                assert path_evidence["source_sha256"] == sha256_bytes(source.encode())
+                assert bool(path_evidence.get("requirements")) == (path in family_obligation["requirements"])
+                controls = {
+                    control["kind"]: control for control in family_obligation["challenges"]
+                    if control["fixture_path"] == path
+                }
+                supplied = {control["role"]: control for control in path_evidence.get("entrypoint_controls", [])}
+                assert set(supplied) == set(controls)
+                for role, control in supplied.items():
+                    receipt = next(row for row in observed if row["role"] == role)
+                    assert control["exit_code"] == controls[role]["expected_exit_code"] == receipt["exit_code"]
+                    assert control["observation_sha256"] == receipt["observation_sha256"]
+                assert path_evidence.get("supporting_controls", []) == [
+                    [family_obligation["id"], control["kind"]]
+                    for control in family_obligation["challenges"]
+                    if path in control["fixture_manifest"] and path != control["fixture_path"]
+                ]
+            assert "They do not establish execution" in body["messages"][0]["content"]
+            assert "obligations" not in payload and "observations" not in payload
+            family_input = next(
+                item for item in review.family_inputs(plan, packet)
+                if item["family"] == payload["family"]
+            )
+            retry = json.loads(review.rationale_messages(family_input, assigned[:1])[1]["content"])
+            assert retry["sources"] == {assigned[0]: packet["sources"][assigned[0]]}
+            assert retry["path_evidence"] == {assigned[0]: payload["path_evidence"][assigned[0]]}
+            expected_coverage.update(assigned)
+            result = {
+                "decision": "ACCEPT", "findings": [], "coverage_gaps": [],
+                "path_assessments": {
+                    path: {"state": "REVIEWED", "reason": "Inspected the native control and path source"}
+                    for path in assigned
+                },
+            }
+            return BytesIO(json.dumps({
+                "choices": [{"message": {"content": json.dumps(result)}, "finish_reason": "stop"}],
+            }).encode())
         assert {
             control["role"]
             for row in payload["obligations"]
