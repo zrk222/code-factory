@@ -33,3 +33,26 @@ function openStaticDestination() {
   // ok: javascript.dom-innerhtml-from-variable
   window.open('https://example.invalid/', '_blank');
 }
+
+function linkMarkup(label: string) {
+  const raw = label.toString();
+  // ruleid: javascript.dom-innerhtml-from-variable
+  return raw.replace(/label/g, (match) => {
+    const element = document.createElement('a');
+    element.textContent = match;
+    return element.outerHTML;
+  });
+}
+
+function escapedLinkMarkup(label: string) {
+  const raw = label.toString();
+  const codec = document.createElement('div');
+  codec.textContent = raw;
+  const encoded = codec.innerHTML;
+  // ok: javascript.dom-innerhtml-from-variable
+  return encoded.replace(/label/g, (match) => {
+    const element = document.createElement('a');
+    element.textContent = match;
+    return element.outerHTML;
+  });
+}

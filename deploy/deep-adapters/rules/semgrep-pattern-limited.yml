@@ -6254,6 +6254,39 @@ rules:
                     }
                     ...
                   };
+          # Replacing links preserves all unmatched input in the returned HTML.
+          - patterns:
+              - pattern: |
+                  $RAW.$REPLACE($MATCH, (...) => {
+                    ...
+                    const $LINK = document.createElement('a');
+                    ...
+                    return $LINK.outerHTML;
+                  })
+              - pattern-either:
+                  - pattern-inside: |
+                      (..., $INPUT, ...) => {
+                        ...
+                        const $RAW = $INPUT.toString();
+                        ...
+                      }
+                  - pattern-inside: |
+                      function $F(..., $INPUT, ...) {
+                        ...
+                        const $RAW = $INPUT.toString();
+                        ...
+                      }
+              - pattern-either:
+                  - pattern-inside: return $RAW.$REPLACE(...);
+                  - pattern-inside: |
+                      const $OUT = $RAW.$REPLACE(...);
+                      ...
+                      return $OUT;
+                  - pattern-inside: |
+                      const $OUT = $RAW.$REPLACE(...);
+                      ...
+                      return $GUARD && $OUT;
+              - metavariable-regex: {metavariable: $REPLACE, regex: '^replace(?:All)?$'}
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
