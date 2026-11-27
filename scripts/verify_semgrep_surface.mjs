@@ -499,21 +499,26 @@ with tempfile.TemporaryDirectory(prefix='factory-native-') as scratch:
   if (receipt.native_rule_ids.length !== expectedRules.length) throw new Error('Native profile omitted rules');
   receipt.detector_mutations = [];
   const mutationStarted = performance.now();
-  const mutationArgs = argv.filter(value => value !== '{source}');
+  const mutationArgs = [...argv.filter(value => value !== '{source}'), '--jobs=1'];
   const batch = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
     '--entrypoint', '/usr/local/bin/python', id, '-I', '-c', `
+from concurrent.futures import ThreadPoolExecutor
 import base64, gzip, json, os, resource, subprocess, sys, tempfile
 engine, common, rules = json.loads(sys.argv[1])
 limit = 16 * 1024 * 1024
 resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
-for rule in rules:
+def scan(rule):
     with tempfile.TemporaryDirectory(prefix='mutation-') as home, tempfile.TemporaryFile() as raw:
         env = {**os.environ, 'HOME': home, 'SEMGREP_SETTINGS_FILE': home + '/settings.yml'}
         argv = [engine, *common, '--exclude-rule', rule, '/src']
         subprocess.run(argv, env=env, stdout=raw, check=True, timeout=120)
         raw.seek(0)
         encoded = base64.b64encode(gzip.compress(raw.read(), mtime=0)).decode('ascii')
-        print(json.dumps([rule, encoded]), flush=True)
+        return json.dumps([rule, encoded])
+
+with ThreadPoolExecutor(max_workers=2) as executor:
+    for report in executor.map(scan, rules):
+        print(report, flush=True)
 `, JSON.stringify([profile.commands[0].argv[0], mutationArgs, receipt.native_rule_ids])], 12 * 60 * 1000);
   for (const { ruleId, raw } of mutationReports(batch, receipt.native_rule_ids)) {
     const mutationArgv = [...mutationArgs, '--exclude-rule', ruleId, '/src'];
