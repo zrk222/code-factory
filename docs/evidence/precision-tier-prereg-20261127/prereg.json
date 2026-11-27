@@ -47,5 +47,13 @@
   "rules_sha256": "2dbd16a5134fdc20e54e5a4be6e12c39196a78266db0b984aa0e92d25813ce33",
   "scorer": "origin/main 82c8ada5: recall_harness 4355f20f, recall_coverage 643ff35f, recall_losses b5a62296",
   "engine": "OpenGrep 2.1.0, profile 8ec08b71, --timeout=15 --jobs=1"
+ },
+ "arm_C_codeql_corroboration": {
+  "status": "secondary, pre-registered 2026-11-27 before the reserve or Q4 is scored",
+  "definition": "finding = MEDIUM/HIGH alert, or a LOW alert with a CodeQL old-side result (profile codeql-<lang>-full, --ram={ram_mib}) of the same weakness family (CWE tag map in corroborate_tuning.py) whose primary location or any code-flow step is in the same file within 3 lines; lead = every other LOW alert",
+  "scope": "cases in CodeQL-supported ecosystems (PyPI, npm, RubyGems, Maven); other cases fall back to the tier policy and are reported separately",
+  "endpoints": "arm C finding-tier precision and recall on the reserve, beside the tier-only arm, from the same labeled alerts",
+  "tuning_evidence": "exposed-161, 83 CodeQL-scanned cases, head a73d398c: LOW corroborated 9 alerts, labeled 2 TP / 2 FP; LOW uncorroborated 51 alerts, 7 TP / 25 FP; finding-tier hit cases 14 -> 19 of 34. Small samples, tuning data.",
+  "tool_sha256": "7ccad9dc116b5080faf9902081640e6fc2ef35d944d19648bb79e758806eb196"
  }
 }
