@@ -126,6 +126,8 @@ LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interpro
 FROM codeql-bundle AS codeql-go-worker
 USER 0:0
 COPY --from=go-sdk /usr/local/go /usr/local/go
+# A new module volume copies this owner, so the 1000:1000 prefetch can write it.
+RUN install -d -o 1000 -g 1000 /go-modules
 COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite /opt/factory/bin/codeql-check-suite
 RUN /opt/factory/bin/codeql-check-suite go 1.6.11
 ENV PATH=/usr/local/go/bin:$PATH

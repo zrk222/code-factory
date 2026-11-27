@@ -3563,6 +3563,32 @@ def test_container_contract_removes_privileges_and_host_execution(tmp_path):
     )
 
 
+def test_go_module_prefetch_is_proxy_only_and_mounts_read_only(tmp_path, monkeypatch):
+    import factoryline.deep_audit as module
+    import factoryline.runtime_audit_process as process
+
+    _, _, _, _, _, plan, _, _ = execution_fixture(tmp_path)
+    lane, calls, cleaned = plan["lanes"][0], [], []
+    monkeypatch.setattr(
+        process, "run_bounded_command", lambda argv, *_: calls.append(argv)
+    )
+    monkeypatch.setattr(
+        module, "_container_cleanup", lambda _b, name: cleaned.append(name)
+    )
+    mount = module._go_module_prefetch(
+        ["docker"], lane, tmp_path, "lane", "0" * 32, "1" * 64, tmp_path
+    )
+    (argv,) = calls
+    assert "--network=bridge" in argv and "--network=none" not in argv
+    assert "type=volume,source=lane-gomod,target=/go-modules" in argv
+    assert argv[-1] == "prefetch-go-modules" and "--read-only" in argv
+    assert cleaned == ["lane-gomod-fetch"]
+    assert mount == [
+        "--mount",
+        "type=volume,source=lane-gomod,target=/go-modules,readonly",
+    ]
+
+
 @pytest.mark.parametrize("engine", ["codeql", "syft", "osv"])
 def test_execution_native_errors_cannot_pass(tmp_path, engine):
     from factoryline.deep_audit_sarif import normalize_execution_bundle
@@ -5139,3 +5165,27 @@ def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     analyze = profile["commands"][1]["argv"]
     assert analyze[1:3] == ["database", "analyze"]
     assert [a for a in analyze if a.startswith("--ram=")] == ["--ram={ram_mib}"]
+
+
+def test_go_module_prefetch_worker_uses_only_the_public_proxy(tmp_path, monkeypatch):
+    import factoryline.runtime_audit_process as process
+
+    modules, roots, runs = tmp_path / "go-modules", [tmp_path / "a", tmp_path / "b"], []
+    modules.mkdir()
+    monkeypatch.setattr(process, "_GO_MODULES", modules)
+    monkeypatch.setattr(process, "_offline_go_roots", lambda _source: roots)
+    monkeypatch.setattr(
+        process.subprocess,
+        "run",
+        lambda argv, cwd, check: runs.append((argv[1:], cwd, dict(process.os.environ))),
+    )
+    monkeypatch.setattr(process.os, "environ", {"GOFLAGS": "-insecure"})
+    process._prefetch_go_modules()
+    assert [(argv, cwd) for argv, cwd, _ in runs] == [
+        (["mod", "download"], roots[0]),
+        (["mod", "download"], roots[1]),
+    ]
+    environment = runs[0][2]
+    assert environment["GOPROXY"] == "https://proxy.golang.org"
+    assert environment["GOVCS"] == "*:off" and "GOFLAGS" not in environment
+    assert environment["GOMODCACHE"] == str(modules)
