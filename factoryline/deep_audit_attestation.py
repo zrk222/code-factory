@@ -2497,7 +2497,7 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "rule observation inventory differs"
         )
-    if len(sources) > 64:
+    if len(sources) > _deep_audit_io.INVENTORY_LIMIT:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "bounded source inventory required"
         )
