@@ -4954,6 +4954,8 @@ rules:
     severity: INFO
     languages: [python]
     patterns:
+    # Every positive match is inside a function. Skip function-free modules before matching.
+    - pattern-regex: '(?s)\A(?=.*\bdef\b).*'
     - pattern-either:
       - pattern-inside: "def $F(..., $P, ...):\n  ...\n"
       - pattern-inside: "def $F(..., $D, ...):\n  ...\n  for $P, $VAL in $D.items():\n    ...\n"
