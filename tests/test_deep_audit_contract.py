@@ -5124,7 +5124,9 @@ def test_codeql_ram_follows_signed_lane_memory(memory_mib, ram_mib):
         _native_argv([command], {})
 
 
-@pytest.mark.parametrize("language", ["python", "javascript", "ruby", "actions"])
+@pytest.mark.parametrize(
+    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go"]
+)
 def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     profile = json.loads(
         (

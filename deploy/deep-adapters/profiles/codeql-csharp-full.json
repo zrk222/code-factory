@@ -10,7 +10,7 @@
       "accepted_exit_codes": [0]
     },
     {
-      "argv": ["/opt/factory/bin/codeql-csharp", "database", "analyze", "{scratch}/codeql-db", "/opt/codeql/codeql/qlpacks/codeql/csharp-queries/1.10.0/codeql-suites/csharp-security-extended.qls", "--threads=2", "--ram=1400", "--format=sarif-latest", "--output={report}"],
+      "argv": ["/opt/factory/bin/codeql-csharp", "database", "analyze", "{scratch}/codeql-db", "/opt/codeql/codeql/qlpacks/codeql/csharp-queries/1.10.0/codeql-suites/csharp-security-extended.qls", "--threads=2", "--ram={ram_mib}", "--format=sarif-latest", "--output={report}"],
       "accepted_exit_codes": [0]
     },
     {
