@@ -4493,17 +4493,119 @@ rules:
       cwe: ["CWE-78"]
       scope: Method parameters to single-string shell commands or backticks in the same method.
   - id: python.parameter-sql-text
-    message: A function parameter is formatted into SQL text; pass it as a bound query parameter instead.
+    message: A function parameter forms SQL text or a JSON path in SQL. Bind values and validate path keys.
     severity: INFO
     languages: [python]
     mode: taint
     pattern-sources:
-      - patterns:
+      - label: PARAM
+        patterns:
           - pattern-inside: |
               def $F(..., $P, ...):
                 ...
           - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|raw_sql|apps|schema_editor)$)\w+$'}
+      - label: BOUND_JSON_PATH_KEY
+        patterns:
+        - pattern: |-
+            def $F(..., $KEY: str, ...) -> $RESULT:
+              ...
+              if $OP:
+                ...
+                if $TYPE:
+                  ...
+                  return ($TERM + $MID + $END, $BOUND)
+                ...
+              ...
+        - metavariable-pattern:
+            metavariable: $TERM
+            pattern: f"...{$KEY}..."
+        - metavariable-regex:
+            metavariable: $TERM
+            regex: (?i)^f[\x22\x27]json_extract\([^,]+,\s*\x27\$\.\{\w+\}\x27\)
+        - focus-metavariable: $KEY
+        - pattern-not-inside:
+            patterns:
+            - pattern-inside: |-
+                def $VALIDATE($ARG: str) -> None:
+                  ...
+                  if not re.match(r"^[a-zA-Z0-9_.-]+$", $ARG):
+                    raise ...
+                  ...
+                ...
+                class $CLASS(...):
+                  ...
+                  def $F(..., $KEY: str, ...) -> $RESULT:
+                    "..."
+                    $VALIDATE($KEY)
+                    ...
+                  ...
+            - pattern-not-inside: |-
+                def $VALIDATE($ARG: str) -> None:
+                  ...
+                  if not re.match(r"^[a-zA-Z0-9_.-]+$", $ARG):
+                    raise ...
+                  ...
+                ...
+                $VALIDATE = $OTHER
+                ...
+                class $CLASS(...):
+                  ...
+                  def $F(..., $KEY: str, ...) -> $RESULT:
+                    "..."
+                    $VALIDATE($KEY)
+                    ...
+                  ...
+            - pattern-not-inside: |-
+                def $VALIDATE($ARG: str) -> None:
+                  ...
+                  if not re.match(r"^[a-zA-Z0-9_.-]+$", $ARG):
+                    raise ...
+                  ...
+                ...
+                class $CLASS(...):
+                  ...
+                  def $F(..., $KEY: str, ...) -> $RESULT:
+                    "..."
+                    $VALIDATE($KEY)
+                    ...
+                  ...
+                ...
+                $VALIDATE = $OTHER
+            - pattern-not-inside: |-
+                def $VALIDATE($ARG: str) -> None:
+                  ...
+                  if not re.match(r"^[a-zA-Z0-9_.-]+$", $ARG):
+                    raise ...
+                  ...
+                ...
+                def $VALIDATE(...):
+                  ...
+                ...
+                class $CLASS(...):
+                  ...
+                  def $F(..., $KEY: str, ...) -> $RESULT:
+                    "..."
+                    $VALIDATE($KEY)
+                    ...
+                  ...
+            - pattern-not-inside: |-
+                def $VALIDATE($ARG: str) -> None:
+                  ...
+                  if not re.match(r"^[a-zA-Z0-9_.-]+$", $ARG):
+                    raise ...
+                  ...
+                ...
+                class $CLASS(...):
+                  ...
+                  def $F(..., $KEY: str, ...) -> $RESULT:
+                    "..."
+                    $VALIDATE($KEY)
+                    ...
+                  ...
+                ...
+                def $VALIDATE(...):
+                  ...
     pattern-sanitizers:
       - pattern: int(...)
       - pattern: float(...)
@@ -4519,7 +4621,8 @@ rules:
       - pattern-regex: '(?i)(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*\\?"\{[^{}"\\\n]*\}\\?"'
       - pattern-regex: '`\{[^{}`\n]*\}`'
     pattern-sinks:
-      - patterns:
+      - requires: PARAM
+        patterns:
           - pattern-either:
               - pattern: $CUR.execute($Q, ...)
               - pattern: $CUR.executemany($Q, ...)
@@ -4537,11 +4640,18 @@ rules:
                     - pattern: '$X + "..."'
                     - pattern-regex: ^[A-Za-z_][\w.]*$
           - focus-metavariable: $Q
-      - patterns:
+      - requires: PARAM
+        patterns:
           - pattern-either:
               - pattern: $MODEL.objects.raw($Q, ...)
               - pattern: $MODEL.objects.extra(..., where=$Q, ...)
           - focus-metavariable: $Q
+      - requires: BOUND_JSON_PATH_KEY
+        patterns:
+        - pattern: return ($TERM + $MIDDLE + $TAIL, $PARAMETERS)
+        - metavariable-regex:
+            metavariable: $TERM
+            regex: (?i)^f[\x22\x27]json_extract\([^,]+,\s*\x27\$\.\{\w+\}\x27\)
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -5129,329 +5239,428 @@ rules:
       confidence: LOW
       cwe: [CWE-89]
   - id: python.parameter-path-join-without-containment
-    message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
+    message: A function parameter or collection item forms a filesystem path without a bound containment check.
     severity: INFO
     languages: [python]
     patterns:
-    # Every positive match is inside a function. Skip function-free modules before matching.
-    - pattern-regex: '(?s)\A(?=.*\bdef\b).*'
-    - pattern-either:
-      - pattern-inside: "def $F(..., $P, ...):\n  ...\n"
-      - pattern-inside: "def $F(..., $D, ...):\n  ...\n  for $P, $VAL in $D.items():\n    ...\n"
-      - pattern-inside: "def $F(..., $D, ...):\n  ...\n  for $P, $VAL in ($D or {}).items():\n    ...\n"
-      - pattern-inside: "def $F(self, ...):\n  ...\n  for $P, $VAL in self.$A.items():\n    ...\n"
-    - pattern-either:
-      - pattern: os.path.join($BASE, ..., $P, ...)
-      - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
-      - pattern: os.path.join($BASE, ..., $P.strip(...), ...)
-      - pattern: os.path.join($BASE, ..., $P.lstrip(...), ...)
-      - pattern: os.path.join($BASE, ..., $P.rstrip(...), ...)
-      - pattern: $BASE / $P.strip(...)
-      - patterns:
-        - pattern: $BASE / $P.lstrip(...)
-        - pattern-not: Path($ROOT) / $P.lstrip(...)
-      - patterns:
-        - pattern: $BASE / $P.lstrip(...)
-        - pattern: Path($ROOT) / $P.lstrip(...)
-        - pattern-either:
+      - pattern-either:
           - patterns:
-            - pattern-inside: $SINK(..., Path($ROOT) / $P.lstrip(...), ...)
-            - metavariable-regex:
-                metavariable: $SINK
-                regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
-          - patterns:
-            - pattern-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
+              # Every positive match is inside a function. Skip function-free modules before matching.
+              - pattern-regex: '(?s)\A(?=.*\bdef\b).*'
+              - pattern-either:
+                - pattern-inside: "def $F(..., $P, ...):\n  ...\n"
+                - pattern-inside: "def $F(..., $D, ...):\n  ...\n  for $P, $VAL in $D.items():\n    ...\n"
+                - pattern-inside: "def $F(..., $D, ...):\n  ...\n  for $P, $VAL in ($D or {}).items():\n    ...\n"
+                - pattern-inside: "def $F(self, ...):\n  ...\n  for $P, $VAL in self.$A.items():\n    ...\n"
+              - pattern-either:
+                - pattern: os.path.join($BASE, ..., $P, ...)
+                - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
+                - pattern: os.path.join($BASE, ..., $P.strip(...), ...)
+                - pattern: os.path.join($BASE, ..., $P.lstrip(...), ...)
+                - pattern: os.path.join($BASE, ..., $P.rstrip(...), ...)
+                - pattern: $BASE / $P.strip(...)
+                - patterns:
+                  - pattern: $BASE / $P.lstrip(...)
+                  - pattern-not: Path($ROOT) / $P.lstrip(...)
+                - patterns:
+                  - pattern: $BASE / $P.lstrip(...)
+                  - pattern: Path($ROOT) / $P.lstrip(...)
+                  - pattern-either:
+                    - patterns:
+                      - pattern-inside: $SINK(..., Path($ROOT) / $P.lstrip(...), ...)
+                      - metavariable-regex:
+                          metavariable: $SINK
+                          regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
+                    - patterns:
+                      - pattern-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
 
-                ...
+                          ...
 
-                $SINK(..., $OUT, ...)
+                          $SINK(..., $OUT, ...)
 
-                '
-            - metavariable-regex:
-                metavariable: $SINK
-                regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
-          - patterns:
-            - pattern-inside: "$OUT = Path($ROOT) / $P.lstrip(...)\n...\nwith $SINK(..., $OUT, ...) as $FH:\n  ...\n"
-            - metavariable-regex:
-                metavariable: $SINK
-                regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
-          - patterns:
-            - pattern-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
+                          '
+                      - metavariable-regex:
+                          metavariable: $SINK
+                          regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
+                    - patterns:
+                      - pattern-inside: "$OUT = Path($ROOT) / $P.lstrip(...)\n...\nwith $SINK(..., $OUT, ...) as $FH:\n  ...\n"
+                      - metavariable-regex:
+                          metavariable: $SINK
+                          regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir)$
+                    - patterns:
+                      - pattern-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
 
-                ...
+                          ...
 
-                $OUT.$METHOD(...)
+                          $OUT.$METHOD(...)
 
-                '
-            - metavariable-regex:
-                metavariable: $METHOD
-                regex: ^(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir)$
-        - pattern-not-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
+                          '
+                      - metavariable-regex:
+                          metavariable: $METHOD
+                          regex: ^(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir)$
+                  - pattern-not-inside: '$OUT = Path($ROOT) / $P.lstrip(...)
 
-            ...
+                      ...
 
-            $OUT.resolve().relative_to(Path($ROOT).resolve())
+                      $OUT.resolve().relative_to(Path($ROOT).resolve())
 
-            ...
+                      ...
 
-            '
-      - pattern: $BASE / $P.rstrip(...)
-      - pattern: $BASE / $P
-      - pattern: $BASE / f"...{$P}..."
-      - pattern: $BASE / ($A + $P)
-      - pattern: $BASE / ($P + $A)
-      - pattern: $BASE / $P[$I]
-      - pattern: $BASE / $P[$S:]
-      - pattern: $BASE / $P[:$E]
-      - pattern: $BASE / $P[$S:$E]
-      - pattern: os.path.join($BASE, ..., $A + $P, ...)
-      - pattern: os.path.join($BASE, ..., $P + $A, ...)
-      - pattern: os.path.join($BASE, ..., $P[$I], ...)
-      - pattern: os.path.join($BASE, ..., $P[$S:], ...)
-      - pattern: os.path.join($BASE, ..., $P[:$E], ...)
-      - pattern: os.path.join($BASE, ..., $P[$S:$E], ...)
-      - pattern: Path($BASE, ..., $P, ...)
-    - metavariable-regex:
-        metavariable: $P
-        regex: ^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|token|uri|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$
-    - metavariable-regex:
-        metavariable: $P
-        regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)
-    - metavariable-pattern:
-        metavariable: $BASE
-        patterns:
-        - pattern-not: $P
-        - pattern-not: '"..."'
-    - pattern-either:
-      - patterns:
-        - pattern-either:
-          - pattern-inside: "def $F(...):\n  ...\n  $SINK(...)\n  ...\n"
-          - pattern-inside: "def $F(...):\n  ...\n  with $SINK(...) as $FH:\n    ...\n  ...\n"
-        - metavariable-regex:
-            metavariable: $SINK
-            regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$
-      # An initializer can publish a derived path for a later reader.
-      - patterns:
-        - pattern-inside: |
-            $P = str($BASE / $RELATIVE)
-            self.$PATH = pathlib.Path($P).resolve()
-            self.$SAVED = self.$PATH
-            return
-        - metavariable-regex:
-            metavariable: $PATH
-            regex: ^(?i)\w*(path|filename)\w*$
-      - patterns:
-        - pattern-inside: "def $F(...):\n  ...\n"
-        - pattern-either:
-          - pattern-inside: return $BASE / $RHS
-          - pattern-inside: return os.path.join($BASE, ...)
-          - pattern-inside: return Path($BASE, ...)
-        - metavariable-regex:
-            metavariable: $F
-            regex: ^(?i)_*\w*(path|file)\w*$
-        - metavariable-regex:
-            metavariable: $BASE
-            regex: ^(?:(?:self|cls)\.\w+(?:\.\w+)*|[A-Z][A-Z0-9_]*)$
-    - pattern-not-inside:
-        patterns:
-        - pattern-either:
-          - patterns:
-            - pattern-inside: "$V = $E\nif $COND:\n  $...BEFORE\n  $EXIT\n"
-            - metavariable-regex:
-                metavariable: $EXIT
-                regex: ^(raise|return|continue)\b
-            - metavariable-pattern:
-                metavariable: $E
-                patterns:
-                - pattern-either:
-                  - pattern: os.path.join($B, ..., $Q, ...)
-                  - pattern: $B / $Q
-                  - pattern: Path($B, ..., $Q, ...)
-                  - pattern: pathlib.Path($B, ..., $Q, ...)
-                - metavariable-pattern:
-                    metavariable: $COND
-                    patterns:
-                    - pattern-either:
-                      - pattern: not $NV.is_relative_to($B)
-                      - pattern: not $NV.is_relative_to($B.resolve())
-                      - pattern: not $NV.is_relative_to(Path($B).resolve())
-                      - pattern: not $NV.is_relative_to(pathlib.Path($B).resolve())
-                      - pattern: $B not in $NV.parents
-                      - pattern: not $B in $NV.parents
-                      - pattern: $B.resolve() not in $NV.parents
-                      - pattern: not $B.resolve() in $NV.parents
-                      - pattern: Path($B).resolve() not in $NV.parents
-                      - pattern: not Path($B).resolve() in $NV.parents
-                      - pattern: $NV.parent != $B
-                      - pattern: $NV.parent != $B.resolve()
-                      - pattern: $NV.parent != Path($B).resolve()
-                      - pattern: os.path.commonpath([$B, $NV]) != $B
-                      - pattern: os.path.commonpath([$NV, $B]) != $B
-                      - pattern: os.path.commonpath(($B, $NV)) != $B
-                      - pattern: os.path.commonpath(($NV, $B)) != $B
-                      - pattern: os.path.commonpath([os.path.realpath($B), $NV]) != os.path.realpath($B)
-                      - pattern: os.path.commonpath([$NV, os.path.realpath($B)]) != os.path.realpath($B)
-                      - pattern: os.path.commonpath((os.path.realpath($B), $NV)) != os.path.realpath($B)
-                      - pattern: os.path.commonpath(($NV, os.path.realpath($B))) != os.path.realpath($B)
-                      - pattern: os.path.commonpath([os.path.abspath($B), $NV]) != os.path.abspath($B)
-                      - pattern: os.path.commonpath([$NV, os.path.abspath($B)]) != os.path.abspath($B)
-                      - pattern: os.path.commonpath((os.path.abspath($B), $NV)) != os.path.abspath($B)
-                      - pattern: os.path.commonpath(($NV, os.path.abspath($B))) != os.path.abspath($B)
-                      - pattern: not $NV.startswith($B + os.sep)
-                      - pattern: not $NV.startswith(os.path.join($B, ""))
-                      - pattern: not $NV.startswith(os.path.realpath($B) + os.sep)
-                      - pattern: not $NV.startswith(os.path.join(os.path.realpath($B), ""))
-                      - pattern: not $NV.startswith(os.path.abspath($B) + os.sep)
-                      - pattern: not $NV.startswith(os.path.join(os.path.abspath($B), ""))
-                    - pattern-not-inside: $L and $R
-                    - metavariable-pattern:
-                        metavariable: $NV
-                        pattern-either:
-                        - pattern: $V.resolve(...)
-                        - pattern: Path($V).resolve(...)
-                        - pattern: pathlib.Path($V).resolve(...)
-                        - pattern: os.path.realpath($V)
-                        - pattern: os.path.abspath($V)
-                        - pattern: os.path.normpath($V)
-                        - patterns:
-                          - pattern: $V
-                          - metavariable-comparison:
-                              comparison: str($NV) == str($V)
+                      '
+                - pattern: $BASE / $P.rstrip(...)
+                - pattern: $BASE / $P
+                - pattern: $BASE / f"...{$P}..."
+                - pattern: $BASE / ($A + $P)
+                - pattern: $BASE / ($P + $A)
+                - pattern: $BASE / $P[$I]
+                - pattern: $BASE / $P[$S:]
+                - pattern: $BASE / $P[:$E]
+                - pattern: $BASE / $P[$S:$E]
+                - pattern: os.path.join($BASE, ..., $A + $P, ...)
+                - pattern: os.path.join($BASE, ..., $P + $A, ...)
+                - pattern: os.path.join($BASE, ..., $P[$I], ...)
+                - pattern: os.path.join($BASE, ..., $P[$S:], ...)
+                - pattern: os.path.join($BASE, ..., $P[:$E], ...)
+                - pattern: os.path.join($BASE, ..., $P[$S:$E], ...)
+                - pattern: Path($BASE, ..., $P, ...)
+              - metavariable-regex:
+                  metavariable: $P
+                  regex: ^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|token|uri|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$
+              - metavariable-regex:
+                  metavariable: $P
+                  regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)
+              - metavariable-pattern:
+                  metavariable: $BASE
+                  patterns:
+                  - pattern-not: $P
+                  - pattern-not: '"..."'
+              - pattern-either:
+                - patterns:
+                  - pattern-either:
+                    - pattern-inside: "def $F(...):\n  ...\n  $SINK(...)\n  ...\n"
+                    - pattern-inside: "def $F(...):\n  ...\n  with $SINK(...) as $FH:\n    ...\n  ...\n"
+                  - metavariable-regex:
+                      metavariable: $SINK
+                      regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$
+                # An initializer can publish a derived path for a later reader.
+                - patterns:
+                  - pattern-inside: |
+                      $P = str($BASE / $RELATIVE)
+                      self.$PATH = pathlib.Path($P).resolve()
+                      self.$SAVED = self.$PATH
+                      return
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^(?i)\w*(path|filename)\w*$
+                - patterns:
+                  - pattern-inside: "def $F(...):\n  ...\n"
+                  - pattern-either:
+                    - pattern-inside: return $BASE / $RHS
+                    - pattern-inside: return os.path.join($BASE, ...)
+                    - pattern-inside: return Path($BASE, ...)
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^(?i)_*\w*(path|file)\w*$
+                  - metavariable-regex:
+                      metavariable: $BASE
+                      regex: ^(?:(?:self|cls)\.\w+(?:\.\w+)*|[A-Z][A-Z0-9_]*)$
+              - pattern-not-inside:
+                  patterns:
+                  - pattern-either:
+                    - patterns:
+                      - pattern-inside: "$V = $E\nif $COND:\n  $...BEFORE\n  $EXIT\n"
+                      - metavariable-regex:
+                          metavariable: $EXIT
+                          regex: ^(raise|return|continue)\b
+                      - metavariable-pattern:
+                          metavariable: $E
+                          patterns:
+                          - pattern-either:
+                            - pattern: os.path.join($B, ..., $Q, ...)
+                            - pattern: $B / $Q
+                            - pattern: Path($B, ..., $Q, ...)
+                            - pattern: pathlib.Path($B, ..., $Q, ...)
                           - metavariable-pattern:
-                              metavariable: $E
+                              metavariable: $COND
                               patterns:
                               - pattern-either:
-                                - pattern: $X.resolve(...)
-                                - pattern: os.path.realpath(...)
-                                - pattern: os.path.abspath(...)
-                                - pattern: os.path.normpath(...)
-                              - pattern-not-inside: os.path.join(...)
-                              - pattern-not-inside: $LHS / $RHS
-          - patterns:
-            - pattern-either:
-              - pattern-inside: "$B = os.path.realpath($ROOT)\n$V = os.path.join($B, ..., $Q, ...)\n$NV = os.path.realpath($V)\n$OK = os.path.commonpath(($B, $NV)) == $B\nif $CHECK:\n  raise ...\n"
-              - pattern-inside: "$B = os.path.realpath($ROOT)\n$V = os.path.join($B, ..., $Q, ...)\n$NV = os.path.realpath($V)\ntry:\n  $OK = os.path.commonpath(($B, $NV)) == $B\nexcept ValueError:\n  $OK = False\nif $CHECK:\n  raise ...\n"
-            - metavariable-pattern:
-                metavariable: $CHECK
-                pattern-either:
-                - pattern: not $OK
-                - pattern: not $OK or os.path.islink($V)
-          - patterns:
-            - pattern-inside: '$V = $E
-
-                $STMT
-
-                '
-            - metavariable-regex:
-                metavariable: $STMT
-                regex: ^(?!(?:try|if|elif|with|for|while|def|class|return|lambda)\b)[^\n]*\.relative_to\(
-            - pattern-either:
-              - pattern-inside: '$V = $E
-
-                  $NV.relative_to($B)
-
-                  '
-              - pattern-inside: '$V = $E
-
-                  $NV.relative_to($B.resolve())
-
-                  '
-              - pattern-inside: '$V = $E
-
-                  $NV.relative_to(Path($B).resolve())
-
-                  '
-            - metavariable-pattern:
-                metavariable: $E
-                patterns:
-                - pattern-either:
-                  - pattern: os.path.join($B, ..., $Q, ...)
-                  - pattern: $B / $Q
-                  - pattern: Path($B, ..., $Q, ...)
-                  - pattern: pathlib.Path($B, ..., $Q, ...)
-                - metavariable-pattern:
-                    metavariable: $NV
-                    pattern-either:
-                    - pattern: $V.resolve(...)
-                    - pattern: Path($V).resolve(...)
-                    - pattern: pathlib.Path($V).resolve(...)
-                    - pattern: os.path.realpath($V)
-                    - pattern: os.path.abspath($V)
-                    - pattern: os.path.normpath($V)
+                                - pattern: not $NV.is_relative_to($B)
+                                - pattern: not $NV.is_relative_to($B.resolve())
+                                - pattern: not $NV.is_relative_to(Path($B).resolve())
+                                - pattern: not $NV.is_relative_to(pathlib.Path($B).resolve())
+                                - pattern: $B not in $NV.parents
+                                - pattern: not $B in $NV.parents
+                                - pattern: $B.resolve() not in $NV.parents
+                                - pattern: not $B.resolve() in $NV.parents
+                                - pattern: Path($B).resolve() not in $NV.parents
+                                - pattern: not Path($B).resolve() in $NV.parents
+                                - pattern: $NV.parent != $B
+                                - pattern: $NV.parent != $B.resolve()
+                                - pattern: $NV.parent != Path($B).resolve()
+                                - pattern: os.path.commonpath([$B, $NV]) != $B
+                                - pattern: os.path.commonpath([$NV, $B]) != $B
+                                - pattern: os.path.commonpath(($B, $NV)) != $B
+                                - pattern: os.path.commonpath(($NV, $B)) != $B
+                                - pattern: os.path.commonpath([os.path.realpath($B), $NV]) != os.path.realpath($B)
+                                - pattern: os.path.commonpath([$NV, os.path.realpath($B)]) != os.path.realpath($B)
+                                - pattern: os.path.commonpath((os.path.realpath($B), $NV)) != os.path.realpath($B)
+                                - pattern: os.path.commonpath(($NV, os.path.realpath($B))) != os.path.realpath($B)
+                                - pattern: os.path.commonpath([os.path.abspath($B), $NV]) != os.path.abspath($B)
+                                - pattern: os.path.commonpath([$NV, os.path.abspath($B)]) != os.path.abspath($B)
+                                - pattern: os.path.commonpath((os.path.abspath($B), $NV)) != os.path.abspath($B)
+                                - pattern: os.path.commonpath(($NV, os.path.abspath($B))) != os.path.abspath($B)
+                                - pattern: not $NV.startswith($B + os.sep)
+                                - pattern: not $NV.startswith(os.path.join($B, ""))
+                                - pattern: not $NV.startswith(os.path.realpath($B) + os.sep)
+                                - pattern: not $NV.startswith(os.path.join(os.path.realpath($B), ""))
+                                - pattern: not $NV.startswith(os.path.abspath($B) + os.sep)
+                                - pattern: not $NV.startswith(os.path.join(os.path.abspath($B), ""))
+                              - pattern-not-inside: $L and $R
+                              - metavariable-pattern:
+                                  metavariable: $NV
+                                  pattern-either:
+                                  - pattern: $V.resolve(...)
+                                  - pattern: Path($V).resolve(...)
+                                  - pattern: pathlib.Path($V).resolve(...)
+                                  - pattern: os.path.realpath($V)
+                                  - pattern: os.path.abspath($V)
+                                  - pattern: os.path.normpath($V)
+                                  - patterns:
+                                    - pattern: $V
+                                    - metavariable-comparison:
+                                        comparison: str($NV) == str($V)
+                                    - metavariable-pattern:
+                                        metavariable: $E
+                                        patterns:
+                                        - pattern-either:
+                                          - pattern: $X.resolve(...)
+                                          - pattern: os.path.realpath(...)
+                                          - pattern: os.path.abspath(...)
+                                          - pattern: os.path.normpath(...)
+                                        - pattern-not-inside: os.path.join(...)
+                                        - pattern-not-inside: $LHS / $RHS
                     - patterns:
-                      - pattern: $V
-                      - metavariable-comparison:
-                          comparison: str($NV) == str($V)
+                      - pattern-either:
+                        - pattern-inside: "$B = os.path.realpath($ROOT)\n$V = os.path.join($B, ..., $Q, ...)\n$NV = os.path.realpath($V)\n$OK = os.path.commonpath(($B, $NV)) == $B\nif $CHECK:\n  raise ...\n"
+                        - pattern-inside: "$B = os.path.realpath($ROOT)\n$V = os.path.join($B, ..., $Q, ...)\n$NV = os.path.realpath($V)\ntry:\n  $OK = os.path.commonpath(($B, $NV)) == $B\nexcept ValueError:\n  $OK = False\nif $CHECK:\n  raise ...\n"
+                      - metavariable-pattern:
+                          metavariable: $CHECK
+                          pattern-either:
+                          - pattern: not $OK
+                          - pattern: not $OK or os.path.islink($V)
+                    - patterns:
+                      - pattern-inside: '$V = $E
+
+                          $STMT
+
+                          '
+                      - metavariable-regex:
+                          metavariable: $STMT
+                          regex: ^(?!(?:try|if|elif|with|for|while|def|class|return|lambda)\b)[^\n]*\.relative_to\(
+                      - pattern-either:
+                        - pattern-inside: '$V = $E
+
+                            $NV.relative_to($B)
+
+                            '
+                        - pattern-inside: '$V = $E
+
+                            $NV.relative_to($B.resolve())
+
+                            '
+                        - pattern-inside: '$V = $E
+
+                            $NV.relative_to(Path($B).resolve())
+
+                            '
                       - metavariable-pattern:
                           metavariable: $E
                           patterns:
                           - pattern-either:
-                            - pattern: $X.resolve(...)
-                            - pattern: os.path.realpath(...)
-                            - pattern: os.path.abspath(...)
-                            - pattern: os.path.normpath(...)
-                          - pattern-not-inside: os.path.join(...)
-                          - pattern-not-inside: $LHS / $RHS
-          - patterns:
-            - pattern-either:
-              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B)\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
-              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B)\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
-              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B.resolve())\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
-              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B.resolve())\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
-              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to(Path($B).resolve())\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
-              - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to(Path($B).resolve())\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
-            - metavariable-regex:
-                metavariable: $EXIT
-                regex: ^(raise|return)\b
-            - metavariable-pattern:
-                metavariable: $E
-                patterns:
-                - pattern-either:
-                  - pattern: os.path.join($B, ..., $Q, ...)
-                  - pattern: $B / $Q
-                  - pattern: Path($B, ..., $Q, ...)
-                  - pattern: pathlib.Path($B, ..., $Q, ...)
-                - metavariable-pattern:
-                    metavariable: $NV
-                    pattern-either:
-                    - pattern: $V.resolve(...)
-                    - pattern: Path($V).resolve(...)
-                    - pattern: pathlib.Path($V).resolve(...)
-                    - pattern: os.path.realpath($V)
-                    - pattern: os.path.abspath($V)
-                    - pattern: os.path.normpath($V)
+                            - pattern: os.path.join($B, ..., $Q, ...)
+                            - pattern: $B / $Q
+                            - pattern: Path($B, ..., $Q, ...)
+                            - pattern: pathlib.Path($B, ..., $Q, ...)
+                          - metavariable-pattern:
+                              metavariable: $NV
+                              pattern-either:
+                              - pattern: $V.resolve(...)
+                              - pattern: Path($V).resolve(...)
+                              - pattern: pathlib.Path($V).resolve(...)
+                              - pattern: os.path.realpath($V)
+                              - pattern: os.path.abspath($V)
+                              - pattern: os.path.normpath($V)
+                              - patterns:
+                                - pattern: $V
+                                - metavariable-comparison:
+                                    comparison: str($NV) == str($V)
+                                - metavariable-pattern:
+                                    metavariable: $E
+                                    patterns:
+                                    - pattern-either:
+                                      - pattern: $X.resolve(...)
+                                      - pattern: os.path.realpath(...)
+                                      - pattern: os.path.abspath(...)
+                                      - pattern: os.path.normpath(...)
+                                    - pattern-not-inside: os.path.join(...)
+                                    - pattern-not-inside: $LHS / $RHS
                     - patterns:
-                      - pattern: $V
-                      - metavariable-comparison:
-                          comparison: str($NV) == str($V)
+                      - pattern-either:
+                        - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B)\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
+                        - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B)\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
+                        - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B.resolve())\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
+                        - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to($B.resolve())\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
+                        - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to(Path($B).resolve())\nexcept $EXC:\n  $...BEFORE\n  $EXIT\n"
+                        - pattern-inside: "$V = $E\ntry:\n  $NV.relative_to(Path($B).resolve())\nexcept $EXC as $ERR:\n  $...BEFORE\n  $EXIT\n"
+                      - metavariable-regex:
+                          metavariable: $EXIT
+                          regex: ^(raise|return)\b
                       - metavariable-pattern:
                           metavariable: $E
                           patterns:
                           - pattern-either:
-                            - pattern: $X.resolve(...)
-                            - pattern: os.path.realpath(...)
-                            - pattern: os.path.abspath(...)
-                            - pattern: os.path.normpath(...)
-                          - pattern-not-inside: os.path.join(...)
-                          - pattern-not-inside: $LHS / $RHS
-        - pattern: $V = $E
-        - pattern-not-inside: '$V = $E
+                            - pattern: os.path.join($B, ..., $Q, ...)
+                            - pattern: $B / $Q
+                            - pattern: Path($B, ..., $Q, ...)
+                            - pattern: pathlib.Path($B, ..., $Q, ...)
+                          - metavariable-pattern:
+                              metavariable: $NV
+                              pattern-either:
+                              - pattern: $V.resolve(...)
+                              - pattern: Path($V).resolve(...)
+                              - pattern: pathlib.Path($V).resolve(...)
+                              - pattern: os.path.realpath($V)
+                              - pattern: os.path.abspath($V)
+                              - pattern: os.path.normpath($V)
+                              - patterns:
+                                - pattern: $V
+                                - metavariable-comparison:
+                                    comparison: str($NV) == str($V)
+                                - metavariable-pattern:
+                                    metavariable: $E
+                                    patterns:
+                                    - pattern-either:
+                                      - pattern: $X.resolve(...)
+                                      - pattern: os.path.realpath(...)
+                                      - pattern: os.path.abspath(...)
+                                      - pattern: os.path.normpath(...)
+                                    - pattern-not-inside: os.path.join(...)
+                                    - pattern-not-inside: $LHS / $RHS
+                  - pattern: $V = $E
+                  - pattern-not-inside: '$V = $E
 
-            ...
+                      ...
 
-            $V = $OTHER
+                      $V = $OTHER
 
-            '
-    - pattern-not-inside: "def $F(...):\n  ...\n  $V = os.path.basename($P)\n  ...\n"
-    - pattern-not-inside: "def $F(...):\n  ...\n  $V = secure_filename($P)\n  ...\n"
-    - pattern-not-inside: "def $F(...):\n  ...\n  if <... os.path.isabs($P) ...>:\n    ...\n  ...\n"
-    - pattern-not-inside: "def $F(...):\n  ...\n  if <... '..' in $P ...>:\n    ...\n  ...\n"
-    - pattern-not-inside: "def $F(...):\n  ...\n  if <... \"..\" in $P ...>:\n    ...\n  ...\n"
-    - metavariable-regex:
-        metavariable: $P
-        regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|keyid|uuid|pk)$)
-    - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
-    - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
+                      '
+              - pattern-not-inside: "def $F(...):\n  ...\n  $V = os.path.basename($P)\n  ...\n"
+              - pattern-not-inside: "def $F(...):\n  ...\n  $V = secure_filename($P)\n  ...\n"
+              - pattern-not-inside: "def $F(...):\n  ...\n  if <... os.path.isabs($P) ...>:\n    ...\n  ...\n"
+              - pattern-not-inside: "def $F(...):\n  ...\n  if <... '..' in $P ...>:\n    ...\n  ...\n"
+              - pattern-not-inside: "def $F(...):\n  ...\n  if <... \"..\" in $P ...>:\n    ...\n  ...\n"
+              - metavariable-regex:
+                  metavariable: $P
+                  regex: ^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|keyid|uuid|pk)$)
+              - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
+              - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
+          - patterns:
+              - pattern-inside: |-
+                  def $F(..., $COLLECTION, ...):
+                    ...
+              - pattern-either:
+                - pattern-inside: |-
+                    for $ITEM in $COLLECTION:
+                      ...
+                      $TARGET = os.path.join($BASE, $ITEM)
+                      shutil.rmtree($TARGET, ...)
+                      ...
+                - pattern-inside: |-
+                    for $ITEM in $COLLECTION:
+                      ...
+                      $TARGET = os.path.join($BASE, $ITEM)
+                      if $CONDITION:
+                        ...
+                        shutil.rmtree($TARGET, ...)
+                        ...
+                      ...
+              - pattern: shutil.rmtree($TARGET, ...)
+              - pattern-not-inside:
+                  patterns:
+                  - pattern-inside: |-
+                      def $VALIDATE($VALUE, ...):
+                        ...
+                        if not $VALUE or $VALUE.rstrip(" .") != $VALUE or os.path.basename($VALUE) != $VALUE:
+                          raise ...
+                        ...
+                      ...
+                      class $CLASS(...):
+                        ...
+                        def $F(..., $COLLECTION, ...):
+                          ...
+                          if $COLLECTION:
+                            ...
+                            for $CHECKED in $COLLECTION:
+                              $VALIDATE($CHECKED)
+                            for $ITEM in $COLLECTION:
+                              ...
+                            ...
+                          ...
+                  - pattern-not-inside: |-
+                      def $VALIDATE(...):
+                        ...
+                      ...
+                      $VALIDATE = $OTHER
+                      ...
+                      class $CLASS(...):
+                        ...
+                        def $F(..., $COLLECTION, ...):
+                          ...
+                          if $COLLECTION:
+                            ...
+                            for $CHECKED in $COLLECTION:
+                              $VALIDATE($CHECKED)
+                            for $ITEM in $COLLECTION:
+                              ...
+                            ...
+                          ...
+                  - pattern-not-inside: |-
+                      def $VALIDATE(...):
+                        ...
+                      ...
+                      def $VALIDATE(...):
+                        ...
+                      ...
+                      class $CLASS(...):
+                        ...
+                        def $F(..., $COLLECTION, ...):
+                          ...
+                          if $COLLECTION:
+                            ...
+                            for $CHECKED in $COLLECTION:
+                              $VALIDATE($CHECKED)
+                            for $ITEM in $COLLECTION:
+                              ...
+                            ...
+                          ...
+                  - pattern-not-inside: |-
+                      def $VALIDATE(...):
+                        ...
+                      ...
+                      class $CLASS(...):
+                        ...
+                        def $F(..., $COLLECTION, ...):
+                          ...
+                          if $COLLECTION:
+                            ...
+                            for $CHECKED in $COLLECTION:
+                              $VALIDATE($CHECKED)
+                            for $ITEM in $COLLECTION:
+                              ...
+                            ...
+                          ...
+                      ...
+                      $VALIDATE = $OTHER
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:

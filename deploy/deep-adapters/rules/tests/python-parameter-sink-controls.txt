@@ -187,3 +187,28 @@ class BoundTemplateActionSafe:
                 report_error(error)
             else:
                 collect_result(result)
+
+import re
+class BoundJsonBuilderReview(object):
+    def choose(self,key: str, op: str,value: str) -> tuple[str,list]:
+        "Build a query condition."
+        if op == "equals":
+            if isinstance(value,str):
+                # ruleid: python.parameter-sql-text
+                return (f"json_extract(value, '$.{key}') = '" + escape_value(value) + "'", [])
+        return "",[]
+
+import re
+def verify_json_binding_Guarded(key: str) -> None:
+    if not re.match(r"^[a-zA-Z0-9_.-]+$",key):
+        raise ValueError("invalid filter name")
+
+class BoundJsonBuilderGuarded(object):
+    def choose(self,key: str, op: str,value: str) -> tuple[str,list]:
+        "Build a query condition."
+        verify_json_binding_Guarded(key)
+        if op == "equals":
+            if isinstance(value,str):
+                # ok: python.parameter-sql-text
+                return (f"json_extract(value, '$.{key}') = '" + escape_value(value) + "'", [])
+        return "",[]
