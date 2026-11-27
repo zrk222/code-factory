@@ -188,7 +188,13 @@ rules:
       - patterns:
           - pattern-either:
               - pattern: ssl._create_unverified_context(...)
-              - pattern: $CTX.check_hostname = False
+              - patterns:
+                  - pattern: $CTX.check_hostname = False
+                  # Reported once per context, at verify_mode, when both checks are disabled.
+                  - pattern-not-inside: |
+                      $CTX.check_hostname = False
+                      ...
+                      $CTX.verify_mode = ssl.CERT_NONE
               - pattern: $CTX.verify_mode = ssl.CERT_NONE
               - pattern: 'ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)'
               - pattern: urllib3.disable_warnings(...)
@@ -3787,6 +3793,13 @@ rules:
       - pattern: e(...)
       - pattern: filter_var(...)
       - pattern: json_encode(...)
+      # Project HTML-escaping helpers (dol_escape_htmltag, escapeHtml, html_escape) and
+      # date/number formatters (dol_print_date, format_number) return markup-safe text.
+      - patterns:
+          - pattern: $HF(...)
+          - metavariable-regex:
+              metavariable: $HF
+              regex: '(?i)^(?:\w*_)?(?:escape_?(?:html|htmltag|attr)\w*|html_?escape\w*|(?:print|format)_?(?:date|datetime|time|number|amount)\w*)$'
       # Only the numeric result is safe to place in markup.
       - patterns:
           - pattern-either:
@@ -3839,6 +3852,12 @@ rules:
       - pattern: url.PathEscape(...)
       - pattern: strconv.Atoi(...)
       - pattern: strconv.Quote(...)
+      # encoding/json escapes <, > and & in strings, so serialized JSON is markup-safe.
+      - pattern: json.Marshal(...)
+      - pattern: json.MarshalIndent(...)
+      - patterns:
+          - pattern: $JO.$JM(...)
+          - metavariable-regex: {metavariable: $JM, regex: '^(?:ToJson|ToJSON|MapToJson|MapToJSON|MarshalJSON)$'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -4016,6 +4035,12 @@ rules:
       - pattern: shellescape(...)
       - pattern: parseInt(...)
       - pattern: Number(...)
+      # Sanitizing, escaping and shell-quoting helpers return a value the caller has vetted.
+      - patterns:
+          - pattern-either:
+              - pattern: $F(...)
+              - pattern: $O.$F(...)
+          - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(sanitiz|escape|shellquote)\w*$'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -4653,6 +4678,11 @@ rules:
       - pattern: strconv.FormatInt(...)
       - pattern: pq.QuoteIdentifier(...)
       - pattern: pq.QuoteLiteral(...)
+      # sqlx.In over a constant statement only expands IN (?) and binds the arguments.
+      - patterns:
+          - pattern: sqlx.In($Q, ...)
+          - pattern-not: sqlx.In($A + $B, ...)
+          - pattern-not: sqlx.In(fmt.Sprintf(...), ...)
       - patterns:
           - pattern-either:
               - pattern: $F(...)
@@ -4908,6 +4938,8 @@ rules:
           - pattern-either:
               - pattern-inside: $RET $M(..., $T $P, ...) { ... }
               - pattern-inside: $M(..., $T $P, ...) { ... }
+          # A parameter that carries the statement itself is query text, not a value.
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|hql|jpql)$)\w+$'}
           - focus-metavariable: $P
     pattern-sanitizers:
       - pattern: Integer.parseInt(...)

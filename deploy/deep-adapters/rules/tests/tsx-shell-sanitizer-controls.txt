@@ -1,0 +1,11 @@
+import { execSync } from "child_process";
+
+export function profiles(iface: string): string {
+  // ok: javascript.parameter-shell-command
+  return execSync(`netsh wlan show profiles "${util.sanitizeString(iface)}"`).toString();
+}
+
+export function rawProfiles(iface: string): string {
+  // ruleid: javascript.parameter-shell-command
+  return execSync(`netsh wlan show profiles "${iface}"`).toString();
+}

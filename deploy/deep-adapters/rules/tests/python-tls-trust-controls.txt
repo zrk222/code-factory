@@ -12,3 +12,19 @@ def context(insecure):
         # ok: python.disabled-tls-verification
         ctx.check_hostname = False
     return ctx
+
+
+def unverified_adapter():
+    context = ssl.create_default_context()
+    # ok: python.disabled-tls-verification
+    context.check_hostname = False
+    # ruleid: python.disabled-tls-verification
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def hostname_only():
+    context = ssl.create_default_context()
+    # ruleid: python.disabled-tls-verification
+    context.check_hostname = False
+    return context

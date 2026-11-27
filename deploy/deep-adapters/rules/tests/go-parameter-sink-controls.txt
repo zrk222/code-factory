@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"github.com/huandu/go-sqlbuilder"
+	"github.com/jmoiron/sqlx"
 	"gorm.io/gorm/clause"
 	"os/exec"
 	"path/filepath"
@@ -193,4 +194,21 @@ func constantProjection() (string, []interface{}) {
 	// ok: go.parameter-sql-text
 	builder.Select(fmt.Sprintf("TRIM('%s')", sqlbuilder.Escape("fixed")))
 	return builder.Build()
+}
+
+func deleteHosts(tx *sqlx.Tx, ids []uint) error {
+	stmt, args, err := sqlx.In("DELETE FROM hosts WHERE id IN (?)", ids)
+	if err != nil {
+		return err
+	}
+	// ok: go.parameter-sql-text
+	_, err = tx.Exec(stmt, args...)
+	return err
+}
+
+func orderedHosts(tx *sqlx.Tx, column string, ids []uint) error {
+	stmt, args, _ := sqlx.In("SELECT id FROM hosts WHERE id IN (?) ORDER BY "+column, ids)
+	// ruleid: go.parameter-sql-text
+	_, err := tx.Exec(stmt, args...)
+	return err
 }
