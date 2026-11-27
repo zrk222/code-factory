@@ -2983,12 +2983,18 @@ def _codeql_verify_retained_source(measurement, required):
         raw["info"]
     ) or invocations[-1]["execution"]["stdout_bytes"] != len(raw["info"]):
         raise ValueError("source metadata stream differs")
+    _deep_audit_io.require_digest(measurement["archive_sha256"], "native archive hash")
+    archive_field = (
+        "archive_projection_sha256"
+        if "archive_projection_sha256" in measurement
+        else "archive_sha256"
+    )
     for role, field in {
         "query": "query_sha256",
         "package": "package_sha256",
         "result": "result_sha256",
         "decoded": "decoded_sha256",
-        "archive": "archive_sha256",
+        "archive": archive_field,
     }.items():
         if _deep_audit_io.sha256_bytes(raw[role]) != measurement[field]:
             raise ValueError("source artifact binding differs")
@@ -3013,7 +3019,7 @@ def _codeql_verify_retained_source(measurement, required):
     )
 
 
-def _codeql_retained_archive(raw, prefix, required):
+def _codeql_retained_archive(raw, prefix, required, *, copy_to=None):
     import io
     import zipfile
 
@@ -3035,7 +3041,7 @@ def _codeql_retained_archive(raw, prefix, required):
                 raise ValueError("source archive budget exceeded")
             names = _deep_audit_io.Counter(item.filename for item in entries)
             archived = {}
-            for path in required:
+            for path in sorted(required):
                 name = prefix + _deep_audit_io.relative_path(path)
                 if names[name] != 1:
                     continue
@@ -3044,6 +3050,12 @@ def _codeql_retained_archive(raw, prefix, required):
                 if len(captured) > _deep_audit_io.LIMIT:
                     raise ValueError("source member budget exceeded")
                 archived[path] = _deep_audit_io.sha256_bytes(captured)
+                if copy_to is not None:
+                    copy_to.writestr(
+                        zipfile.ZipInfo(name),
+                        captured,
+                        compress_type=zipfile.ZIP_DEFLATED,
+                    )
             return archived
     except (zipfile.BadZipFile, OSError, RuntimeError) as error:
         raise ValueError("invalid retained source archive") from error
@@ -3131,6 +3143,24 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
         raise _deep_audit_io.RuntimeAuditError(
             "E_CODEQL_SOURCE", "source archive changed"
         )
+    prefix = source.resolve().as_posix().lstrip("/") + "/"
+    projection = {}
+    if len(archive) > _deep_audit_io.NATIVE_COVERAGE_LIMIT:
+        import io
+        import zipfile
+
+        # Keep the native ZIP's fingerprint and retain only exact candidate members.
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as retained:
+            bindings = _codeql_retained_archive(
+                archive, prefix, required, copy_to=retained
+            )
+        if bindings != archived:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_SOURCE", "projected source archive differs"
+            )
+        archive = buffer.getvalue()
+        projection["archive_projection_sha256"] = _deep_audit_io.sha256_bytes(archive)
     return {
         "schema": "factory.codeql-source-execution.v1",
         "rows": rows,
@@ -3141,7 +3171,8 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
         "decoded_sha256": _deep_audit_io.sha256_bytes(raw),
         "result_sha256": _deep_audit_io.sha256_bytes(binary),
         "native_invocations": invocations,
-        "archive_prefix": source.resolve().as_posix().lstrip("/") + "/",
+        "archive_prefix": prefix,
+        **projection,
         "native_artifacts": {
             "query": _deep_audit_io._codeql_native_blob(query),
             "package": _deep_audit_io._codeql_native_blob(package),

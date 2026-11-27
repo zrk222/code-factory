@@ -6463,14 +6463,17 @@ def test_offline_go_replacement_stays_inside_source(tmp_path, monkeypatch, vendo
         helper(module, source)
 
 
+@pytest.mark.parametrize("project_archive", [False, True])
 def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, project_archive
 ):
+    import io
     import zipfile
 
     from factoryline.deep_audit_io import (
         _codeql_blob_bytes,
         _codeql_source_measurement,
+        _codeql_verify_retained_source,
         _native_source_accounting,
     )
 
@@ -6486,6 +6489,8 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     with zipfile.ZipFile(database / "src.zip", "w") as zipped:
         archived_path = source.resolve().as_posix().lstrip("/") + "/src/a.js"
         zipped.writestr(archived_path, candidate.read_bytes())
+        if project_archive:
+            zipped.writestr("toolchain/library.rs", b"x" * (8 * 1024 * 1024))
 
     profile = _codeql_test_profile(tmp_path / "security.qls")
     inventory = {
@@ -6558,7 +6563,19 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     )
     assert _codeql_blob_bytes(blobs["result"]) == bqrs
     assert _codeql_blob_bytes(blobs["decoded"]) == decoded
-    assert _codeql_blob_bytes(blobs["archive"]) == (database / "src.zip").read_bytes()
+    native_archive = (database / "src.zip").read_bytes()
+    retained_archive = _codeql_blob_bytes(blobs["archive"])
+    assert measurement["archive_sha256"] == sha256_bytes(native_archive)
+    if project_archive:
+        assert measurement["archive_projection_sha256"] == sha256_bytes(
+            retained_archive
+        )
+        with zipfile.ZipFile(io.BytesIO(retained_archive)) as zipped:
+            assert zipped.namelist() == [archived_path]
+            assert zipped.read(archived_path) == candidate.read_bytes()
+    else:
+        assert "archive_projection_sha256" not in measurement
+        assert retained_archive == native_archive
     assert (
         _codeql_blob_bytes(blobs["info"])
         == (evidence_dir / "step-2" / "stdout.log").read_bytes()
@@ -6567,6 +6584,12 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
         {"codeql_source_execution": measurement}, {}, inventory, lane
     )
     assert result["state"] == "COMPLETE"
+    required = {"src/a.js": source_sha}
+    assert _codeql_verify_retained_source(measurement, required)["state"] == "COMPLETE"
+    if project_archive:
+        tampered = {**measurement, "archive_projection_sha256": "0" * 64}
+        with pytest.raises(ValueError, match="source artifact binding differs"):
+            _codeql_verify_retained_source(tampered, required)
 
     info_rows[0] = 2
     scratch_mismatch = tmp_path / "scratch-mismatch"
