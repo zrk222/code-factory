@@ -4263,6 +4263,99 @@ def test_docker_preflight_missing_local_image_never_pulls(monkeypatch):
     assert [args[0] for args in calls] == ["info", "image"]
 
 
+@pytest.mark.parametrize("failed_command", ["info", "image"])
+def test_docker_preflight_distinguishes_engine_from_image_timeout(
+    monkeypatch, failed_command
+):
+    import factoryline.deep_audit as module
+
+    def control(base, args):
+        if args[0] == failed_command:
+            raise RuntimeAuditError("E_DOCKER_CONTROL", "timed out")
+        return {"exit_code": 0}, b'"linux"'
+
+    monkeypatch.setattr(module, "_docker_control", control)
+    with pytest.raises(RuntimeAuditError, match="E_DOCKER_CONTROL") as caught:
+        module._docker_preflight(["docker"], {"image": "sha256:" + "a" * 64})
+    assert isinstance(caught.value, module._DockerEngineUnavailable) == (
+        failed_command == "info"
+    )
+
+
+@pytest.mark.parametrize("common_endpoint_failure", [True, False])
+def test_unavailable_docker_engine_does_not_repeat_shared_timeout(
+    tmp_path, monkeypatch, common_endpoint_failure
+):
+    import factoryline.deep_audit as module
+
+    lanes = [
+        {"id": "first", "engine": "codeql", "family": "static"},
+        {"id": "second", "engine": "trivy", "family": "configuration"},
+        {
+            "id": "local",
+            "engine": "osv",
+            "family": "dependencies",
+            "runner_binding": {},
+        },
+    ]
+    actions = [{"lane_id": lane["id"], "action_id": lane["id"]} for lane in lanes]
+    monkeypatch.setattr(module, "_action_enrollment", lambda *_: {"actions": actions})
+    events, calls, authorizations = [], [], []
+    monkeypatch.setattr(
+        module, "_event", lambda _, state, name, row, emit: events.append(name)
+    )
+    monkeypatch.setattr(module, "_record_failures", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module, "_action_terminal", lambda result: {"state": result["state"]}
+    )
+
+    def execute(root, directory, state, snapshot, lane, inventory, plan, emit):
+        calls.append(lane["id"])
+        if lane["id"] == "first":
+            error = (
+                module._DockerEngineUnavailable
+                if common_endpoint_failure
+                else RuntimeAuditError
+            )
+            raise error("E_DOCKER_CONTROL", "timed out")
+        return {"lane_id": lane["id"], "state": "OBSERVED", "findings": [], "gaps": []}
+
+    monkeypatch.setattr(module, "_execute_lane", execute)
+    plan = {"lanes": lanes}
+    for _ in range(2):
+        state = {"lanes": [], "gaps": []}
+        module._run_lanes(
+            tmp_path,
+            tmp_path,
+            state,
+            tmp_path,
+            {},
+            plan,
+            None,
+            lambda: authorizations.append(state["active_lane"]),
+        )
+        assert [lane["state"] for lane in state["lanes"]] == [
+            "INCOMPLETE",
+            "INCOMPLETE" if common_endpoint_failure else "OBSERVED",
+            "OBSERVED",
+        ]
+        assert state["lanes"][0]["gaps"] == ["E_DOCKER_CONTROL"]
+        assert state["lanes"][1]["gaps"] == (
+            ["E_DOCKER_CONTROL"] if common_endpoint_failure else []
+        )
+    assert (
+        calls
+        == (
+            ["first", "local"]
+            if common_endpoint_failure
+            else ["first", "second", "local"]
+        )
+        * 2
+    )
+    assert authorizations == ["first", "second", "local"] * 2
+    assert events == ["lane_started", "lane_completed"] * 6
+
+
 def test_missing_nested_source_has_typed_error(tmp_path: Path) -> None:
     from factoryline.deep_audit_io import local_file
 
