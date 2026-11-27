@@ -7988,11 +7988,14 @@ def test_codeql_replay_decode_rejects_native_metadata_mismatch(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize(
-    "drift", ["finding", "entity-id", "entity-label", "entity-url"]
+    "drift", [None, "finding", "entity-id", "entity-label", "entity-url"]
 )
-def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
+def test_codeql_replay_query_orchestration_compares_parallel_decodes(
     tmp_path, monkeypatch, drift
 ):
+    from threading import Barrier
+
+    from factoryline import deep_audit_io
     from factoryline.deep_audit_io import (
         _codeql_native_blob,
         _codeql_replay_queries,
@@ -8010,11 +8013,15 @@ def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
         entity["id"] = "entity-2"
     elif drift == "entity-label":
         entity["label"] = "different source"
-    else:
+    elif drift == "entity-url":
         entity["url"]["startLine"] = 8
     fresh_decoded = json.dumps(fresh_value).encode()
 
+    decoding = Barrier(2, timeout=5)
+
     def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        if argv[1:3] == ["bqrs", "decode"]:
+            decoding.wait()
         if argv[1:3] == ["bqrs", "info"]:
             stdout = info
         elif Path(argv[-1]).name == "worker.bqrs":
@@ -8030,15 +8037,24 @@ def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
     scratch = tmp_path / "replay-values"
     scratch.mkdir()
     monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
-    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
-        _codeql_replay_queries(
-            {"version_argv": ["/opt/codeql/codeql/codeql"]},
-            {"codeql_query_execution": {"rules": [record]}},
-            {"execution": {"rules": [fresh_record]}},
-            source,
-            scratch,
-            time.monotonic() + 30,
+    arguments = (
+        {"version_argv": ["/opt/codeql/codeql/codeql"]},
+        {"codeql_query_execution": {"rules": [record]}},
+        {"execution": {"rules": [fresh_record]}},
+        source,
+        scratch,
+        time.monotonic() + 30,
+    )
+    if drift is None:
+        values = deep_audit_io._codeql_replay_values(
+            json.loads(worker_decoded), record["result_sets"]
         )
+        assert _codeql_replay_queries(*arguments) == {
+            record["rule_id"]: deep_audit_io.digest(values)
+        }
+    else:
+        with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+            _codeql_replay_queries(*arguments)
 
 
 @pytest.fixture
