@@ -4035,8 +4035,12 @@ def test_report_tier_marks_low_confidence_rules_as_leads(tags, tier):
 
     saved = dict(finding, rerun=["factory", "audit"])
     assert matches_recorded_findings([finding], [saved])
-    assert not matches_recorded_findings([finding], [dict(saved, report_tier="changed")])
+    assert not matches_recorded_findings(
+        [finding], [dict(saved, report_tier="changed")]
+    )
     del saved["report_tier"]
     assert matches_recorded_findings([finding], [saved])
-    assert not matches_recorded_findings([finding], [dict(saved, source_sha256="b" * 64)])
+    assert not matches_recorded_findings(
+        [finding], [dict(saved, source_sha256="b" * 64)]
+    )
     assert not matches_recorded_findings([finding], [])

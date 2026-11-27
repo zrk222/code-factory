@@ -490,7 +490,9 @@ def matches_recorded_findings(rebuilt, recorded):
         # Older receipts predate this presentation field. Restore compatibility
         # without removing or rewriting any of their signed evidence.
         if "report_tier" not in expected and "report_tier" in finding:
-            finding = {key: value for key, value in finding.items() if key != "report_tier"}
+            finding = {
+                key: value for key, value in finding.items() if key != "report_tier"
+            }
         if finding != expected:
             return False
     return True

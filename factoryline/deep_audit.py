@@ -3280,21 +3280,18 @@ def _lineage_normalization(
                 plan.get("obligations", []),
                 run_id,
             )
-        if (
-            any(
-                normalized.get(key) != result.get(key)
-                for key in (
-                    "state",
-                    "gaps",
-                    "report_sha256",
-                    "coverage_sha256",
-                    "rule_accounting_sha256",
-                    "challenge_sha256",
-                )
+        if any(
+            normalized.get(key) != result.get(key)
+            for key in (
+                "state",
+                "gaps",
+                "report_sha256",
+                "coverage_sha256",
+                "rule_accounting_sha256",
+                "challenge_sha256",
             )
-            or not matches_recorded_findings(
-                normalized["findings"], result.get("findings", [])
-            )
+        ) or not matches_recorded_findings(
+            normalized["findings"], result.get("findings", [])
         ):
             gaps.append(f"NORMALIZED_LANE_BINDING_MISMATCH:{lane_id}")
             return None
