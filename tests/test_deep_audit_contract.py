@@ -371,11 +371,31 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             genuine = {**finding, "id": "fixture-source-defect"}
             grounded, _ = review.ground_observed_response({**result, "findings": [genuine]}, family_input)
             assert grounded["findings"][0]["id"] == genuine["id"]
+            for echo in ("", "\t\n", "a" * 161, f"{source}\nseparate line"):
+                grounded, _ = review.ground_observed_response(
+                    {**result, "findings": [{**genuine, "source_excerpt": echo}]}, family_input
+                )
+                assert grounded["decision"] == "INCOMPLETE" and not grounded["findings"]
+                assert grounded["coverage_gaps"] == [f"{positive_path}: source finding lacks its exact quoted line"]
+            quoted = {**family_input, "sources": {**family_input["sources"], positive_path: "source\tvalue\n"}}
+            grounded, _ = review.ground_observed_response(
+                {**result, "findings": [{**genuine, "source_excerpt": "source\tvalue\n"}]}, quoted
+            )
+            assert grounded["findings"][0]["id"] == genuine["id"]
             unbound = {**claim, "observation_sha256": "f" * 64}
             grounded, _ = review.ground_observed_response({**result, "control_claims": [unbound],
                 "findings": [{**genuine, "source_line": 999_999}]}, family_input)
             assert grounded["decision"] == "INCOMPLETE" and len(grounded["coverage_gaps"]) == 2
             assert not grounded["findings"]
+            invalid = {**result, "findings": [{**genuine, "remediation": ""}]}
+            malformed = json.dumps({"choices": [{"message": {"content": json.dumps(invalid)}, "finish_reason": "stop"}]})
+            recorded = review.recorded_response(malformed.encode(), family_input)
+            assert recorded["decision"] == "INCOMPLETE" and not recorded["findings"]
+            assert set(recorded["path_assessments"]) == set(assigned)
+            assert all(row["state"] == "UNRESOLVED" for row in recorded["path_assessments"].values())
+            disposition = review.disposition([{"family": payload["family"], "result": recorded, "assigned_paths": assigned}])
+            assert disposition["decision"] == "INCOMPLETE"
+            assert len(disposition["coverage_gaps"]) == len(assigned)
             return BytesIO(json.dumps({
                 "choices": [{"message": {"content": json.dumps(result)}, "finish_reason": "stop"}],
             }).encode())

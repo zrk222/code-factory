@@ -191,7 +191,7 @@ jobs:
 
           from factoryline.deep_audit_attestation import _review_finding
           from factoryline.deep_audit_io import digest, strict_json
-          from factoryline.runtime_audit_common import canonical_bytes, require_digest, require_str, sha256_bytes
+          from factoryline.runtime_audit_common import RuntimeAuditError, canonical_bytes, require_digest, require_str, sha256_bytes
 
 
           LOOPBACK = "http://127.0.0.1:18080"
@@ -348,7 +348,7 @@ jobs:
 
               if grounded:
                   fields.update({"source_line": {"type": "integer", "minimum": 1},
-                                 "source_excerpt": text})
+                                 "source_excerpt": {"type": "string", "minLength": 1, "maxLength": 160}})
               assessment = {
                   "type": "object",
                   "properties": {
@@ -439,7 +439,8 @@ jobs:
               else:
                   instructions += (
                       "Keep ordinary source observations in path_assessments. Use findings only for unexpected "
-                      "source defects, with a one-based source_line and verbatim source_excerpt on that line. "
+                      "source defects, with a one-based source_line and a short verbatim source_excerpt "
+                      "from that single line. Quote only the part of the line that establishes the defect. "
                       "Use coverage_gaps for missing source evidence and name the path and reason. "
                       "For a genuinely missing control observation or unequal exits, use control_claims with the "
                       "exact obligation, path, role and observation_sha256. A matching expected exit, including a "
@@ -517,7 +518,8 @@ jobs:
                   if identity.strip().upper() in PATH_STATES + DECISIONS:
                       rejected.append({"kind": "assessment_status_as_finding", "path": path})
                       continue
-                  excerpt = require_str(finding["source_excerpt"], "source excerpt", maximum=2048).strip()
+                  quote = finding["source_excerpt"]
+                  excerpt = quote.strip() if isinstance(quote, str) and len(quote) <= 160 else ""
                   lines = sources[path].splitlines()
                   line = finding["source_line"]
                   if type(line) is not int or not 1 <= line <= len(lines) or not excerpt or excerpt not in lines[line - 1]:
@@ -567,6 +569,19 @@ jobs:
                   result["rejected_claims"] = rejected
               result["reviewed_paths"] = reviewed_paths(result["path_assessments"])
               return result
+
+
+          def recorded_response(raw, payload):
+              if not dynamic_control_context(payload):
+                  return checked_response(raw, payload)
+              try:
+                  return checked_response(raw, payload)
+              except (RuntimeAuditError, ValueError, TypeError, KeyError, IndexError) as error:
+                  reason = f"Reviewer response failed validation ({type(error).__name__})"
+                  return {"decision": "INCOMPLETE", "findings": [], "coverage_gaps": [],
+                          "path_assessments": {path: {"state": "UNRESOLVED", "reason": reason}
+                                               for path in sorted(payload["sources"])},
+                          "reviewed_paths": []}
 
 
           def request_review(messages, schema, deadline, max_tokens=2600):
@@ -619,7 +634,7 @@ jobs:
               print(f"Review starting: {family}", flush=True)
               schema = response_schema(payload["sources"], grounded=dynamic_control_context(payload))
               primary = request_review(family_messages(payload), schema, deadline)
-              result = checked_response(primary["raw_response"].encode(), payload)
+              result = recorded_response(primary["raw_response"].encode(), payload)
               paths = status_only_paths(result)
               if paths:
                   try:
@@ -628,7 +643,7 @@ jobs:
                                                  max_tokens=min(1800, 128 * len(paths)))
                       rationale_response(recovered["raw_response"].encode(), payload, paths)
                       primary["rationale_recovery"] = {**recovered, "paths": paths}
-                  except (URLError, TimeoutError, ValueError, KeyError, IndexError) as error:
+                  except (URLError, TimeoutError, RuntimeAuditError, ValueError, TypeError, KeyError, IndexError) as error:
                       print(f"Review rationale remains unresolved for {family}: {type(error).__name__}", flush=True)
               return {"family": family, **primary}
 
@@ -732,7 +747,7 @@ jobs:
               if part["response_sha256"] != sha256_bytes(raw):
                   raise ValueError("hosted review family response fingerprint differs")
               part.pop("identity")
-              result = checked_response(raw, payload)
+              result = recorded_response(raw, payload)
               if "rationale_recovery" in part:
                   bind_rationale_recovery(result, part["rationale_recovery"], payload)
               return {**part, "runtime_sha256": identity["runtime_sha256"],
