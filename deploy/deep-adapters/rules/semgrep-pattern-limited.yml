@@ -1845,6 +1845,19 @@ rules:
               - pattern: params.fetch(...)
               - pattern: params.dig(...)
         exact: true
+      - patterns:
+          - pattern-inside: |
+              class $C < $BASE
+                ...
+              end
+          - metavariable-regex:
+              metavariable: $BASE
+              regex: ^(.*Controller|.*ControllerBase|ActionController::(Base|API)|Sinatra::Base|Grape::API)$
+          - pattern: params.fetch($KEY)
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: '^:[A-Za-z_][A-Za-z0-9_]*[!?]?$'
+        exact: false
     pattern-sinks:
       - patterns:
           - pattern-either:

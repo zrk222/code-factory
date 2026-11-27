@@ -54,3 +54,12 @@ class LookupFixture < ActionController::Base
     Record.find_by(id: params[:id])
   end
 end
+
+class RequestDefaultFixture < ActionController::Base
+  def fallback_remains_local
+    fallback = "fixture_marker fixed"
+    params.fetch(:command, fallback)
+    # ok: ruby.request-command-injection
+    Kernel.system(fallback)
+  end
+end
