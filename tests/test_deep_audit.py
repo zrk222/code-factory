@@ -1188,6 +1188,78 @@ def test_blade_structure_explains_invalid_utf8_before_staging(tmp_path, monkeypa
         deep_audit_contract.blade_structure(source, tmp_path / "missing-grammars")
 
 
+def test_blade_structure_pinned_grammar_source_binding(tmp_path):
+    from hashlib import sha256
+    from os import environ
+
+    grammar_dir = environ.get("BLADE_GRAMMAR_DIR")
+    if not grammar_dir:
+        pytest.skip("This acceptance fixture needs the pinned Blade and PHP grammars")
+
+    source = tmp_path / "fixture.blade.php"
+
+    def scan(template, expected_exit):
+        source.write_bytes(template)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "factoryline.cli",
+                "deep-audit",
+                "blade-structure",
+                str(source),
+                "--grammar-dir",
+                grammar_dir,
+                "--json",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == expected_exit, (result.stdout, result.stderr)
+        report = json.loads(result.stderr if expected_exit == 2 else result.stdout)
+        assert report["schema"] == "factory.blade-structure.v1"
+        assert report["source_sha256"] == sha256(template).hexdigest()
+        assert (
+            report["authority"] == "none" and report["tree_sitter_version"] == "0.27.0"
+        )
+        return report
+
+    template = (
+        "<p>Café</p>\n"
+        "{{-- {{ 'comment' }} --}}\n"
+        "@verbatim{{ 'literal' }}@endverbatim\n"
+        "{{ 'hello' }}\n"
+        "{!! str_repeat('a', 2) !!}\n"
+    ).encode("utf-8")
+    valid = scan(template, 0)
+    assert valid["state"] == "STRUCTURE_OBSERVED" and valid["issues"] == []
+    expected = []
+    for mode, expression, line in (
+        ("escaped", b"'hello'", 4),
+        ("raw", b"str_repeat('a', 2)", 5),
+    ):
+        start = template.index(expression)
+        expected.append(
+            {
+                "mode": mode,
+                "start_byte": start,
+                "end_byte": start + len(expression),
+                "line": line,
+                "expression_sha256": sha256(expression).hexdigest(),
+            }
+        )
+    assert valid["echoes"] == expected
+
+    malformed = scan(b"{{ 1 + }}\n", 2)
+    assert malformed["state"] == "INCOMPLETE" and malformed["echoes"] == []
+    assert malformed["issues"] and all(
+        issue["reason"] in {"BLADE_PARSE_ERROR", "PHP_EXPRESSION_ERROR"}
+        for issue in malformed["issues"]
+    )
+    print(json.dumps({"valid": valid, "malformed": malformed}, sort_keys=True))
+
+
 def adapter_inputs(tmp_path):
     import sys
 

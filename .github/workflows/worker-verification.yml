@@ -151,6 +151,25 @@ jobs:
           node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs
           scripts/verify_osv_worker.test.mjs scripts/semgrep_mutation_controls.test.mjs
           scripts/recall_harness.test.mjs scripts/recall_codeql_pairs.test.mjs
+  blade-structure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - name: Provision the pinned Blade parser and grammars
+        run: |
+          python -m pip install ".[blade]" "tree-sitter-language-pack==1.25.2" "pytest>=8.0" "pytest-asyncio>=0.24,<1"
+          grammar_dir="$(python -c "from tree_sitter_language_pack import cache_dir, prefetch; prefetch(['blade', 'php']); print(cache_dir())")"
+          printf 'BLADE_GRAMMAR_DIR=%s\n' "$grammar_dir" >> "$GITHUB_ENV"
+      - name: Verify Blade source fingerprints and malformed-template handling
+        run: |
+          test -d "$BLADE_GRAMMAR_DIR"
+          python -m pytest -q -s tests/test_deep_audit.py::test_blade_structure_pinned_grammar_source_binding
   semgrep-surface:
     if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'semgrep-worker'
     runs-on: ubuntu-latest
