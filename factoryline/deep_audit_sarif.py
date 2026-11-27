@@ -481,6 +481,21 @@ def _sarif_result_finding(result, rules, lane, sources):
     return finding
 
 
+def matches_recorded_findings(rebuilt, recorded):
+    """Verify retained finding content, including any recorded report tier."""
+    if len(rebuilt) != len(recorded):
+        return False
+    for finding, saved in zip(rebuilt, recorded, strict=True):
+        expected = {key: value for key, value in saved.items() if key != "rerun"}
+        # Older receipts predate this presentation field. Restore compatibility
+        # without removing or rewriting any of their signed evidence.
+        if "report_tier" not in expected and "report_tier" in finding:
+            finding = {key: value for key, value in finding.items() if key != "report_tier"}
+        if finding != expected:
+            return False
+    return True
+
+
 def _sarif_run_findings(run, lane, sources, *, run_index=None):
     driver, analyzer = _sarif_analyzer(run, lane)
     _completed(run, analyzer)

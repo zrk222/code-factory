@@ -3260,7 +3260,7 @@ def _lineage_accounting(coverage, result, definition, lane_id, item, gaps):
 def _lineage_normalization(
     bundle, definition, inventory, run_id, result, lane_id, gaps, plan
 ):
-    from .deep_audit_sarif import normalize_execution_bundle
+    from .deep_audit_sarif import matches_recorded_findings, normalize_execution_bundle
 
     try:
         normalized = normalize_execution_bundle(
@@ -3280,10 +3280,6 @@ def _lineage_normalization(
                 plan.get("obligations", []),
                 run_id,
             )
-        saved_findings = [
-            {key: value for key, value in finding.items() if key != "rerun"}
-            for finding in result.get("findings", [])
-        ]
         if (
             any(
                 normalized.get(key) != result.get(key)
@@ -3296,7 +3292,9 @@ def _lineage_normalization(
                     "challenge_sha256",
                 )
             )
-            or normalized.get("findings") != saved_findings
+            or not matches_recorded_findings(
+                normalized["findings"], result.get("findings", [])
+            )
         ):
             gaps.append(f"NORMALIZED_LANE_BINDING_MISMATCH:{lane_id}")
             return None

@@ -702,17 +702,17 @@ rules:
               regex: ^(is_?[Vv]alid|[Vv]alidate|has|includes)[A-Za-z0-9_]*$
           - focus-metavariable: $X
       - pattern: path.basename(...)
-      # After a fail-closed containment check (if (...) return/throw) the checked path
-      # is contained for the rest of the function.
+      # A prefix guard only contains the same immutable, normalized path.
+      # Raw string construction can still contain unresolved directory segments.
       - by-side-effect: true
         patterns:
           - pattern-either:
-              - pattern: if ($C) { ... return; }
-              - pattern: if ($C) { ... return $RV; }
-              - pattern: if ($C) { ... throw $EXC; }
-              - pattern: if ($C) return;
-              - pattern: if ($C) return $RV;
-              - pattern: if ($C) throw $EXC;
+              - pattern-inside: if ($C) { ... return; }
+              - pattern-inside: if ($C) { ... return $RV; }
+              - pattern-inside: if ($C) { ... throw $EXC; }
+              - pattern-inside: if ($C) return;
+              - pattern-inside: if ($C) return $RV;
+              - pattern-inside: if ($C) throw $EXC;
           - metavariable-pattern:
               metavariable: $C
               patterns:
@@ -732,26 +732,37 @@ rules:
                               - pattern: $NBB + "/"
                               - pattern: '$NBB.endsWith(path.sep) ? $NBB : $NBB + path.sep'
                               - pattern: '`${$NBB}/`'
+          - pattern-either:
+              - pattern: '!$F.startsWith($NB)'
+              - pattern: $F.indexOf($NB) !== 0
+              - pattern: $F.indexOf($NB) != 0
+              - pattern: $F !== $B && !'!$F.startsWith($NB)'
+              - pattern: $F !== $B && $F.indexOf($NB) !== 0
+              - pattern: $F !== $B && $F.indexOf($NB) != 0
+          - pattern-inside: |
+              const $F = path.$NORMALIZER(...);
+              ...
+          - metavariable-regex: {metavariable: $NORMALIZER, regex: '^(?:join|resolve|normalize)$'}
           - focus-metavariable: $F
       - by-side-effect: true
         patterns:
           - pattern-either:
-              - pattern: |
+              - pattern-inside: |
                   $NB = $NBE;
                   if ($C) { ... return; }
-              - pattern: |
+              - pattern-inside: |
                   $NB = $NBE;
                   if ($C) { ... return $RV; }
-              - pattern: |
+              - pattern-inside: |
                   $NB = $NBE;
                   if ($C) { ... throw $EXC; }
-              - pattern: |
+              - pattern-inside: |
                   $NB = $NBE;
                   if ($C) return;
-              - pattern: |
+              - pattern-inside: |
                   $NB = $NBE;
                   if ($C) return $RV;
-              - pattern: |
+              - pattern-inside: |
                   $NB = $NBE;
                   if ($C) throw $EXC;
           - metavariable-pattern:
@@ -771,6 +782,17 @@ rules:
                     - pattern: $F !== $B && !$F.startsWith($NB)
                     - pattern: $F !== $B && $F.indexOf($NB) !== 0
                     - pattern: $F !== $B && $F.indexOf($NB) != 0
+          - pattern-either:
+              - pattern: '!$F.startsWith($NB)'
+              - pattern: $F.indexOf($NB) !== 0
+              - pattern: $F.indexOf($NB) != 0
+              - pattern: $F !== $B && !'!$F.startsWith($NB)'
+              - pattern: $F !== $B && $F.indexOf($NB) !== 0
+              - pattern: $F !== $B && $F.indexOf($NB) != 0
+          - pattern-inside: |
+              const $F = path.$NORMALIZER(...);
+              ...
+          - metavariable-regex: {metavariable: $NORMALIZER, regex: '^(?:join|resolve|normalize)$'}
           - focus-metavariable: $F
     # Existence and metadata probes (exists, stat, access) neither read nor change file
     # content; each vulnerable read or write the probe guards is reported on its own.

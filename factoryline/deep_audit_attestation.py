@@ -602,7 +602,7 @@ def _review_provenance(review, coordinator, binding):
 
 def _review_native_lanes(plan, evidence, inventory, run_id, directory):
     from .deep_audit import apply_retained_native_completion
-    from .deep_audit_sarif import normalize_execution_bundle
+    from .deep_audit_sarif import matches_recorded_findings, normalize_execution_bundle
 
     lanes = {lane["id"]: lane for lane in plan["lanes"]}
     if (
@@ -627,12 +627,9 @@ def _review_native_lanes(plan, evidence, inventory, run_id, directory):
             plan["obligations"],
             run_id,
         )
-        # Rerun instructions are added by the coordinator, not the native parser.
-        recorded = [
-            {key: value for key, value in finding.items() if key != "rerun"}
-            for finding in observation["findings"]
-        ]
-        if normalized["findings"] != recorded or normalized["state"] != "OBSERVED":
+        if normalized["state"] != "OBSERVED" or not matches_recorded_findings(
+            normalized["findings"], observation["findings"]
+        ):
             raise RuntimeAuditError(
                 "E_REVIEW_NORMALIZATION",
                 "native evidence is incomplete or normalized findings changed",

@@ -71,3 +71,21 @@ export async function serveNotFailClosed(req: any, root: string, log: any, deps:
   // ruleid: javascript.request-path-traversal
   return fsp.readFile(p, 'utf-8')
 }
+
+export function readRawInlinePrefix(req: any, root: string) {
+  const file = root + path.sep + req.params.name
+  if (!file.startsWith(root + path.sep)) {
+    throw new Error('outside root')
+  }
+  // ruleid: javascript.request-path-traversal
+  return fs.readFileSync(file)
+}
+export function readRawStoredPrefix(req: any, root: string) {
+  const file = root + path.sep + req.params.name
+  const prefix = root + path.sep
+  if (!file.startsWith(prefix)) {
+    throw new Error('outside root')
+  }
+  // ruleid: javascript.request-path-traversal
+  return fs.readFileSync(file)
+}
