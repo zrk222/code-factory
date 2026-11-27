@@ -7814,6 +7814,104 @@ def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
         )
 
 
+@pytest.fixture
+def codeql_extracted_file_rows():
+    from factoryline.deep_audit_loop import (
+        _CODEQL_EXTRACTED_FILES_COLUMNS,
+        _CODEQL_EXTRACTED_FILES_QUERY,
+    )
+
+    def row(index, path):
+        return [
+            {
+                "id": index,
+                "label": path,
+                "url": {
+                    "uri": f"file:///src/{path}",
+                    "startLine": 0,
+                    "startColumn": 0,
+                    "endLine": 0,
+                    "endColumn": 0,
+                },
+            },
+            "fixture",
+        ]
+
+    paths = ("a.py", "b.py")
+    record = dict(
+        zip(("rule_id", "query_path", "query_sha256"), _CODEQL_EXTRACTED_FILES_QUERY)
+    )
+    decoded = {
+        "#select": {
+            "columns": deepcopy(_CODEQL_EXTRACTED_FILES_COLUMNS),
+            "tuples": [row(index, path) for index, path in enumerate(paths)],
+        }
+    }
+    return record, decoded, {"sources": dict.fromkeys(paths, "a" * 64)}
+
+
+def test_codeql_extracted_files_replay_has_stable_digest_across_ids(
+    codeql_extracted_file_rows,
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    rows = fresh["#select"]["tuples"]
+    rows.reverse()
+    rows[0][0]["id"] = 50
+    rows[1][0]["id"] = 51
+    expected = _codeql_replay_query_digest(record, record, worker, worker, coverage)
+    assert (
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage) == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (("tuples", 0, 0, "id"), 1),
+        (("tuples", 0, 0, "id"), True),
+        (("tuples", 0, 0, "id"), -1),
+        (("tuples", 0, 0, "label"), "other"),
+        (("tuples", 0, 0, "url", "uri"), "file:///src/b.py"),
+        (("tuples", 0, 0, "url", "uri"), "file:///other/a.py"),
+        (("tuples", 0, 0, "url", "startLine"), 1),
+        (("tuples", 0, 1), "other"),
+        (("columns", 0, "name"), "other"),
+    ],
+)
+def test_codeql_extracted_files_replay_rejects_difference(
+    codeql_extracted_file_rows, path, replacement
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    element = fresh["#select"]
+    for key in path[:-1]:
+        element = element[key]
+    element[path[-1]] = replacement
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage)
+
+
+def test_codeql_extracted_files_replay_rejects_unpinned_query_or_inventory(
+    codeql_extracted_file_rows,
+):
+    from factoryline.deep_audit_loop import _codeql_replay_query_digest
+
+    record, worker, coverage = codeql_extracted_file_rows
+    fresh = deepcopy(worker)
+    fresh["#select"]["tuples"][0][0]["id"] = 8
+    other = {**record, "query_sha256": "b" * 64}
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, other, worker, fresh, coverage)
+    coverage["sources"]["c.py"] = "c" * 64
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_query_digest(record, record, worker, fresh, coverage)
+
+
 def test_codeql_steps_runner_defaults_to_three_steps_and_rejects_two(
     tmp_path, monkeypatch
 ):

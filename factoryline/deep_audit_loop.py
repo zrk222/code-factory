@@ -2965,10 +2965,6 @@ def _codeql_replay_queries(profile, coverage, fresh, source, scratch, deadline):
         right = _deep_audit_io._codeql_replay_decode(
             profile, new, source, directory, "fresh", deadline
         )
-        if left != right:
-            raise _deep_audit_io.RuntimeAuditError(
-                "E_CODEQL_REPLAY", "independent query values differ"
-            )
         total += len(_deep_audit_io.canonical_bytes(left)) + len(
             _deep_audit_io.canonical_bytes(right)
         )
@@ -2976,8 +2972,95 @@ def _codeql_replay_queries(profile, coverage, fresh, source, scratch, deadline):
             raise _deep_audit_io.RuntimeAuditError(
                 "E_CODEQL_REPLAY", "decoded replay budget exceeded"
             )
-        decoded[old["rule_id"]] = _deep_audit_io.digest(left)
+        decoded[rule_id] = _codeql_replay_query_digest(old, new, left, right, coverage)
     return decoded
+
+
+_CODEQL_EXTRACTED_FILES_QUERY = (
+    "py/diagnostics/successfully-extracted-files",
+    "codeql/python-queries/1.8.11/Diagnostics/ExtractedFiles.ql",
+    "dce6ae0e023b57fbe4727e21387aac398808389f984c90f44506780bb2331515",
+)
+_CODEQL_EXTRACTED_FILES_COLUMNS = [
+    {"name": "file", "kind": "Entity"},
+    {"kind": "String"},
+]
+_CODEQL_FILE_COORDINATES = ("startLine", "startColumn", "endLine", "endColumn")
+
+
+def _codeql_replay_query_digest(old, new, left, right, coverage):
+    identity = ("rule_id", "query_path", "query_sha256")
+    if all(
+        tuple(record.get(key) for key in identity) == _CODEQL_EXTRACTED_FILES_QUERY
+        for record in (old, new)
+    ):
+        required = set(coverage["sources"])
+        left = _codeql_extracted_file_rows(left, required)
+        right = _codeql_extracted_file_rows(right, required)
+    if left != right:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_REPLAY", "independent query values differ"
+        )
+    return _deep_audit_io.digest(left)
+
+
+def _codeql_extracted_file_rows(values, required):
+    from urllib.parse import unquote
+
+    if (
+        set(values) != {"#select"}
+        or values["#select"]["columns"] != _CODEQL_EXTRACTED_FILES_COLUMNS
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_REPLAY", "extracted-files decoded column schema differs"
+        )
+    by_path, ids = {}, set()
+    for entity, detail in values["#select"]["tuples"]:
+        location = _codeql_extracted_file_location(entity, detail)
+        path = unquote(location["uri"].removeprefix("file:///src/"), errors="strict")
+        if path not in required or path in by_path or entity["id"] in ids:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_REPLAY",
+                "extracted-files path or entity correspondence differs",
+            )
+        ids.add(entity["id"])
+        # Each inventory path and database-local ID occurs once. Comparing by
+        # path preserves the one-to-one relationship while retaining all other values.
+        by_path[path] = (entity["label"], location, detail)
+    if by_path.keys() != required:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_REPLAY", "extracted-files inventory differs"
+        )
+    return by_path
+
+
+def _codeql_extracted_file_location(entity, detail):
+    if (
+        not isinstance(entity, dict)
+        or set(entity) != {"id", "label", "url"}
+        or type(entity["id"]) is not int
+        or entity["id"] < 0
+        or not isinstance(entity["label"], str)
+        or not isinstance(detail, str)
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_REPLAY", "extracted-files entity or detail has invalid type"
+        )
+    location = entity["url"]
+    if (
+        not isinstance(location, dict)
+        or set(location) != {"uri", *_CODEQL_FILE_COORDINATES}
+        or not isinstance(location["uri"], str)
+        or not location["uri"].startswith("file:///src/")
+        or any(
+            type(location[key]) is not int or location[key] < 0
+            for key in _CODEQL_FILE_COORDINATES
+        )
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_REPLAY", "extracted-files location has invalid shape"
+        )
+    return location
 
 
 def _codeql_replay_source_values(profile, coverage, fresh, source, scratch, deadline):
