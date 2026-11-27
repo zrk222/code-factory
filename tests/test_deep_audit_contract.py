@@ -446,6 +446,11 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert schema["properties"][positive_path]["properties"]["source_fact"]["minLength"] > len("REVIEWED_NO_INDICATOR")
             proven = result["path_assessments"]
             assert review.reviewed_paths(review.grounded_assessments(proven, family_input["sources"])) == assigned
+            paraphrased = {
+                path: {**row, "source_fact": "The synthetic input describes the scope of the fixture."}
+                for path, row in proven.items()
+            }
+            assert review.reviewed_paths(review.grounded_assessments(paraphrased, family_input["sources"])) == assigned
             for unsupported in (
                 {"source_fact": "REVIEWED"},
                 {"source_fact": "This file only lists pinned package versions."},

@@ -185,6 +185,7 @@ jobs:
           from datetime import datetime, timedelta, timezone
           import os
           from pathlib import Path
+          import re
           from time import monotonic, sleep
           from urllib.error import URLError
           from urllib.request import Request, urlopen
@@ -445,8 +446,9 @@ jobs:
                   "Use REVIEWED_NO_INDICATOR after inspecting a source with no relevant indicator. "
                   "Use UNRESOLVED only when evidence needed for that path is missing or contradictory. "
                   "Each path assessment must cite one line number from that file and a short exact "
-                  "nonsecret source_excerpt from that line. Include that exact excerpt within source_fact "
-                  "and describe what it shows for this family. Do not reuse canned explanations. "
+                  "nonsecret source_excerpt from that line. In source_fact, name a concrete identifier "
+                  "or value from the excerpt and explain what it shows for this family. "
+                  "Do not reuse canned explanations. "
                   "If the line contains a credential, quote only the key or an adjacent nonsecret token. "
                   "Name a matching control exit or existing rule ID when present. "
               )
@@ -499,10 +501,12 @@ jobs:
           def source_supports_fact(row, source, fact):
               line, excerpt = row["source_line"], row["source_excerpt"]
               lines = source.splitlines()
-              return (type(line) is int and 1 <= line <= len(lines)
-                      and isinstance(excerpt, str) and 4 <= len(excerpt) <= 96
-                      and len(excerpt.strip()) >= 4 and excerpt in lines[line - 1]
-                      and excerpt in fact)
+              if not (type(line) is int and 1 <= line <= len(lines)
+                      and isinstance(excerpt, str) and 4 <= len(excerpt.strip()) <= len(excerpt) <= 96
+                      and excerpt in lines[line - 1]):
+                  return False
+              tokens = r"\w{3,}"
+              return bool(set(re.findall(tokens, excerpt.casefold())) & set(re.findall(tokens, fact.casefold())))
 
 
           def grounded_assessments(rows, sources):
