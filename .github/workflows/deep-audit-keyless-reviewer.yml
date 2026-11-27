@@ -332,7 +332,7 @@ jobs:
               return families_inputs
 
 
-          def response_schema(paths):
+          def response_schema(paths, *, grounded=False):
               text = {"type": "string", "minLength": 1, "maxLength": 2048}
               path = {"enum": sorted(paths)}
               fields = {
@@ -342,6 +342,13 @@ jobs:
                   "evidence": text,
                   "remediation": text,
               }
+              def row_schema(fields):
+                  return {"type": "object", "properties": fields, "required": list(fields),
+                          "additionalProperties": False}
+
+              if grounded:
+                  fields.update({"source_line": {"type": "integer", "minimum": 1},
+                                 "source_excerpt": text})
               assessment = {
                   "type": "object",
                   "properties": {
@@ -355,12 +362,7 @@ jobs:
                   "decision": {"enum": DECISIONS},
                   "findings": {
                       "type": "array",
-                      "items": {
-                          "type": "object",
-                          "properties": fields,
-                          "required": list(fields),
-                          "additionalProperties": False,
-                      },
+                      "items": row_schema(fields),
                   },
                   "coverage_gaps": {"type": "array", "items": text},
                   "path_assessments": {
@@ -368,6 +370,14 @@ jobs:
                       "required": sorted(paths), "additionalProperties": False,
                   },
               }
+              if grounded:
+                  properties.pop("decision")
+                  properties["coverage_gaps"]["items"] = row_schema({"path": path, "reason": text})
+                  properties["control_claims"] = {"type": "array", "items": row_schema({
+                      "kind": {"enum": ["exit_mismatch", "missing_observation"]},
+                      "obligation": text, "path": path, "role": {"enum": ["positive", "negative", "mutation"]},
+                      "observation_sha256": {"type": "string", "maxLength": 64}, "reason": text,
+                  })}
               return {
                   "type": "object",
                   "properties": properties,
@@ -428,9 +438,12 @@ jobs:
                   instructions += "Return only one path assessment for each key in sources."
               else:
                   instructions += (
-                      "Report unexpected defects as findings supported by an exact path and source line or "
-                      "observed contradiction. Record gaps against a specific unmet requirement. "
-                      "An expected control result is not a defect. Use empty findings and coverage_gaps when appropriate."
+                      "Keep ordinary source observations in path_assessments. Use findings only for unexpected "
+                      "source defects, with a one-based source_line and verbatim source_excerpt on that line. "
+                      "Use coverage_gaps for missing source evidence and name the path and reason. "
+                      "For a genuinely missing control observation or unequal exits, use control_claims with the "
+                      "exact obligation, path, role and observation_sha256. A matching expected exit, including a "
+                      "positive failure, satisfies its control. Use empty arrays when there are no exceptions."
                   )
               return [
                   {"role": "system", "content": instructions},
@@ -484,9 +497,74 @@ jobs:
                             if row["state"] != "UNRESOLVED" and has_assessment_rationale(row))
 
 
+          def ground_observed_response(result, payload):
+              if (set(result) != {"findings", "coverage_gaps", "path_assessments", "control_claims"}
+                  or any(not isinstance(result[key], list) for key in ("findings", "coverage_gaps", "control_claims"))):
+                  raise ValueError("invalid grounded review response")
+              sources = payload["sources"]
+              findings, gaps, rejected = [], [], []
+              for gap in result["coverage_gaps"]:
+                  if not isinstance(gap, dict) or set(gap) != {"path", "reason"} or gap["path"] not in sources:
+                      raise ValueError("grounded source gap is outside the assignment")
+                  gaps.append(f"{gap['path']}: {require_str(gap['reason'], 'source gap', maximum=1000)}")
+              for finding in result["findings"]:
+                  if not isinstance(finding, dict) or set(finding) != {
+                      "id", "severity", "path", "evidence", "remediation", "source_line", "source_excerpt",
+                  } or finding["path"] not in sources:
+                      raise ValueError("invalid grounded source finding")
+                  identity = require_str(finding["id"], "finding id", maximum=2048)
+                  path = finding["path"]
+                  if identity.strip().upper() in PATH_STATES + DECISIONS:
+                      rejected.append({"kind": "assessment_status_as_finding", "path": path})
+                      continue
+                  excerpt = require_str(finding["source_excerpt"], "source excerpt", maximum=2048).strip()
+                  lines = sources[path].splitlines()
+                  line = finding["source_line"]
+                  if type(line) is not int or not 1 <= line <= len(lines) or not excerpt or excerpt not in lines[line - 1]:
+                      gaps.append(f"{path}: source finding lacks its exact quoted line")
+                      continue
+                  findings.append({key: finding[key] for key in ("id", "severity", "path", "evidence", "remediation")})
+              controls = {
+                  (item["id"], control["fixture_path"], control["role"]): control
+                  for item in payload["obligations"] for control in item["controls"]
+              }
+              for claim in result["control_claims"]:
+                  if not isinstance(claim, dict) or set(claim) != {
+                      "kind", "obligation", "path", "role", "observation_sha256", "reason",
+                  } or claim["path"] not in sources or claim["kind"] not in {"exit_mismatch", "missing_observation"}:
+                      raise ValueError("invalid grounded control claim")
+                  reason = require_str(claim["reason"], "control claim reason", maximum=1000)
+                  path, role = claim["path"], claim["role"]
+                  if role not in ("positive", "negative", "mutation"):
+                      raise ValueError("invalid grounded control role")
+                  obligation = require_str(claim["obligation"], "control obligation", maximum=2048)
+                  observation = controls.get((obligation, path, role), {}).get("observed_challenge")
+                  reference = claim["observation_sha256"]
+                  claims_absence = claim["kind"] == "missing_observation" and reference == ""
+                  if not claims_absence:
+                      require_digest(reference, "control observation")
+                  if not observation or (not claims_absence and reference != observation["observation_sha256"]):
+                      gaps.append(f"{path}: unverified control claim for {role}: {reason}")
+                  elif claim["kind"] == "exit_mismatch" and observation["exit_code"] != controls[
+                      (obligation, path, role)
+                  ]["expected_exit_code"]:
+                      gaps.append(f"{path}: registered control exit mismatch for {role}: {reason}")
+                  else:
+                      rejected.append({"kind": "contradicted_control_claim", "path": path, "role": role,
+                                       "observation_sha256": observation["observation_sha256"]})
+              decision = "INCOMPLETE" if gaps else "FINDINGS" if findings else "ACCEPT"
+              return ({"decision": decision, "findings": findings, "coverage_gaps": gaps,
+                       "path_assessments": result["path_assessments"]}, rejected)
+
+
           def checked_response(raw, payload):
               result = response_content(raw, payload["family"])
+              grounded = dynamic_control_context(payload)
+              if grounded:
+                  result, rejected = ground_observed_response(result, payload)
               validate_response(result, payload["sources"].keys())
+              if grounded:
+                  result["rejected_claims"] = rejected
               result["reviewed_paths"] = reviewed_paths(result["path_assessments"])
               return result
 
@@ -539,7 +617,8 @@ jobs:
           def review_family(payload, deadline):
               family = payload["family"]
               print(f"Review starting: {family}", flush=True)
-              primary = request_review(family_messages(payload), response_schema(payload["sources"]), deadline)
+              schema = response_schema(payload["sources"], grounded=dynamic_control_context(payload))
+              primary = request_review(family_messages(payload), schema, deadline)
               result = checked_response(primary["raw_response"].encode(), payload)
               paths = status_only_paths(result)
               if paths:

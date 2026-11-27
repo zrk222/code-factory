@@ -342,13 +342,40 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert retry["sources"] == {assigned[0]: packet["sources"][assigned[0]]}
             assert retry["path_evidence"] == {assigned[0]: payload["path_evidence"][assigned[0]]}
             expected_coverage.update(assigned)
+            assert "decision" not in body["response_format"]["schema"]["properties"]
+            positive = next(item for item in family_obligation["challenges"] if item["kind"] == "positive")
+            positive_path = positive["fixture_path"]
+            positive_receipt = next(item for item in observed if item["role"] == "positive")
+            claim = {
+                "kind": "exit_mismatch", "obligation": family_obligation["id"], "path": positive_path,
+                "role": "positive", "observation_sha256": positive_receipt["observation_sha256"],
+                "reason": "The positive exit was incorrectly reported as a defect.",
+            }
+            source = packet["sources"][positive_path].splitlines()[0]
+            finding = {
+                "id": "REVIEWED", "severity": "low", "path": positive_path,
+                "evidence": "A routine source observation.", "remediation": "Inspect the source.",
+                "source_line": 1, "source_excerpt": source,
+            }
             result = {
-                "decision": "ACCEPT", "findings": [], "coverage_gaps": [],
+                "findings": [finding], "coverage_gaps": [],
+                "control_claims": [claim, {**claim, "kind": "missing_observation", "observation_sha256": ""}],
                 "path_assessments": {
                     path: {"state": "REVIEWED", "reason": "Inspected the native control and path source"}
                     for path in assigned
                 },
             }
+            grounded, rejected = review.ground_observed_response(result, family_input)
+            assert len(rejected) == 3 and grounded["decision"] == "ACCEPT"
+            assert not grounded["coverage_gaps"] and not grounded["findings"]
+            genuine = {**finding, "id": "fixture-source-defect"}
+            grounded, _ = review.ground_observed_response({**result, "findings": [genuine]}, family_input)
+            assert grounded["findings"][0]["id"] == genuine["id"]
+            unbound = {**claim, "observation_sha256": "f" * 64}
+            grounded, _ = review.ground_observed_response({**result, "control_claims": [unbound],
+                "findings": [{**genuine, "source_line": 999_999}]}, family_input)
+            assert grounded["decision"] == "INCOMPLETE" and len(grounded["coverage_gaps"]) == 2
+            assert not grounded["findings"]
             return BytesIO(json.dumps({
                 "choices": [{"message": {"content": json.dumps(result)}, "finish_reason": "stop"}],
             }).encode())
@@ -615,6 +642,16 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         assert result["decision"] == "ACCEPT" and result["coverage_gaps"] == []
         secrets = next(row for row in coverage if row["family"] == "secrets")
         assert secrets["result"]["reviewed_paths"] == secrets["assigned_paths"]
+    elif mode == "challenge_receipts":
+        assert result["decision"] == "ACCEPT" and not result["findings"]
+        assert not result["coverage_gaps"]
+        for row in coverage:
+            if row["family"] in {"runtime", "fuzz"}:
+                assert [claim["kind"] for claim in row["result"]["rejected_claims"]] == [
+                    "assessment_status_as_finding", "contradicted_control_claim", "contradicted_control_claim",
+                ]
+                assert len(row["result"]["reviewed_paths"]) == len(row["assigned_paths"])
+                assert "incorrectly reported as a defect" in row["raw_response"]
     elif mode == "obligation_gap":
         assert result["decision"] == "INCOMPLETE"
         assert result["coverage_gaps"] == [
