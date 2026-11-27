@@ -440,6 +440,255 @@ def _validate_lane_reports(lane: dict) -> None:
         raise RuntimeAuditError("E_EXECUTION_REPORT", "report paths must be distinct")
 
 
+_BLADE_GRAMMARS = {
+    "win32": (
+        "tree_sitter_{}.dll",
+        {
+            "blade": "c44425f281da96827394caa2a0e6ffd8c92f0c2725b814c42da20802201b4987",
+            "php": "a16ce607cd36da597e13b734f44aab31ac829b6c6d9dd20247cc77fdfe66df28",
+        },
+    ),
+    "linux": (
+        "libtree_sitter_{}.so",
+        {
+            "blade": "d5432387e8554aec42d032eb86c7d49bd61cd892a5877407aa4f6a8c72fe44e2",
+            "php": "efe4a8875a59ca7933e24bb70355de5c0679282686fbdc5628edde284a320768",
+        },
+    ),
+}
+
+
+def _read_blade_input(path: Path, limit: int) -> bytes:
+    if not path.is_file():
+        raise RuntimeAuditError(
+            "E_BLADE_INPUT", f"Expected a regular file: {path.name}"
+        )
+    with path.open("rb") as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise RuntimeAuditError(
+            "E_BLADE_INPUT", f"File exceeds its byte limit: {path.name}"
+        )
+    return raw
+
+
+def _stage_blade_grammars(grammar_dir, sandbox, host, grammar_limit):
+    names, identities = _BLADE_GRAMMARS[host]
+    for kind, expected in identities.items():
+        name = names.format(kind)
+        observed = _read_blade_input(grammar_dir / name, grammar_limit)
+        if sha256(observed).hexdigest() != expected:
+            raise RuntimeAuditError("E_BLADE_GRAMMAR", f"{kind} parser digest differs")
+        if host == "win32":
+            (sandbox / name).write_bytes(observed)
+    return identities
+
+
+def _blade_runtime() -> str:
+    import sys
+    from importlib.metadata import PackageNotFoundError, version
+    from platform import machine
+
+    if sys.platform not in _BLADE_GRAMMARS or machine().lower() not in {
+        "amd64",
+        "x86_64",
+    }:
+        raise RuntimeAuditError(
+            "E_BLADE_PLATFORM", "Blade parser supports Windows and Linux x86-64"
+        )
+    try:
+        runtime = version("tree-sitter")
+    except PackageNotFoundError:
+        runtime = None
+    if runtime != "0.27.0":
+        raise RuntimeAuditError(
+            "E_BLADE_RUNTIME",
+            "Install the Blade extra for tree-sitter 0.27.0 on Python 3.11 or later",
+        )
+    return runtime
+
+
+def blade_structure(source: Path, grammar_dir: Path) -> dict:
+    """Analyze a bounded source snapshot in a fresh parser process."""
+    import sys
+    from tempfile import TemporaryDirectory
+
+    from .runtime_audit_process import run_bounded_command
+
+    if not source.name.lower().endswith(".blade.php"):
+        raise RuntimeAuditError("E_BLADE_INPUT", "Expected a .blade.php template")
+    runtime = _blade_runtime()
+    size_limit = 1024 * 1024
+    raw = _read_blade_input(source, size_limit)
+    try:
+        raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise RuntimeAuditError(
+            "E_BLADE_ENCODING",
+            f"Save {source.name} as UTF-8. Invalid byte at offset {error.start}.",
+        ) from error
+    source_digest = sha256(raw).hexdigest()
+    grammar_dir = grammar_dir.resolve()
+    with TemporaryDirectory(prefix="factory-blade-") as temporary:
+        sandbox = Path(temporary)
+        (sandbox / "source").write_bytes(raw)
+        identities = _stage_blade_grammars(
+            grammar_dir, sandbox, sys.platform, 8 * size_limit
+        )
+        output = sandbox / "report.json"
+        command = [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from factoryline.deep_audit_contract import _run_blade_parser; _run_blade_parser(sys.argv[2])",
+            str(Path(__file__).resolve().parent.parent),
+            str(sandbox if sys.platform == "win32" else grammar_dir),
+        ]
+        facts = run_bounded_command(command, sandbox, 15, sandbox, stdout_path=output)
+        if _adapter_command_failed(facts, [0], float("inf")):
+            raise RuntimeAuditError(
+                "E_BLADE_PARSE", "Bounded Blade parser process failed"
+            )
+        result = strict_json(_read_blade_input(output, size_limit))
+    if (
+        result.get("source_sha256") != source_digest
+        or _read_blade_input(source, size_limit) != raw
+    ):
+        raise RuntimeAuditError(
+            "E_BLADE_SOURCE_DRIFT", "Template bytes changed during analysis"
+        )
+    return {**result, "grammar_sha256": identities, "tree_sitter_version": runtime}
+
+
+def _blade_php_expression(parser, raw: bytes) -> bool:
+    program = parser.parse(b"<?= " + raw + b" ?>").root_node
+    nodes = [node for node in program.named_children if node.type != "comment"]
+    if program.has_error or [node.type for node in nodes] != [
+        "php_tag",
+        "expression_statement",
+        "text_interpolation",
+    ]:
+        return False
+    statement, closing = nodes[1:]
+    return (
+        closing.start_byte == len(raw) + 5
+        and [node.type for node in closing.named_children] == ["php_end_tag"]
+        and all(node.type != ";" for node in statement.children)
+    )
+
+
+def _run_blade_parser(grammar_dir: str) -> None:
+    import ctypes
+    import sys
+    from contextlib import ExitStack
+    from tree_sitter import Language, Parser
+
+    names, identities = _BLADE_GRAMMARS[sys.platform]
+    libraries = {}
+    # Keep both descriptor numbers live until both libraries are loaded.
+    with ExitStack() as assets:
+        for kind, expected in identities.items():
+            path = Path(grammar_dir) / names.format(kind)
+            stream = assets.enter_context(path.open("rb"))
+            if sha256(stream.read(8 * 1024 * 1024 + 1)).hexdigest() != expected:
+                raise RuntimeAuditError(
+                    "E_BLADE_GRAMMAR", f"{kind} parser digest differs"
+                )
+            # On Linux the descriptor keeps the verified file identity across
+            # path replacements and honors the tool volume's execute policy.
+            library_path = (
+                f"/proc/self/fd/{stream.fileno()}"
+                if sys.platform == "linux"
+                else str(path)
+            )
+            libraries[kind] = ctypes.CDLL(library_path)
+    capsule = ctypes.pythonapi.PyCapsule_New
+    capsule.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+    capsule.restype = ctypes.py_object
+    parsers = {}
+    for kind, library in libraries.items():
+        symbol = getattr(library, f"tree_sitter_{kind}")
+        symbol.argtypes, symbol.restype = [], ctypes.c_void_p
+        parsers[kind] = Parser(
+            Language(capsule(symbol(), b"tree_sitter.Language", None))
+        )
+    raw = Path("source").read_bytes()
+    tree = parsers["blade"].parse(raw)
+    issues = [{"reason": "BLADE_PARSE_ERROR"}] if tree.root_node.has_error else []
+    pending = [tree.root_node]
+    echoes = []
+    while pending:
+        node = pending.pop()
+        if node.type in {"comment", "verbatim"}:
+            continue
+        if node.type != "php_statement":
+            pending.extend(reversed(node.named_children))
+            continue
+        _record_blade_echo(node, raw, parsers["php"], echoes, issues)
+        if len(echoes) + len(issues) >= 4000:
+            raise RuntimeAuditError("E_BLADE_LIMIT", "Blade element limit exceeded")
+    print(
+        json.dumps(
+            {
+                "schema": "factory.blade-structure.v1",
+                "state": "INCOMPLETE" if issues else "STRUCTURE_OBSERVED",
+                "scope": "Blade template syntax and active echo expression spans",
+                "source_sha256": sha256(raw).hexdigest(),
+                "echoes": echoes,
+                "issues": issues,
+                "authority": "none",
+            }
+        )
+    )
+
+
+def _record_blade_echo(node, raw, parser, echoes, issues):
+    segment = raw[node.start_byte : node.end_byte]
+    opener = next((mark for mark in (b"{{", b"{!!") if segment.startswith(mark)), None)
+    if opener is None:
+        issues.append(
+            {"reason": "UNMODELED_PHP_STATEMENT", "start_byte": node.start_byte}
+        )
+        return
+    closer = b"}}" if opener == b"{{" else b"!!}"
+    if not segment.endswith(closer) or len(segment) < len(opener) + len(closer):
+        issues.append(
+            {"reason": "UNBOUND_PHP_EXPRESSION", "start_byte": node.start_byte}
+        )
+        return
+    interior = segment[len(opener) : -len(closer)]
+    leading = len(interior) - len(interior.lstrip())
+    start = node.start_byte + len(opener) + leading
+    end = node.start_byte + len(opener) + len(interior.rstrip())
+    fragments = [child for child in node.named_children if child.type == "php_only"]
+    if len(fragments) != 1:
+        issues.append({"reason": "UNBOUND_PHP_EXPRESSION", "start_byte": start})
+        return
+    fragment = fragments[0]
+    chunk = raw[fragment.start_byte : fragment.end_byte]
+    if (
+        fragment.start_byte + len(chunk) - len(chunk.lstrip()),
+        fragment.start_byte + len(chunk.rstrip()),
+    ) != (start, end):
+        issues.append({"reason": "UNBOUND_PHP_EXPRESSION", "start_byte": start})
+        return
+    if not _blade_php_expression(parser, raw[start:end]):
+        issues.append(
+            {"reason": "PHP_EXPRESSION_ERROR", "start_byte": start, "end_byte": end}
+        )
+        return
+    echoes.append(
+        {
+            "mode": "escaped" if opener == b"{{" else "raw",
+            "start_byte": start,
+            "end_byte": end,
+            "line": node.start_point.row + interior.count(b"\n", 0, leading) + 1,
+            "expression_sha256": sha256(raw[start:end]).hexdigest(),
+        }
+    )
+
+
 def _validate_lane_languages(lane: dict) -> None:
     if not isinstance(lane["languages"], list) or not 1 <= len(lane["languages"]) <= 32:
         raise RuntimeAuditError(
@@ -448,6 +697,41 @@ def _validate_lane_languages(lane: dict) -> None:
     for language in lane["languages"]:
         require_str(language, "language", maximum=40)
     _unique(lane["languages"])
+
+
+# Available signed profile names, not installed or executed worker claims.
+_STATIC_PROFILES = {
+    "python": "python",
+    "javascript": "javascript",
+    "typescript": "javascript",
+    "ruby": "ruby",
+    "java": "java",
+    "csharp": "csharp",
+    "go": "go",
+}
+
+
+def _gap_repair(family: str, language: str, path: str) -> str:
+    repair = f"Add a {family} analyzer and source-bound obligation for {language}."
+    if family != "static":
+        return repair
+    if language == "php" and path.lower().endswith(".blade.php"):
+        return (
+            f"{repair} For Blade syntax evidence, run "
+            "factory deep-audit blade-structure <template> --grammar-dir <pinned-grammars>."
+        )
+    if language == "php":
+        return (
+            f"{repair} Supported profiles for a signed lane include "
+            "semgrep-pattern-limited.json and semgrep-php-interfile.json (bounded cross-file)."
+        )
+    codeql = _STATIC_PROFILES.get(language)
+    profiles = [f"codeql-{codeql}-full.json"] if codeql else []
+    if language in _deep_audit_io.SEMGREP_SOURCE_LANGUAGES:
+        profiles.append("semgrep-pattern-limited.json")
+    if profiles:
+        return f"{repair} Supported profiles for a signed lane include {', '.join(profiles)}."
+    return f"{repair} Configure a native profile that supports {language} extraction."
 
 
 def _validate_lane_mode(lane: dict) -> None:

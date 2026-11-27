@@ -6371,7 +6371,9 @@ def test_native_ram_binding_preserves_literal_report_path(codeql):
     assert result[0]["argv"] == expected
 
 
-@pytest.mark.parametrize("language", ["python", "javascript", "ruby", "actions"])
+@pytest.mark.parametrize(
+    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go"]
+)
 def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     profile = json.loads(
         (

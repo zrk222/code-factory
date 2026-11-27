@@ -1,0 +1,19 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "semgrep",
+  "mode": "pattern-limited",
+  "tool_version": "2.0.0",
+  "ruleset_sha256": "289d9bf5e27e926aca40ea00384e2ef34590dea0561d1ee2ece09bbd794a9361",
+  "commands": [{
+    "argv": [
+      "/usr/bin/opengrep", "scan", "--disable-version-check", "--no-git-ignore",
+      "--disable-nosem", "--dataflow-traces", "--enable-interfile",
+      "--interfile-depth=3", "--interfile-timeout=30", "--max-memory=512", "--jobs=1",
+      "--exclude=*.blade.php", "--config", "/opt/factory/rules/semgrep-pattern-limited.yml",
+      "--sarif-output", "{report}", "{source}"
+    ],
+    "accepted_exit_codes": [0, 1]
+  }],
+  "version_argv": ["/usr/bin/opengrep", "--version", "--disable-version-check"],
+  "report_format": "sarif"
+}

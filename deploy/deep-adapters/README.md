@@ -11,7 +11,11 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `codeql-javascript-worker` | CodeQL 2.27.1, JavaScript queries 2.4.6 | SARIF with source-bound code flows | Full JavaScript/TypeScript security-extended suite, including modeled cross-module flows. Candidate extraction and framework models determine coverage. |
 | `codeql-actions-worker` | CodeQL 2.27.1, Actions queries 0.6.36 | SARIF with workflow source-to-sink flows | Full GitHub Actions security-extended suite; workflow injection and trust-boundary models depend on extracted YAML. This does not execute workflows or prove external actions safe. |
 | `codeql-ruby-worker` | CodeQL 2.27.1, Ruby queries 1.6.11 | SARIF with source-bound code flows | Full Ruby security-extended suite with modeled Rails/Rack sources and library-input queries; no build or dependency installation. |
+| `codeql-java-worker` | CodeQL 2.27.1, Java queries 1.11.11 | SARIF and source accounting | Java source-only extraction using the bundled minimal JDK when needed. Kotlin and build-generated source require another profile. |
+| `codeql-csharp-worker` | CodeQL 2.27.1, C# queries 1.10.0, .NET SDK 10.0.404 | SARIF and source accounting | C# source-only extraction. Unavailable dependencies or target packs can leave coverage incomplete. |
+| `codeql-go-worker` | CodeQL 2.27.1, Go queries 1.6.11, Go SDK 1.27.2 | SARIF and source accounting | Compile-only extraction in declared module roots. Supports source-contained and vendored dependencies. Missing modules, cgo and absent external dependencies leave gaps. |
 | `semgrep-worker` | OpenGrep OSS 1.15.0 (Semgrep-compatible), thirty rules across twelve source languages | SARIF with source-bound local flows | Request-to-shell/SQL checks cover Python, JS/TS, PHP, Go, Java, C# and Ruby; explicit unsafe API/trust checks also cover Rust, C/C++ and Swift. Native controls verify safe counterparts, aliases, trace endpoints and detector removal. Pattern-limited only; no interfile or `interprocedural-full` claim. Candidate `.semgrepignore` still requires native source accounting. |
+| `php-interfile-worker` | OpenGrep 2.0.0 | SARIF and native per-rule evidence | Optional cross-file analysis under the five existing PHP rules, bounded to three calls. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
 | `gitleaks-worker` | Gitleaks 8.28.0 | SARIF | Built-in rules are pinned with the image; native accounting limitations remain. |
@@ -37,8 +41,7 @@ and wheel packages are removed from the SDK; this does not mean the Debian
 base has no published advisories.
 The vendored Gitleaks rules come from the official [v8.28.0 configuration](https://github.com/gitleaks/gitleaks/blob/v8.28.0/config/gitleaks.toml). The full upstream MIT license and Copyright 2019 Zachary Rice notice are included in the repository and image at [GITLEAKS-LICENSE.txt](rules/GITLEAKS-LICENSE.txt).
 
-CodeQL's immutable official 2.27.1 bundle digest pins the CLI and its Python
-and JavaScript query packs. These targets do not claim compiled-language coverage. OSV uses
+CodeQL's immutable official 2.27.1 bundle digest pins the CLI and bundled query packs. OSV uses
 offline mode because the signed host run uses `--network=none`. This
 image bundles the verified PyPI snapshot from GCS generation 1794393188720263.
 The release asset retains those bytes after the upstream object rolls over.
@@ -101,6 +104,27 @@ Ruby extraction needs no build, network or installed gems. Run
 report must hold an ordered flow from the controller into the exporter, and the
 safe control must have no findings.
 
+Use `codeql-java-full.json`, `codeql-csharp-full.json` or `codeql-go-full.json`
+for signed static lanes with the matching language. The Go worker discovers
+at most 64 module roots and compiles at most 2,048 packages from normal source
+directories, including tests. Its root discovery skips hidden, vendor and
+testdata directories. It compiles test binaries without running them.
+Go SDK auto-download, proxy lookups and cgo are disabled. Go workspace files
+require a separately qualified profile. Local module replacements must resolve
+inside the mounted source. All workers retain
+the source-hash and database-accounting checks. Missing or degraded source stays
+incomplete. PHP continues to use pattern-limited OpenGrep for its documented
+request shapes. Blade templates and inter-file PHP analysis require separate
+coverage.
+
+Compiled-language CI uses `node scripts/verify_codeql_structural.mjs IMAGE
+RECEIPT SDK_TARGET` to run the fixture twice against one built image ID, using a
+fresh network-isolated container each time. The check binds the profile and fixture bytes, compares
+native findings, diagnostics, and source coverage, and retains both reports and
+timings. These runs measure fixture repeatability on a local image. Signed
+six-family acceptance, analyzer-cache comparisons, and recall require their
+own measurements.
+
 Library-level recall ([evidence](../../docs/evidence/codeql-recall-20261121.json)):
 stock CodeQL 2.27.1 security-extended suites, unmodified, ran on 86 fixed
 advisories (15 per ecosystem, registered before the first scan) that the
@@ -108,8 +132,9 @@ pattern lane detected 0 times. In fix hunks it found Ruby 5 of 15, Python 3 of
 15 and JavaScript/TypeScript 2 of 15: 10 of 45 (22%, Wilson 12.5-36.3%) for
 the three network-free lanes, against 0 of 45 for the pattern lane. Go (0 of 11,
 4 autobuild failures), Java (0 of 13), C# (0 of 2; 7 failed without a .NET SDK)
-and Rust (0 of 2) found nothing, so no worker is added for them: their
-extraction needs dependency resolution that network-less workers cannot do.
+and Rust (0 of 2) found nothing on that sample. The structural worker recipes
+for Java, C# and Go address bounded offline extraction. The study did not
+measure those recipes.
 Route library-level findings to the CodeQL lanes; the pattern lane stays a
 local web-handler and unsafe-API detector.
 
@@ -388,6 +413,48 @@ Semgrep worker through `factory scan --root PATH --deep --worker-config
 .factory/worker-config.json --json`; this cannot satisfy `interprocedural-full`.
 Missing authorization, native execution, challenge or source evidence remains
 INCOMPLETE. Source accounting COMPLETE means processed paths, not full security.
+
+For bounded cross-file PHP analysis, build `php-interfile-worker` and select
+`profiles/semgrep-php-interfile.json` for a signed static lane with engine
+`semgrep`, mode `pattern-limited` and language `php`. Its image derives exactly
+the five rules above from the shared ruleset and verifies their profile hash.
+This lane scans ordinary PHP through at most three calls per flow, with one
+worker thread, a 512 MiB analysis limit and a 30-second interfile limit per
+rule. Blade and the other syntax, framework and rule limitations above still
+apply. A candidate inventory that assigns Blade to this lane stays incomplete
+and retains verified per-rule evidence for its ordinary PHP files.
+The existing worker remains the default for local-flow PHP and other languages.
+
+### Blade source structure
+
+The opt-in `blade-structure` command binds active escaped and raw echo
+expressions to byte spans and a SHA-256 digest of the original template. It
+parses the Blade syntax first, then parses the full interior of each active
+echo as one PHP expression. Comments, escaped literal echoes, and verbatim
+regions are excluded from active-echo accounting. A malformed template or
+expression produces exit 2 and an incomplete report.
+
+Use Python 3.11 or later on Windows or Linux x86-64. Install the `blade` extra
+from this repo and provision the Blade and PHP grammars from
+tree-sitter-language-pack 1.25.2 into a trusted directory:
+
+```sh
+python -m pip install '.[blade]' 'tree-sitter-language-pack==1.25.2'
+python -c "from tree_sitter_language_pack import cache_dir, prefetch; prefetch(['blade', 'php']); print(cache_dir())"
+```
+
+Select the `libs` directory holding the resulting two native grammar files.
+On Linux, keep these files in trusted tool storage on an executable mount. The
+template and report scratch directory can use a no-execute mount.
+
+```sh
+factory deep-audit blade-structure resources/views/example.blade.php --grammar-dir PATH_TO_LIBS --json
+```
+
+The command checks the platform-specific file hashes and runs the parser over
+a private source snapshot. This report covers structural syntax and echo
+spans. Custom directives, component evaluation, and signed scanner coverage
+require their own evidence.
 
 Native fixture preparation: copy `rules/tests/php-controls.php` as
 `semgrep-pattern-limited.php` alongside the matching rules YAML, then run the

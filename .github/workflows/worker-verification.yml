@@ -20,9 +20,11 @@ on:
       - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
+      - scripts/verify_php_interfile.mjs
       - scripts/semgrep_mutation_controls*.mjs
       - scripts/recall_*.mjs
       - scripts/verify_codeql_cross_file.mjs
+      - scripts/verify_codeql_structural.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
   push:
@@ -46,9 +48,11 @@ on:
       - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
+      - scripts/verify_php_interfile.mjs
       - scripts/semgrep_mutation_controls*.mjs
       - scripts/recall_*.mjs
       - scripts/verify_codeql_cross_file.mjs
+      - scripts/verify_codeql_structural.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
   workflow_dispatch:
@@ -56,7 +60,7 @@ on:
       target:
         description: Manual worker selection; automatic PR/push checks are unchanged
         type: choice
-        options: [all, osv-worker, semgrep-worker, codeql-python-worker]
+        options: [all, osv-worker, semgrep-worker, codeql-python-worker, codeql-java-worker, codeql-csharp-worker, codeql-go-worker, php-interfile-worker]
         default: all
 
 permissions:
@@ -92,7 +96,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { appendFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
           import { join } from 'node:path';
-          const targets = ['codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker', 'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker'];
+          const targets = ['codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker', 'codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker', 'php-interfile-worker', 'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker'];
           let result = { sdk: 'true', matrix: JSON.stringify(targets), reason: 'trusted-baseline-unavailable' };
           let temporary;
           try {
@@ -101,7 +105,7 @@ jobs:
               appendFileSync(process.env.GITHUB_OUTPUT, `sdk=false\nmatrix=${JSON.stringify(targets)}\nreason=manual-semgrep-only\n`);
               process.exit(0);
             }
-            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && ['osv-worker', 'codeql-python-worker'].includes(event.inputs?.target)) {
+            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && targets.includes(event.inputs?.target)) {
               appendFileSync(process.env.GITHUB_OUTPUT, `sdk=true\nmatrix=${JSON.stringify([event.inputs.target])}\nreason=manual-selected-sdk\n`);
               process.exit(0);
             }
@@ -112,7 +116,14 @@ jobs:
             const path = join(temporary, 'selector.mjs');
             writeFileSync(path, source);
             const selected = JSON.parse(execFileSync(process.execPath, [path], { encoding: 'utf8', timeout: 30000, env: { ...process.env, GITHUB_OUTPUT: '' } }));
-            if (!['true', 'false'].includes(selected.sdk) || selected.matrix !== JSON.stringify(targets) || !/^[a-z-]+$/.test(selected.reason ?? '')) throw new Error('invalid selector output');
+            const sharedPhpRules = selected.sdk === 'true' && selected.reason === 'shared-php-rules' &&
+              selected.matrix === JSON.stringify(['php-interfile-worker']);
+            const compiledTargets = targets.filter(target => /^codeql-(java|csharp|go)-worker$/.test(target));
+            const compiledOnly = selected.sdk === 'true' && selected.reason === 'compiled-codeql-only'
+              && selected.matrix === JSON.stringify(compiledTargets);
+            const fullMatrix = selected.matrix === JSON.stringify(targets);
+            if (!['true', 'false'].includes(selected.sdk) || (!fullMatrix && !compiledOnly && !sharedPhpRules)
+                || !/^[a-z-]+$/.test(selected.reason ?? '')) throw new Error('invalid selector output');
             result = selected;
           } catch {
             // Missing or failing baseline is conservative: build every SDK worker.
@@ -140,8 +151,27 @@ jobs:
           node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs
           scripts/verify_osv_worker.test.mjs scripts/semgrep_mutation_controls.test.mjs
           scripts/recall_harness.test.mjs scripts/recall_codeql_pairs.test.mjs
+  blade-structure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - name: Provision the pinned Blade parser and grammars
+        run: |
+          python -m pip install ".[blade]" "tree-sitter-language-pack==1.25.2" "pytest>=8.0" "pytest-asyncio>=0.24,<1"
+          grammar_dir="$(python -c "from tree_sitter_language_pack import cache_dir, prefetch; prefetch(['blade', 'php']); print(cache_dir())")"
+          printf 'BLADE_GRAMMAR_DIR=%s\n' "$grammar_dir" >> "$GITHUB_ENV"
+      - name: Verify Blade source fingerprints and malformed-template handling
+        run: |
+          test -d "$BLADE_GRAMMAR_DIR"
+          python -m pytest -q -s tests/test_deep_audit.py::test_blade_structure_pinned_grammar_source_binding
   semgrep-surface:
-    if: github.event_name != 'workflow_dispatch' || (inputs.target != 'osv-worker' && inputs.target != 'codeql-python-worker')
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'semgrep-worker'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -283,4 +313,24 @@ jobs:
         with:
           name: worker-verification-${{ matrix.target }}
           path: worker-verification.json
+          if-no-files-found: error
+      - name: Verify native compiled-language source accounting
+        if: contains(fromJSON('["codeql-java-worker", "codeql-csharp-worker", "codeql-go-worker"]'), matrix.target)
+        run: node scripts/verify_codeql_structural.mjs factory-worker:candidate compiled-codeql.json "${{ matrix.target }}"
+      - name: Retain native compiled-language evidence
+        if: always() && contains(fromJSON('["codeql-java-worker", "codeql-csharp-worker", "codeql-go-worker"]'), matrix.target)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: compiled-codeql-${{ matrix.target }}
+          path: compiled-codeql.json*
+          if-no-files-found: error
+      - name: Verify the PHP interfile worker and its pinned source accounting
+        if: matrix.target == 'php-interfile-worker'
+        run: node scripts/verify_php_interfile.mjs factory-worker:candidate php-interfile.json
+      - name: Retain PHP interfile evidence
+        if: always() && matrix.target == 'php-interfile-worker'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: php-interfile-verification
+          path: php-interfile.json*
           if-no-files-found: error

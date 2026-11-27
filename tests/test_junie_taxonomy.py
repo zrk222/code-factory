@@ -968,7 +968,14 @@ def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     manifest = junie_manifest(tmp_path)
     assert manifest["native_workers"] == workers
     variants = workers["codeql"]["variants"]
-    assert set(variants) == {"javascript_typescript", "ruby", "github_actions"}
+    assert set(variants) == {
+        "javascript_typescript",
+        "ruby",
+        "github_actions",
+        "java",
+        "csharp",
+        "go",
+    }
     for variant in variants.values():
         profile = json.loads(
             (
@@ -1576,10 +1583,14 @@ def test_daily_action_guidance_is_shared_and_uses_real_read_only_commands(tmp_pa
 
 
 def test_php_supplemental_security_scope_is_visible_and_bounded():
-    scope = audit_taxonomy()["native_workers"]["semgrep"]["scope"]
-    assert "PHP .php" in scope
-    assert "callee identity unresolved" in scope
-    assert "PDO/framework/cross-function flows unsupported" in scope
+    default = audit_taxonomy()["native_workers"]["semgrep"]
+    assert "Default profile" in default["scope"]
+    assert "PHP .php" in default["scope"]
+    assert "callee identity unresolved" in default["scope"]
+    interfile = default["variants"]["php_interfile"]
+    assert interfile["profile"] == "semgrep-php-interfile.json"
+    assert "three calls per flow" in interfile["scope"]
+    assert "Blade structure" in interfile["scope"]
 
 
 def test_junie_manifest_uses_one_detached_audit_snapshot(tmp_path, monkeypatch):
