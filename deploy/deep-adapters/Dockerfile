@@ -20,7 +20,7 @@ RUN ldconfig && python -m pip uninstall -y setuptools wheel \
     && python -c 'import ssl,sqlite3,ctypes,bz2,lzma,readline,curses,uuid; print(ssl.OPENSSL_VERSION,sqlite3.sqlite_version)'
 # Keep the explicit worker entrypoint/import closure in sync with its contract test.
 COPY factoryline/__init__.py factoryline/repository_checkpoint_audit.py factoryline/deep_audit_io.py factoryline/deep_audit.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/deep_audit_loop.py factoryline/deep_audit_attestation.py factoryline/audit_taxonomy.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py factoryline/assembly_process.py /usr/local/lib/python3.11/site-packages/factoryline/
-RUN --mount=type=bind,source=factoryline/data/junie_pack.json,target=/tmp/full-junie-pack.json,readonly python -c 'import json,sys; from pathlib import Path; source=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")); target=Path(sys.argv[2]); target.parent.mkdir(parents=True,exist_ok=True); target.write_text(json.dumps({key:source[key] for key in ("agent_six_lane_review","native_harness","native_test_probes")},ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False),encoding="utf-8")' /tmp/full-junie-pack.json /usr/local/lib/python3.11/site-packages/factoryline/data/junie_pack.json
+RUN --mount=type=bind,source=factoryline/data/junie_pack.json,target=/tmp/full-junie-pack.json,readonly python -c 'import json,sys; from pathlib import Path; source=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")); target=Path(sys.argv[2]); target.parent.mkdir(parents=True,exist_ok=True); target.write_text(json.dumps({key:source[key] for key in ("agent_six_lane_review","codeql_worker_variants","native_harness","native_test_probes")},ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False),encoding="utf-8")' /tmp/full-junie-pack.json /usr/local/lib/python3.11/site-packages/factoryline/data/junie_pack.json
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
 LABEL io.code-factory.protocol="factory.deep-worker.v1"
@@ -28,11 +28,15 @@ USER 1000:1000
 WORKDIR /src
 ENTRYPOINT ["/opt/factory/bin/audit-adapter"]
 
-FROM sdk AS semgrep-worker
+FROM sdk AS sdk-yaml
 USER 0:0
-# Restore the existing CF YAML dependency previously supplied by the tool image.
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+# The two Semgrep-compatible profiles share the pinned YAML parser.
 ADD --checksum=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl /tmp/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
 RUN python -m pip install --no-cache-dir --no-index --no-deps /tmp/pyyaml-*.whl && rm /tmp/pyyaml-*.whl
+ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+
+FROM sdk-yaml AS semgrep-worker
 # The Semgrep-compatible OSS fork emits native source/sink traces without login.
 # Reuse the shared Python/module closure instead of another interpreter image.
 ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476469656 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_manylinux_x86 /usr/bin/opengrep
@@ -52,6 +56,16 @@ LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-
 RUN HOME=/tmp /usr/bin/opengrep --version
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+
+FROM sdk-yaml AS php-interfile-worker
+ADD --checksum=sha256:37e93f4da5fd04a18c5c1febbdd12f7e98dfccd4d0c9cf2593bcb25eeb462da0 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_x86 /usr/bin/opengrep
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-php-interfile.json /opt/factory/adapter-profile.json
+RUN --mount=type=bind,source=deploy/deep-adapters/rules/semgrep-pattern-limited.yml,target=/tmp/baseline-rules.yml,readonly \
+    python -I -c 'import sys; from factoryline.deep_audit_attestation import _build_php_interfile_rules; _build_php_interfile_rules(*sys.argv[1:])' \
+    /tmp/baseline-rules.yml /opt/factory/adapter-profile.json /opt/factory/rules/semgrep-pattern-limited.yml
+USER 1000:1000
+RUN HOME=/tmp /usr/bin/opengrep --version | grep -Fx 2.0.0
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-limited" io.code-factory.language="php"
 
 FROM sdk AS codeql-bundle
 USER 0:0
@@ -88,8 +102,42 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-ruby-full.json /opt/
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="ruby"
 
-# Go 1.27.2 OCI index digest verified from Docker Registry; build is linux/amd64.
-FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS osv-build
+# Reuse the pinned Linux/amd64 SDK with the offline Go extractor and the OSV build.
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS go-sdk
+
+FROM codeql-bundle AS codeql-java-worker
+USER 0:0
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite /opt/factory/bin/codeql-check-suite
+RUN /opt/factory/bin/codeql-check-suite java 1.11.11
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-java-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="java"
+
+FROM codeql-bundle AS codeql-csharp-worker
+USER 0:0
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite /opt/factory/bin/codeql-check-suite
+ADD --checksum=sha256:c0610757a818fde4b960d27a0ac421f273068a05dc5ec7abafc01dbf84e9cb4d https://dotnetcli.blob.core.windows.net/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-linux-x64.tar.gz /tmp/dotnet-sdk.tar.gz
+RUN mkdir /opt/dotnet && tar --no-same-owner -xzf /tmp/dotnet-sdk.tar.gz -C /opt/dotnet && rm /tmp/dotnet-sdk.tar.gz \
+    && /opt/factory/bin/codeql-check-suite csharp 1.10.0
+ENV PATH=/opt/dotnet:$PATH DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-csharp /opt/factory/bin/codeql-csharp
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-csharp-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+RUN dotnet --version | grep -Fx 10.0.404
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="csharp"
+
+FROM codeql-bundle AS codeql-go-worker
+USER 0:0
+COPY --from=go-sdk /usr/local/go /usr/local/go
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite /opt/factory/bin/codeql-check-suite
+RUN /opt/factory/bin/codeql-check-suite go 1.6.11
+ENV PATH=/usr/local/go/bin:$PATH
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-go-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+RUN go version | grep -Fx 'go version go1.27.2 linux/amd64'
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="go"
+
+FROM go-sdk AS osv-build
 ADD --checksum=sha256:1ce45371bd4b6480ac512156c2ea70d563753eba62283d160360bfe3cf94a7ab https://github.com/google/osv-scanner/archive/a14aa98ab8408547083d4411091c5fbaf5b47d8e.tar.gz /tmp/osv-scanner.tar.gz
 COPY deploy/deep-adapters/osv-lookup-ledger.patch /tmp/osv-lookup-ledger.patch
 COPY deploy/deep-adapters/osv-extractor-inventory.go /tmp/osv-extractor-inventory.go

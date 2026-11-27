@@ -18,6 +18,10 @@ export const toolSmokes = Object.freeze({
   'codeql-javascript-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
   'codeql-actions-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
   'codeql-ruby-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
+  'codeql-java-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
+  'codeql-csharp-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
+  'codeql-go-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
+  'php-interfile-worker': ['/usr/bin/opengrep', ['--version'], '2.0.0'],
   'osv-worker': ['/usr/local/bin/osv-scanner', ['--version'], '2.2.0'],
   'syft-worker': ['/usr/local/bin/syft', ['version'], '1.33.0'],
   'gitleaks-worker': ['/usr/bin/gitleaks', ['version'], '8.28.0'],
@@ -25,8 +29,8 @@ export const toolSmokes = Object.freeze({
   'runtime-worker': ['/usr/local/bin/python', ['-I', '-m', 'coverage', '--version'], '7.16.1'],
   'fuzz-worker': ['/usr/local/bin/python', ['-I', '-c', 'import atheris; from importlib.metadata import version; print(version("atheris"))'], '3.0.0'],
 });
-export function docker(args, allowed = [0]) {
-  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+export function docker(args, allowed = [0], timeout = 120000) {
+  const result = spawnSync('docker', args, { encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024 });
   if (result.error || !allowed.includes(result.status)) throw new Error(`docker ${args[0]} failed: ${result.error?.message || result.stderr}`);
   return result;
 }

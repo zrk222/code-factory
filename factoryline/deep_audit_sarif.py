@@ -4567,6 +4567,9 @@ def _codeql_result_path(query_path):
             "python-queries",
             "ruby-queries",
             "actions-queries",
+            "java-queries",
+            "csharp-queries",
+            "go-queries",
         }
         or _deep_audit_io.re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", parts[2]) is None
         or not parts[-1].endswith(".ql")
@@ -4641,6 +4644,36 @@ def _codeql_parse_rows(raw):
         ) from error
 
 
+_COMPILED_CODEQL_SOURCE_QUERIES = {
+    "java": (
+        "java",
+        "import semmle.code.java.Diagnostics\n",
+        "count(CompilationUnit n | n = f)",
+        "count(Diagnostic e | e.getSeverity() >= 4 and "
+        "(e.getLocation().getFile() = f or not exists(e.getLocation().getFile())))",
+    ),
+    "csharp": (
+        "cs",
+        "import semmle.code.csharp.commons.Diagnostics\n",
+        "count(Element n | n.getFile() = f)",
+        "count(CompilerError e | e.getLocation().getFile() = f or "
+        "not exists(e.getLocation().getFile())) + "
+        "count(ExtractorError e | e.getLocation().getFile() = f or "
+        "not exists(e.getLocation().getFile()))",
+    ),
+    "go": (
+        "go",
+        "class FactoryGoDiagnostic extends @diagnostic {\n"
+        "  File getFile() { exists(Location loc | diagnostics(this, _, _, _, _, loc) "
+        "and result = loc.getFile()) }\n"
+        '  string toString() { result = "extraction diagnostic" }\n'
+        "}\n",
+        "count(GoFile n | n = f)",
+        "count(FactoryGoDiagnostic e | e.getFile() = f or not exists(e.getFile()))",
+    ),
+}
+
+
 def _codeql_source_query(profile):
     languages = {
         arg.removeprefix("--language=")
@@ -4648,6 +4681,19 @@ def _codeql_source_query(profile):
         for arg in command["argv"]
         if arg.startswith("--language=")
     }
+    if len(languages) != 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_SOURCE", "one supported extractor required"
+        )
+    language = languages.pop()
+    if language in _COMPILED_CODEQL_SOURCE_QUERIES:
+        extension, imports, nodes, errors = _COMPILED_CODEQL_SOURCE_QUERIES[language]
+        query = (
+            f'import {language}\n{imports}from File f where f.getExtension() = "{extension}" '
+            "select f.getRelativePath(), "
+            f"{nodes}, {errors}\n"
+        ).encode("utf-8")
+        return language, query
     definitions = {
         "javascript-typescript": (
             "javascript",
@@ -4672,11 +4718,11 @@ def _codeql_source_query(profile):
             "import codeql.files.FileSystem\nimport codeql.actions.ast.internal.Yaml\n",
         ),
     }
-    if len(languages) != 1 or not languages <= definitions.keys():
+    if language not in definitions:
         raise _deep_audit_io.RuntimeAuditError(
             "E_CODEQL_SOURCE", "one supported extractor required"
         )
-    library, node, error, location, imports = definitions[languages.pop()]
+    library, node, error, location, imports = definitions[language]
     query = (
         f"import {library}\n{imports}from File f select f.getRelativePath(), "
         f"count({node} n | n.getFile()=f), count({error} e | {location}=f)\n"

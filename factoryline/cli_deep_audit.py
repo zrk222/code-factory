@@ -1111,6 +1111,12 @@ def add_parser(sub: Any) -> None:
     coordinator.add_argument("--root", default=".")
     coordinator.add_argument("--session-nonce", required=True)
     coordinator.add_argument("--lease-seconds", type=int, default=300)
+    blade = deep_sub.add_parser(
+        "blade-structure", help="account for Blade echo expression spans"
+    )
+    blade.add_argument("source", type=Path)
+    blade.add_argument("--grammar-dir", type=Path, required=True)
+    blade.add_argument("--json", action="store_true")
     _add_execution_parsers(deep_sub)
     for action in ("evaluate", "status", "compare", "attestation"):
         command = deep_sub.add_parser(action)
@@ -1510,6 +1516,23 @@ def _deep_evaluate(args: Any, root: Path, execute: Any) -> tuple[dict[str, Any],
 def _run_deep(args: Any) -> int:
     if args.deep_cmd == "coordinator":
         return _run_coordinator(args)
+    if args.deep_cmd == "blade-structure":
+        from .deep_audit_contract import blade_structure
+        from .runtime_audit_common import RuntimeAuditError
+
+        try:
+            result = blade_structure(args.source, args.grammar_dir)
+        except (OSError, ValueError, RuntimeAuditError) as exc:
+            return _emit(
+                {
+                    "state": "INCOMPLETE",
+                    "authority": "none",
+                    "code": getattr(exc, "code", "E_BLADE_INPUT"),
+                    "message": str(exc),
+                },
+                2,
+            )
+        return _emit(result, 0 if result["state"] == "STRUCTURE_OBSERVED" else 2)
     if args.deep_cmd in {
         "inventory",
         "scan",
