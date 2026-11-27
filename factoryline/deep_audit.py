@@ -533,38 +533,6 @@ def _container_argv(
     ]
 
 
-def _go_module_prefetch(base, lane, snapshot, name, run_id, candidate, scratch):
-    """Fill a module volume through the public proxy; the offline scan mounts it read-only."""
-    from .runtime_audit_process import run_bounded_command
-
-    volume, prefetch = f"{name}-gomod", f"{name}-gomod-fetch"
-    argv = _container_argv(
-        base,
-        {
-            **lane,
-            "argv": [
-                "/usr/local/bin/python",
-                "-I",
-                "-m",
-                "factoryline.runtime_audit_process",
-                "prefetch-go-modules",
-            ],
-        },
-        snapshot,
-        prefetch,
-        run_id,
-        candidate,
-    )
-    argv[argv.index("--network=none")] = "--network=bridge"
-    index = argv.index("--entrypoint")
-    argv[index:index] = ["--mount", f"type=volume,source={volume},target=/go-modules"]
-    try:
-        run_bounded_command(argv, scratch, min(900, lane["timeout_seconds"]), scratch)
-    finally:
-        _container_cleanup(base, prefetch)
-    return ["--mount", f"type=volume,source={volume},target=/go-modules,readonly"]
-
-
 def _container_cleanup(base: list, name: str) -> bool:
     try:
         _docker_control(base, ["rm", "--force", name])
@@ -668,17 +636,6 @@ def _execute_lane(
                 inventory["candidate_sha256"],
                 contract,
             )
-            if lane["engine"] == "codeql" and lane.get("languages") == ["go"]:
-                index = argv.index("--entrypoint")
-                argv[index:index] = _go_module_prefetch(
-                    base,
-                    lane,
-                    snapshot,
-                    name,
-                    state["run_id"],
-                    inventory["candidate_sha256"],
-                    scratch,
-                )
             facts = run_bounded_command(
                 argv,
                 scratch,
@@ -692,8 +649,6 @@ def _execute_lane(
         stop.set()
         monitor.join(timeout=2)
         cleanup = _container_cleanup(base, name)
-        if lane["engine"] == "codeql" and lane.get("languages") == ["go"]:
-            _docker_control(base, ["volume", "rm", "--force", f"{name}-gomod"])
     if not cleanup:
         raise RuntimeAuditError(
             "E_CONTAINER_CLEANUP", f"Container cleanup could not be verified: {name}"

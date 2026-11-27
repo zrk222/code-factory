@@ -28,8 +28,6 @@ from .runtime_audit_common import (
 
 MAX_OUTPUT = 8 * 1024 * 1024
 _GO_OFFLINE_BINARY = "/usr/local/go/bin/go"
-# Read-only module cache volume filled by prefetch-go-modules before the offline scan.
-_GO_MODULES = Path("/go-modules")
 
 
 def _offline_go_roots(source: Path) -> list[Path]:
@@ -86,10 +84,9 @@ def _compile_offline_go() -> None:
     os.environ.pop("GOFLAGS", None)
     with tempfile.TemporaryDirectory() as scratch:
         directory = Path(scratch)
-        # Use the prefetched volume only when it holds modules; the image ships it empty.
-        prefetched = _GO_MODULES.is_dir() and any(_GO_MODULES.iterdir())
-        modules = _GO_MODULES if prefetched else directory / "modules"
-        os.environ.update(GOPATH=str(directory / "gopath"), GOMODCACHE=str(modules))
+        os.environ.update(
+            GOPATH=str(directory / "gopath"), GOMODCACHE=str(directory / "modules")
+        )
         target = str(directory / "compiled.test")
         for root in _offline_go_roots(source):
             option = _offline_go_module_option(root, source)
@@ -118,27 +115,6 @@ def _compile_offline_go() -> None:
                     cwd=root,
                     check=True,
                 )
-
-
-def _prefetch_go_modules() -> None:
-    """Fill the module volume through the public proxy only; no repository code runs."""
-    os.environ.update(
-        GOTOOLCHAIN="local",
-        GOPROXY="https://proxy.golang.org",
-        GOSUMDB="sum.golang.org",
-        GOVCS="*:off",
-        GOENV="off",
-        GOTELEMETRY="off",
-        GOWORK="off",
-        GOMODCACHE=str(_GO_MODULES),
-    )
-    os.environ.pop("GOFLAGS", None)
-    with tempfile.TemporaryDirectory() as scratch:
-        os.environ["GOPATH"] = scratch
-        for root in _offline_go_roots(Path("/src")):
-            subprocess.run(
-                [_GO_OFFLINE_BINARY, "mod", "download"], cwd=root, check=False
-            )
 
 
 def validate_production_mutation_process(facts: dict) -> bool:
@@ -1776,10 +1752,6 @@ def _validate_polyglot_request(
 
 
 if __name__ == "__main__":
-    _COMMANDS = {
-        "compile-offline-go": _compile_offline_go,
-        "prefetch-go-modules": _prefetch_go_modules,
-    }
-    if len(sys.argv) != 2 or sys.argv[1] not in _COMMANDS:
-        raise SystemExit("Expected compile-offline-go or prefetch-go-modules")
-    _COMMANDS[sys.argv[1]]()
+    if sys.argv[1:] != ["compile-offline-go"]:
+        raise SystemExit("Expected the worker's compile-offline-go command")
+    _compile_offline_go()
