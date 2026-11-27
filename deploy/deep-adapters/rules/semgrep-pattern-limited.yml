@@ -6287,6 +6287,22 @@ rules:
                       ...
                       return $GUARD && $OUT;
               - metavariable-regex: {metavariable: $REPLACE, regex: '^replace(?:All)?$'}
+          # Gate on literal closing markup before matching formatter flow.
+          - patterns:
+              - pattern: $HTML += $OPEN + $VALUE + $CLOSE
+              - pattern-regex: '(?s)\A.*</[A-Za-z][A-Za-z0-9-]*>[\x22\x27].*\z'
+              - metavariable-regex: {metavariable: $OPEN, regex: '^[\x22\x27]<[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?>[\x22\x27]$'}
+              - metavariable-regex: {metavariable: $CLOSE, regex: '^[\x22\x27]</[A-Za-z][A-Za-z0-9-]*>[\x22\x27]$'}
+              - pattern-inside: |
+                  $VALUE = $FORMAT($ROWS[$INDEX].$FIELD, ...);
+                  ...
+              - metavariable-regex: {metavariable: $FORMAT, regex: '(?i)^(?!.*(?:escap|saniti[sz]|encode|safe|purif))[\w$]*format[\w$]*$'}
+              - pattern-not-inside:
+                  patterns:
+                    - pattern: |
+                        $VALUE = $ESC(...);
+                        ...
+                    - metavariable-regex: {metavariable: $ESC, regex: '(?i)^(?:[\w$]+\.)*[\w$]*(?:escap|saniti[sz]|encode|purif)[\w$]*$'}
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:

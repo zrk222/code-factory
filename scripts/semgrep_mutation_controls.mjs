@@ -183,7 +183,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.java.request-path-traversal': 1,
   'opt.factory.rules.java.request-sql-injection': 7,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
-  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 6,
+  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 7,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 6,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.parameter-shell-command': 9,
@@ -293,6 +293,7 @@ export function javascriptControlManifest() {
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 11 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 24 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 40 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 66 },
   ];
 }
 
@@ -306,7 +307,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 404;
+const REVIEWED_FINDINGS = 405;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

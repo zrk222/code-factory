@@ -56,3 +56,25 @@ function escapedLinkMarkup(label: string) {
     return element.outerHTML;
   });
 }
+
+function formattedBody(rows: { label: string }[]) {
+  let html = '';
+  let formatted;
+  for (let i = 0; i < rows.length; i++) {
+    formatted = formatLabel(rows[i].label);
+    // ruleid: javascript.dom-innerhtml-from-variable
+    html += '<span>' + formatted + '</span>';
+  }
+  return html;
+}
+function escapedFormattedBody(rows: { label: string }[]) {
+  let html = '';
+  let formatted;
+  for (let i = 0; i < rows.length; i++) {
+    formatted = formatLabel(rows[i].label);
+    formatted = escapeHtml(formatted);
+    // ok: javascript.dom-innerhtml-from-variable
+    html += '<span>' + formatted + '</span>';
+  }
+  return html;
+}
