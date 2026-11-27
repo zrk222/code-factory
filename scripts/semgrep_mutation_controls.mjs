@@ -157,6 +157,7 @@ export const javascriptControlEndpoints = [
   ['command', 4, 9], ['sql', 23, 26], ['html', 36, 38],
   ['path', 55, 59], ['path', 63, 66], ['path', 70, 73], ['path', 99, 101],
   ['html', 106, 106], ['html', 110, 112], ['html', 116, 118],
+  ['html', 160, 164], ['html', 172, 175],
 ];
 export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.c.unsafe-gets': 2,
@@ -188,7 +189,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.parameter-shell-command': 9,
   'opt.factory.rules.javascript.parameter-sql-text': 11,
   'opt.factory.rules.javascript.request-command-injection': 5,
-  'opt.factory.rules.javascript.request-html-injection': 12,
+  'opt.factory.rules.javascript.request-html-injection': 18,
   'opt.factory.rules.javascript.request-path-traversal': 28,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
@@ -227,17 +228,17 @@ export const fixedReviewedFindingCounts = Object.freeze({
 // Fixed reviewed sink lines of the rule-family controls appended to the .ts
 // fixture (see extensionControlFiles); search-mode rules carry no source line.
 export const typescriptExtensionEndpoints = Object.freeze([
-  ['archive-path-traversal', 165], ['archive-path-traversal', 185], ['archive-path-traversal', 194],
+  ['archive-path-traversal', 205], ['archive-path-traversal', 225], ['archive-path-traversal', 234],
   // The direct sink and interpolation are separate native spans on these lines.
-  ['parameter-shell-command', 207], ['parameter-shell-command', 217],
-  ['parameter-sql-text', 233], ['parameter-path-join-without-containment', 247],
-  ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
-  ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
-  ['request-path-traversal', 305], ['request-path-traversal', 312],
-  ['parameter-path-join-without-containment', 328], ['parameter-sql-text', 343],
-  ['parameter-shell-command', 358], ['parameter-shell-command', 360],
-  ['request-path-traversal', 379], ['request-path-traversal', 381],
-  ['parameter-path-join-without-containment', 403],
+  ['parameter-shell-command', 247], ['parameter-shell-command', 257],
+  ['parameter-sql-text', 273], ['parameter-path-join-without-containment', 287],
+  ['html-template-unescaped-interpolation', 301], ['html-template-unescaped-interpolation', 311],
+  ['dom-innerhtml-from-variable', 321], ['tls-reject-unauthorized-disabled', 330],
+  ['request-path-traversal', 345], ['request-path-traversal', 352],
+  ['parameter-path-join-without-containment', 368], ['parameter-sql-text', 383],
+  ['parameter-shell-command', 398], ['parameter-shell-command', 400],
+  ['request-path-traversal', 419], ['request-path-traversal', 421],
+  ['parameter-path-join-without-containment', 443],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -250,8 +251,8 @@ export function javascriptControlManifest() {
   const combined = ['js', 'ts', 'tsx'].flatMap(extension => {
     const path = `semgrep-pattern-limited.${extension}`;
     const additional = extension === 'tsx' ? [
-      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 159, line: 162 },
-      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 163, line: 165 },
+      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 199, line: 202 },
+      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 203, line: 205 },
     ] : extension === 'ts' ? typescriptExtensionEndpoints.map(([rule, line, spans]) => ({
       rule: `opt.factory.rules.javascript.${rule}`, line, ...(spans ? { spans } : {}),
     })) : [];
@@ -299,7 +300,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 388;
+const REVIEWED_FINDINGS = 394;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

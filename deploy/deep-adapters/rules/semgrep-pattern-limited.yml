@@ -312,7 +312,7 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-89"]
   - id: javascript.request-html-injection
-    message: Request data reaches an HTML response; encode output for its context or use an escaping template.
+    message: Untrusted data reaches an HTML output. Encode it for the output context or preserve text tokens.
     severity: INFO
     languages: [javascript, typescript]
     mode: taint
@@ -320,9 +320,23 @@ rules:
       - pattern: '$REQ.query'
       - pattern: '$REQ.body'
       - pattern: '$REQ.params'
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $MD.renderer.rules.$RULE = ($TOKENS, ...) => { ... }
+              - pattern-inside: |
+                  $MD.renderer.rules.$RULE = function ($TOKENS, ...) { ... }
+          - pattern: $TOKENS[$INDEX]
     options:
       symbolic_propagation: true
     pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $MD.renderer.rules.$RULE = ($TOKENS, ...) => { ... }
+              - pattern-inside: |
+                  $MD.renderer.rules.$RULE = function ($TOKENS, ...) { ... }
+          - pattern: $MD.utils.escapeHtml(...)
       # if (!isValidIp(ip)) return; allowed.has(id); url.includes(name)
       - by-side-effect: true
         patterns:
@@ -344,6 +358,19 @@ rules:
               - pattern: '$RES.send($REQ.$SOURCE.$FIELD)'
               - pattern: '$RES.send($REQ.$SOURCE[$FIELD])'
           - pattern: '$RES.send($HTML)'
+          - focus-metavariable: $HTML
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $TOKEN = new $TOKEN_TYPE($KIND, ...);
+                  ...
+              - pattern-inside: |
+                  let $TOKEN = new $TOKEN_TYPE($KIND, ...);
+                  ...
+          - metavariable-regex:
+              metavariable: $KIND
+              regex: ^["']html_(inline|block)["']$
+          - pattern: $TOKEN.content = $HTML
           - focus-metavariable: $HTML
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
