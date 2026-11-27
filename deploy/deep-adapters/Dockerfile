@@ -3,6 +3,9 @@
 FROM python:3.11.17-slim-trixie@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce AS python-source
 FROM debian:forky-slim@sha256:3c80e257eff6274d593eb33a94bda5174ccd619836e6a728a73e11c97f2213e3 AS sdk
 USER 0:0
+# Every worker inherits UTF-8: CodeQL's Java extractors otherwise mangle non-ASCII
+# source paths before the TypeScript parser reads them (exit 1 during database create).
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # The signed immutable archive supplies fixes absent from Bookworm/Trixie.
 # Valid-Until is disabled only for this historical snapshot; signature and
 # package hash verification remain enforced by apt.
@@ -27,7 +30,6 @@ ENTRYPOINT ["/opt/factory/bin/audit-adapter"]
 
 FROM sdk AS semgrep-worker
 USER 0:0
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # Restore the existing CF YAML dependency previously supplied by the tool image.
 ADD --checksum=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl /tmp/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
 RUN python -m pip install --no-cache-dir --no-index --no-deps /tmp/pyyaml-*.whl && rm /tmp/pyyaml-*.whl

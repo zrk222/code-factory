@@ -2825,6 +2825,7 @@ def test_codeql_worker_builds_compile_only_the_python_suite():
     }
     parent, bundle = stages["codeql-bundle"]
     assert parent == "sdk"
+    assert "ENV LANG=C.UTF-8 LC_ALL=C.UTF-8" in stages["sdk"][1]
     assert "ADD --checksum=sha256:" in bundle
     assert (
         'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
@@ -6155,7 +6156,7 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     inventory = {
         "files": [{"path": "src/a.js", "language": "javascript", "sha256": source_sha}]
     }
-    lane = {"languages": ["javascript"], "engine": "codeql"}
+    lane = {"languages": ["javascript"], "engine": "codeql", "memory_mib": 2048}
     decoded = json.dumps(
         {
             "#select": {

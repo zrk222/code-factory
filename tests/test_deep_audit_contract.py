@@ -5108,3 +5108,52 @@ def test_coordinator_renewal_contention_retries_and_direct_api_never_renews():
     direct = dict(store=_RenewStore(), stop=False, expires_at=expires, job=None)
     module._coordinator_renew(direct, activity=True)
     assert direct["store"].calls == []
+
+
+@pytest.mark.parametrize(
+    "memory_mib, ram_mib", [(1024, 768), (2048, 1536), (4096, 3072), (8192, 7168)]
+)
+def test_codeql_ram_follows_signed_lane_memory(memory_mib, ram_mib):
+    import sys
+
+    from factoryline.deep_audit_contract import _codeql_ram_mib, _native_argv
+
+    lane = {"memory_mib": memory_mib}
+    assert _codeql_ram_mib(lane) == ram_mib
+    command = {"argv": [sys.executable, "--ram={ram_mib}"], "accepted_exit_codes": [0]}
+    assert _native_argv([command], {}, lane)[0]["argv"][1] == f"--ram={ram_mib}"
+    with pytest.raises(RuntimeAuditError, match="lane memory binding required"):
+        _native_argv([command], {})
+
+
+@pytest.mark.parametrize("codeql", [False, True])
+def test_native_ram_binding_preserves_literal_report_path(codeql):
+    from factoryline.deep_audit_contract import _native_argv
+
+    report = "/out/report-{ram_mib}.json"
+    import sys
+
+    argv = [sys.executable, "--output={report}"]
+    expected = [sys.executable, f"--output={report}"]
+    lane = {"engine": "semgrep"}
+    if codeql:
+        argv.append("--ram={ram_mib}")
+        expected.append("--ram=1536")
+        lane = {"engine": "codeql", "memory_mib": 2048}
+    result = _native_argv(
+        [{"argv": argv, "accepted_exit_codes": [0]}], {"report": report}, lane
+    )
+    assert result[0]["argv"] == expected
+
+
+@pytest.mark.parametrize("language", ["python", "javascript", "ruby", "actions"])
+def test_shipped_codeql_profiles_bind_ram_to_lane(language):
+    profile = json.loads(
+        (
+            Path(__file__).parents[1]
+            / f"deploy/deep-adapters/profiles/codeql-{language}-full.json"
+        ).read_text()
+    )
+    analyze = profile["commands"][1]["argv"]
+    assert analyze[1:3] == ["database", "analyze"]
+    assert [a for a in analyze if a.startswith("--ram=")] == ["--ram={ram_mib}"]
