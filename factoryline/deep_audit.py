@@ -5032,6 +5032,7 @@ def _run_native_profile(
                 "fixture": source / ".factory/fuzz_harness.py",
                 **({"config": str(config_path)} if config_path is not None else {}),
             },
+            lane=lane,
         )
         _local_baseline_argv(commands, execution_context)
         invocations = _deep_audit_io._adapter_commands(

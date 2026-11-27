@@ -2912,7 +2912,9 @@ def _codeql_replay_selection(actual, expected):
 def _codeql_replay_fresh(profile, source, scratch, inventory, lane, deadline):
     report = scratch / "replay.sarif"
     commands = _deep_audit_io._native_argv(
-        profile["commands"], {"source": source, "scratch": scratch, "report": report}
+        profile["commands"],
+        {"source": source, "scratch": scratch, "report": report},
+        lane=lane,
     )
     _, invocations = _deep_audit_io._codeql_steps_runner(
         commands, source, _deep_audit_io._codeql_replay_remaining(deadline), scratch
@@ -3344,8 +3346,8 @@ def _codeql_challenge_selection(
     return selected_suite, inventory
 
 
-def _codeql_challenge_steps(profile, bindings, suite):
-    commands = _deep_audit_io._native_argv(profile["commands"], bindings)
+def _codeql_challenge_steps(profile, bindings, suite, lane=None):
+    commands = _deep_audit_io._native_argv(profile["commands"], bindings, lane)
     if (
         len(commands) != 3
         or commands[0]["argv"][1:3] != ["database", "create"]
@@ -3473,7 +3475,7 @@ def _execute_codeql_challenge(
     bindings = _deep_audit_io._native_challenge_bindings(
         root, scratch, report, ledger, selected, _deep_audit_io.digest(manifest)
     )
-    commands = _deep_audit_io._codeql_challenge_steps(profile, bindings, selected)
+    commands = _deep_audit_io._codeql_challenge_steps(profile, bindings, selected, lane)
     configs = {
         _deep_audit_io._codeql_suite_bytes(suite): baseline,
         _deep_audit_io._codeql_suite_bytes(selected): inventory,

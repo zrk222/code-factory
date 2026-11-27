@@ -1776,11 +1776,25 @@ def _native_version(
     return facts
 
 
-def _native_argv(commands: list, bindings: dict) -> list:
+def _codeql_ram_mib(lane: dict) -> int:
+    """Evaluator RAM that fits the lane's container limit with JVM/process headroom."""
+    memory = _deep_audit_io.require_int(
+        lane.get("memory_mib"), "memory_mib", minimum=64, maximum=32768
+    )
+    return memory - min(1024, memory // 4)
+
+
+def _native_argv(commands: list, bindings: dict, lane: dict | None = None) -> list:
     result = []
     for command in commands:
         argv = []
         for value in command["argv"]:
+            if "{ram_mib}" in value:
+                if lane is None or value != "--ram={ram_mib}":
+                    raise _deep_audit_io.RuntimeAuditError(
+                        "E_ADAPTER_PROFILE", "lane memory binding required"
+                    )
+                value = f"--ram={_codeql_ram_mib(lane)}"
             for name, bound in bindings.items():
                 value = value.replace("{" + name + "}", str(bound))
             argv.append(value)

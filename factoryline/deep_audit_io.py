@@ -1620,6 +1620,7 @@ _MOVED_EXPORTS = {
         _adapter_sources
         _bounded_json_bytes
         _codeql_query_ids
+        _codeql_ram_mib
         _codeql_query_preflight
         _codeql_resolved_queries
         _codeql_selection_ids
