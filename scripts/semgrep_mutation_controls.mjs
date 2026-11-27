@@ -168,7 +168,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.disabled-tls-verification': 2,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
   'opt.factory.rules.go.parameter-shell-command': 4,
-  'opt.factory.rules.go.parameter-sql-text': 9,
+  'opt.factory.rules.go.parameter-sql-text': 10,
   'opt.factory.rules.go.request-command-injection': 5,
   'opt.factory.rules.go.request-html-injection': 6,
   'opt.factory.rules.go.request-path-traversal': 1,
@@ -303,7 +303,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 396;
+const REVIEWED_FINDINGS = 397;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

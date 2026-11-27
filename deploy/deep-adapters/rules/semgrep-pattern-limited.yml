@@ -4703,11 +4703,33 @@ rules:
       cwe: ["CWE-89"]
       scope: Function parameters to query/fetch/exec SQL text in the same function; bound parameter arrays are not sinks.
   - id: go.parameter-sql-text
-    message: A function parameter is formatted into SQL text; pass it as a query argument with a placeholder instead.
+    message: A caller-provided value reaches SQL text or a template with SQL helpers. Use bound SQL parameters and restrict template helpers.
     severity: INFO
     languages: [go]
     mode: taint
     pattern-sources:
+    # Bind the registered SQL helpers, caller text and executed template to the same renderer.
+    - label: SQL_TEMPLATE
+      exact: true
+      patterns:
+      - pattern-inside: |
+          func $F(..., $CONTENT string, ...) $RET {
+            ...
+            $TEMPLATE := $BUILD
+            $MAP := $INITIAL(...)
+            $LIB.SQLTemplateFuncs(&$MAP)
+            $TEMPLATE = $TEMPLATE.Funcs($MAP)
+            $RENDERER, $ERR := $TEMPLATE.Funcs($MAP).Parse($CONTENT)
+            ...
+            if $ERR = $RENDERER.Execute(...); $ERR != nil { ... }
+            ...
+          }
+      - metavariable-pattern:
+          metavariable: $BUILD
+          pattern-either:
+          - pattern: template.New(...)
+          - pattern: template.New(...).Delims(...)
+      - pattern: $LIB.SQLTemplateFuncs(&$MAP)
     - label: PARAM
       patterns:
       - pattern-either:
@@ -4749,6 +4771,8 @@ rules:
           - pattern-not: sqlbuilder.Escape(...)
           - pattern-not: sqlbuilder.EscapeAll(...)
     pattern-sinks:
+    - requires: SQL_TEMPLATE
+      pattern: $LIB.SQLTemplateFuncs(&$MAP)
     - requires: PARAM
       patterns:
       - pattern-either:
@@ -4828,7 +4852,7 @@ rules:
       category: security
       confidence: LOW
       cwe: ["CWE-89"]
-      scope: Function parameters to database/sql, sqlx or gorm query text in the same function.
+      scope: Function parameters in database query text or executed templates with SQL helpers in the same function.
   - id: javascript.parameter-sql-text
     message: A function parameter is interpolated into SQL text; use a placeholder and pass the value in the parameters array.
     severity: INFO
