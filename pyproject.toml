@@ -80,6 +80,7 @@ factory = [
   "code-factory-4-design==0.8.0",
 ]
 issues = ["keyring>=25,<26", "truststore>=0.10,<1"]
+blade = ["tree-sitter==0.27.0; python_version >= '3.11'"]
 dev = [
   "psycopg[binary]>=3.2,<4",
   "reportlab>=4,<5",

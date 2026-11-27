@@ -2,14 +2,18 @@ import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+const compiledCodeQLTargets = ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker'];
+
 export const sdkTargets = Object.freeze([
   'codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker',
+  ...compiledCodeQLTargets, 'php-interfile-worker',
   'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker',
 ]);
 
 const hash = /^[a-f0-9]{40}$/i;
+const sharedSemgrepRules = 'deploy/deep-adapters/rules/semgrep-pattern-limited.yml';
 const semgrepPaths = new Set([
-  'deploy/deep-adapters/rules/semgrep-pattern-limited.yml',
+  sharedSemgrepRules,
   'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
   'deploy/deep-adapters/rules/tests/python-controls.txt',
   'deploy/deep-adapters/rules/tests/javascript-controls.js',
@@ -70,7 +74,15 @@ export function selectWorkerTargets(name, event, git = execFileSync) {
     if (!base || !eventHead) return { ...full, reason: 'unresolvable-revisions' };
     const checkout = verifiedCheckout(name, base, eventHead, git);
     const paths = changedPaths(base, checkout, git);
-    if (paths.every(path => semgrepPaths.has(path))) return { sdk: 'false', matrix: JSON.stringify(sdkTargets), reason: 'semgrep-only' };
+    if (paths.every(path => semgrepPaths.has(path))) {
+      if (paths.includes(sharedSemgrepRules)) {
+        return { sdk: 'true', matrix: JSON.stringify(['php-interfile-worker']), reason: 'shared-php-rules' };
+      }
+      return { sdk: 'false', matrix: JSON.stringify(sdkTargets), reason: 'semgrep-only' };
+    }
+    if (paths.every(path => path === 'scripts/verify_codeql_structural.mjs')) {
+      return { ...full, matrix: JSON.stringify(compiledCodeQLTargets), reason: 'compiled-codeql-only' };
+    }
     return { ...full, reason: 'common-or-unknown-path' };
   } catch (error) {
     const known = new Set(['unresolvable-checkout', 'checkout-mismatch', 'empty-or-malformed-diff', 'malformed-path-list']);

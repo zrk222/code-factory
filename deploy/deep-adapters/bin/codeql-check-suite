@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+pack="/opt/codeql/codeql/qlpacks/codeql/$1-queries/$2"
+chmod -R a+rX "$pack"
+/opt/codeql/codeql/codeql resolve queries --format=json "$pack/codeql-suites/$1-security-extended.qls" \
+    | python -I -c 'import json,pathlib,sys; q=json.load(sys.stdin); assert q and all(pathlib.Path(p).with_suffix(".qlx").is_file() for p in q)'

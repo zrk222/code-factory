@@ -2131,6 +2131,58 @@ def _semgrep_rule_inventory(config, lane):
     }
 
 
+def _build_php_interfile_rules(baseline, profile_path, output):
+    import yaml
+
+    from .audit_taxonomy import _NATIVE_WORKERS
+
+    rule_ids = _NATIVE_WORKERS["semgrep"]["php_rule_ids"]
+    rules = [
+        rule
+        for rule in yaml.safe_load(Path(baseline).read_bytes())["rules"]
+        if rule["id"] in rule_ids
+    ]
+    for rule in rules:
+        if rule["languages"] != ["php"] or rule.get("mode") != "taint":
+            raise RuntimeAuditError("E_SEMGREP_RULESET", "expected PHP taint rule")
+        rule.setdefault("options", {})["taint_interfile"] = True
+    raw = _deep_audit_io.canonical_bytes({"rules": rules})
+    profile = strict_json(Path(profile_path).read_bytes())
+    _semgrep_rule_inventory(raw, {**profile, "rule_ids": sorted(rule_ids)})
+    Path(output).write_bytes(raw)
+
+
+_PHP_INTERFILE_FLAGS = (
+    "--enable-interfile",
+    "--interfile-depth=3",
+    "--interfile-timeout=30",
+    "--max-memory=512",
+    "--jobs=1",
+    "--exclude=*.blade.php",
+)
+
+
+def _semgrep_rule_prefix(tool_version):
+    argv = [
+        "/usr/bin/semgrep",
+        "scan",
+        "--json",
+        "--strict",
+        "--metrics=off",
+        "--disable-version-check",
+        "--no-git-ignore",
+        "--disable-nosem",
+        "--no-rewrite-rule-ids",
+        "--config",
+    ]
+    if tool_version in {"1.15.0", "2.0.0"}:
+        argv[0] = "/usr/bin/opengrep"
+        argv.remove("--metrics=off")
+    if tool_version == "2.0.0":
+        argv[-1:-1] = _PHP_INTERFILE_FLAGS
+    return argv
+
+
 def _semgrep_rule_runs(
     profile,
     lane,
@@ -2173,24 +2225,13 @@ def _semgrep_rule_runs(
         config = _deep_audit_io.canonical_bytes({"rules": [rule]})
         config_path, report_path = directory / "rule.json", directory / "report.json"
         config_path.write_bytes(config)
-        argv = [
-            profile["commands"][0]["argv"][0],
-            "scan",
-            "--json",
-            "--strict",
-            "--metrics=off",
-            "--disable-version-check",
-            "--no-git-ignore",
-            "--disable-nosem",
-            "--no-rewrite-rule-ids",
-            "--config",
+        argv = _semgrep_rule_prefix(profile.get("tool_version")) + [
             str(config_path),
             "--json-output",
             str(report_path),
             str(source),
         ]
-        if profile.get("tool_version") == "1.15.0":
-            argv.remove("--metrics=off")
+        argv[0] = profile["commands"][0]["argv"][0]
         options = (
             {"tool_context": execution_context["tool_context"]}
             if execution_context
@@ -2374,21 +2415,7 @@ def _semgrep_raw_bindings(observation, index, *, execution_context=None):
     from pathlib import PurePosixPath
 
     argv = observation["argv"]
-    prefix = [
-        "/usr/bin/semgrep",
-        "scan",
-        "--json",
-        "--strict",
-        "--metrics=off",
-        "--disable-version-check",
-        "--no-git-ignore",
-        "--disable-nosem",
-        "--no-rewrite-rule-ids",
-        "--config",
-    ]
-    if observation["native_report"].get("version") == "1.15.0":
-        prefix[0] = "/usr/bin/opengrep"
-        prefix.remove("--metrics=off")
+    prefix = _semgrep_rule_prefix(observation["native_report"].get("version"))
     if execution_context:
         _local_semgrep_raw_argv(observation, index, execution_context, prefix)
     else:
@@ -2485,6 +2512,7 @@ def _native_profile_coverage(
     rule_accounting = None
     native_source_inventory = None
     native_source_inventory_sha256 = None
+    source_accounting = None
     if lane["engine"] == "gitleaks" and ledger is not None and ledger_sha256:
         _deep_audit_io._gitleaks_coverage_preflight(
             execution, report, inventory, lane, challenges, covered_obligations
@@ -2503,34 +2531,30 @@ def _native_profile_coverage(
             execution["raw_report"],
         )
     errors = ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"]
-    complete = False
     if lane["engine"] == "gitleaks":
         errors = _deep_audit_io._gitleaks_coverage_errors(
             rule_accounting, challenges, covered_obligations
         )
-        complete = not errors
     elif lane["engine"] == "trivy":
         errors = _deep_audit_io._trivy_coverage_errors(
             execution, report, inventory, lane, challenges, covered_obligations
         )
-        complete = not errors
     elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
         errors = _deep_audit_io._runtime_coverage_errors(
             report, inventory, lane, challenges, covered_obligations
         )
-        complete = not errors
     elif execution.get("semgrep_rule_execution") is not None:
-        _deep_audit_io._semgrep_source_accounting(
+        source_accounting = _deep_audit_io._semgrep_source_accounting(
             execution, inventory, lane, execution_context=execution_context
         )
-        errors = (
-            []
-            if _deep_audit_io._gitleaks_challenges_complete(
+        required = {
+            "NATIVE_CHALLENGES_REQUIRED": _deep_audit_io._gitleaks_challenges_complete(
                 challenges, covered_obligations
-            )
-            else ["NATIVE_CHALLENGES_REQUIRED"]
-        )
-        complete = not errors
+            ),
+            "NATIVE_SOURCE_ACCOUNTING_REQUIRED": source_accounting["state"]
+            == "COMPLETE",
+        }
+        errors = [error for error, satisfied in required.items() if not satisfied]
     elif lane["engine"] == "osv":
         from .deep_audit_sarif import _osv_lookup_binding_gaps
 
@@ -2544,12 +2568,11 @@ def _native_profile_coverage(
             errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
         if not _deep_audit_io._osv_challenges_complete(challenges, covered_obligations):
             errors.append("NATIVE_CHALLENGES_REQUIRED")
-        complete = not errors
     coverage = {
         "profile_sha256": _deep_audit_io.digest(profile),
         **_local_provider_coverage_identity(lane),
         "schema": "factory.deep-coverage.v1",
-        "complete": complete,
+        "complete": not errors,
         "sources": {
             item["path"]: item["sha256"]
             for item in inventory["files"]
@@ -2561,7 +2584,8 @@ def _native_profile_coverage(
         "ruleset_sha256": profile["ruleset_sha256"],
         "report_sha256": _deep_audit_io.digest(report),
         "native_report_sha256": _deep_audit_io.digest(execution["raw_report"]),
-        "source_accounting": _deep_audit_io._native_source_accounting(
+        "source_accounting": source_accounting
+        or _deep_audit_io._native_source_accounting(
             execution,
             report,
             inventory,
@@ -3257,12 +3281,17 @@ def _semgrep_source_accounting(execution, inventory, lane, *, execution_context=
         if item["language"] in lane["languages"]
     }
     missing = sorted(required - measured)
-    if missing:
+    blade_gap = (
+        lane.get("tool_version") == "2.0.0"
+        and "php" in lane["languages"]
+        and all(path.lower().endswith(".blade.php") for path in missing)
+    )
+    if missing and not blade_gap:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "native source accounting incomplete"
         )
     return {
-        "state": "COMPLETE",
+        "state": "INCOMPLETE" if missing else "COMPLETE",
         "required_paths": sorted(required),
         "measured_paths": sorted(measured),
         "missing_paths": missing,

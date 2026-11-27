@@ -4182,6 +4182,8 @@ def _semgrep_challenge_result(
 
 
 def _semgrep_challenge_command(profile, *, execution_context=None):
+    from .deep_audit_attestation import _PHP_INTERFILE_FLAGS
+
     if profile.get("engine") != "semgrep" or len(profile.get("commands", [])) != 1:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_PROFILE", "one pinned Semgrep command required"
@@ -4201,9 +4203,13 @@ def _semgrep_challenge_command(profile, *, execution_context=None):
         "{report}",
         "{source}",
     ]
-    if profile.get("tool_version") == "1.15.0":
+    tool_version = profile.get("tool_version")
+    if tool_version in {"1.15.0", "2.0.0"}:
         expected[0] = "/usr/bin/opengrep"
         expected.remove("--metrics=off")
+    if tool_version == "2.0.0":
+        config_index = expected.index("--config")
+        expected[config_index:config_index] = _PHP_INTERFILE_FLAGS
     if execution_context:
         expected[0] = execution_context["executable"]
         expected[expected.index("--config") + 1] = execution_context["rules_path"]

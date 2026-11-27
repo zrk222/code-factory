@@ -17,34 +17,30 @@ MEASUREMENT_STATES = tuple(
     "MEASURED NOT_MEASURED UNSUPPORTED NOT_APPLICABLE UNMEASURABLE BLOCKED".split()
 )
 
+_AGENT_USAGE_PACK = json.loads(
+    files("factoryline").joinpath("data", "junie_pack.json").read_text(encoding="utf-8")
+)
+
 _NATIVE_WORKERS = {
     "codeql": {
         "target": "codeql-python-worker",
         "profile": "codeql-python-full.json",
         "version": "2.27.1",
         "scope": "Full Python security-extended suite, precompiled.",
-        "variants": {
-            "javascript_typescript": {
-                "target": "codeql-javascript-worker",
-                "profile": "codeql-javascript-full.json",
-                "scope": "JS/TS security-extended suite; modeled cross-file source-to-sink SARIF flows.",
-            },
-            "ruby": {
-                "target": "codeql-ruby-worker",
-                "profile": "codeql-ruby-full.json",
-                "scope": "Ruby security-extended: Rails/Rack/library cross-file flows; no build.",
-            },
-            "github_actions": {
-                "target": "codeql-actions-worker",
-                "profile": "codeql-actions-full.json",
-                "scope": "Actions security-extended: workflow injection and modeled trust; configuration only.",
-            },
-        },
+        "variants": _AGENT_USAGE_PACK["codeql_worker_variants"],
     },
     "semgrep": {
         "target": "semgrep-worker",
         "profile": "semgrep-pattern-limited.json",
         "version": "1.15.0",
+        "variants": {
+            "php_interfile": {
+                "target": "php-interfile-worker",
+                "version": "2.0.0",
+                "profile": "semgrep-php-interfile.json",
+                "scope": "Five ordinary PHP rules through at most three calls per flow. Use the Blade structure command for templates.",
+            },
+        },
         "php_rule_ids": [
             "php.request-command-injection",
             "php.request-sql-injection",
@@ -52,7 +48,7 @@ _NATIVE_WORKERS = {
             "php.request-file-inclusion",
             "php.request-unsafe-deserialization",
         ],
-        "scope": "OpenGrep OSS: thirty rules across twelve source languages; native source-bound local request-to-sink traces and unsafe API/configuration checks. PHP .php only; callee identity unresolved; PDO/framework/cross-function flows unsupported. No interfile or general accuracy claim. Inline suppression disabled; candidate ignore rules can reduce inspection.",
+        "scope": "Default profile with 30 rules in 12 languages. PHP .php checks are local, with callee identity unresolved. Inline suppression is disabled. Ignores can reduce coverage.",
     },
     "osv": {
         "target": "osv-worker",
@@ -100,7 +96,7 @@ _NATIVE_WORKER_CONTRACT = {
     "agent_action": "Return path, rule, severity, source binding, native/normalized hashes, failures, coverage gaps, repair and exact rerun; mark absent fields/accounting/challenges as gaps.",
     "tracing": "Preserve separate native/normalized digests, source binding and deadline/output/cleanup failures. Optional signed Python HTTP request-associated tracing: agent_usage_contract.six_lane_review.zap_source_trace; declared routes do not prove line execution.",
     "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
-    "selection": "CodeQL: Python, JS/TS, Ruby or Actions by source. Reuse only exact image/candidate-bound evidence; select per edit.",
+    "selection": "Select per source and edit. PHP uses OpenGrep. Reuse exact image- and candidate-bound evidence.",
 }
 
 
@@ -648,9 +644,6 @@ def domain_definition(measurement_id: str) -> dict[str, str] | None:
     return None
 
 
-_AGENT_USAGE_PACK = json.loads(
-    files("factoryline").joinpath("data", "junie_pack.json").read_text(encoding="utf-8")
-)
 _AGENT_USAGE_CONTRACT["six_lane_review"] = _AGENT_USAGE_PACK["agent_six_lane_review"]
 _AGENT_USAGE_CONTRACT["native_harness"] = _AGENT_USAGE_PACK["native_harness"]
 _AGENT_USAGE_CONTRACT["native_test_probes"] = _AGENT_USAGE_PACK["native_test_probes"]
