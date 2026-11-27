@@ -274,6 +274,30 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         body = json.loads(request.data)
         payload = json.loads(body["messages"][1]["content"])
         assigned = sorted(payload["sources"])
+        if (
+            mode == "challenge_receipts"
+            and payload["family"] == "dependencies"
+            and "earlier citations" in body["messages"][0]["content"]
+        ):
+            selected = sorted(
+                path for path in packet["sources"] if path.endswith("requirements.txt")
+            )[:2]
+            assert assigned == selected == body["response_format"]["schema"]["required"]
+            assert set(payload["path_evidence"]) == set(selected)
+            recovered = {
+                path: {
+                    "state": "REVIEWED",
+                    "source_fact": "The synthetic test text states the scope of the fixture.",
+                    "source_excerpt": "synthetic test text",
+                    "source_line": 1,
+                }
+                for path in selected
+            }
+            return BytesIO(
+                json.dumps(
+                    {"choices": [{"message": {"content": json.dumps(recovered)}, "finish_reason": "stop"}]}
+                ).encode()
+            )
         if payload.get("rationale_paths"):
             selected = payload["rationale_paths"]
             assert payload["family"] == "dependencies" and selected == assigned[:2]
@@ -451,6 +475,11 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                 for path, row in proven.items()
             }
             assert review.reviewed_paths(review.grounded_assessments(paraphrased, family_input["sources"])) == assigned
+            cited = {"source_line": 1, "source_excerpt": "def test_owned_control():"}
+            assert review.source_supports_fact(
+                cited, "def test_owned_control():\n    pass",
+                "This function tests the owned control outcome.",
+            )
             for unsupported in (
                 {"source_fact": "REVIEWED"},
                 {"source_fact": "This file only lists pinned package versions."},
@@ -483,6 +512,11 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             disposition = review.disposition([{"family": payload["family"], "result": recorded, "assigned_paths": assigned}])
             assert disposition["decision"] == "INCOMPLETE"
             assert len(disposition["coverage_gaps"]) == len(assigned)
+            if payload["family"] == "dependencies":
+                result["path_assessments"][assigned[0]]["source_line"] = 2
+                result["path_assessments"][assigned[1]]["source_fact"] = (
+                    "This file only lists pinned package versions."
+                )
             return BytesIO(json.dumps({
                 "choices": [{"message": {"content": json.dumps(result)}, "finish_reason": "stop"}],
             }).encode())
@@ -666,6 +700,10 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert recovery["response_sha256"] == sha256_bytes(
                 recovery["raw_response"].encode()
             )
+    if mode == "challenge_receipts":
+        recovered = [row for row in coverage if "rationale_recovery" in row]
+        assert [row["family"] for row in recovered] == ["dependencies"]
+        assert recovered[0]["result"]["reviewed_paths"] == recovered[0]["assigned_paths"]
     for field in ("prompt_sha256", "response_sha256"):
         assert result[field] == digest(
             [

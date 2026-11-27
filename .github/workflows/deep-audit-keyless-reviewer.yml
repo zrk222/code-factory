@@ -446,14 +446,21 @@ jobs:
                   "Use REVIEWED_NO_INDICATOR after inspecting a source with no relevant indicator. "
                   "Use UNRESOLVED only when evidence needed for that path is missing or contradictory. "
                   "Each path assessment must cite one line number from that file and a short exact "
-                  "nonsecret source_excerpt from that line. In source_fact, name a concrete identifier "
-                  "or value from the excerpt and explain what it shows for this family. "
+                  "nonsecret source_excerpt from that line. Repeat a meaningful word, identifier, or "
+                  "value from the exact excerpt in source_fact and explain what it shows for this family. "
+                  "For example, cite a FROM directive and name FROM when describing the base image. "
+                  "When describing behavior, quote the statement in the body that demonstrates it. "
+                  "A function declaration establishes its name or parameters, not its behavior. "
                   "Do not reuse canned explanations. "
                   "If the line contains a credential, quote only the key or an adjacent nonsecret token. "
                   "Name a matching control exit or existing rule ID when present. "
               )
               if recovery:
-                  instructions += "Return only one path assessment for each key in sources."
+                  instructions += (
+                      "The earlier citations for these paths did not pass validation. Check each excerpt "
+                      "against its numbered line and repeat a meaningful term from it in your fact. "
+                      "Return only one path assessment for each key in sources."
+                  )
               else:
                   instructions += (
                       "Keep ordinary source observations in path_assessments. Use findings only for unexpected "
@@ -505,7 +512,7 @@ jobs:
                       and isinstance(excerpt, str) and 4 <= len(excerpt.strip()) <= len(excerpt) <= 96
                       and excerpt in lines[line - 1]):
                   return False
-              tokens = r"\w{3,}"
+              tokens = r"[^\W_]{3,}"
               return bool(set(re.findall(tokens, excerpt.casefold())) & set(re.findall(tokens, fact.casefold())))
 
 
@@ -667,7 +674,7 @@ jobs:
           def rationale_response(raw, payload, paths):
               observed = response_content(raw, payload["family"])
               if dynamic_control_context(payload):
-                  observed = grounded_assessments(observed, payload["sources"])
+                  observed = grounded_assessments(observed, {path: payload["sources"][path] for path in paths})
               validate_path_assessments(observed, set(paths))
               return observed
 
