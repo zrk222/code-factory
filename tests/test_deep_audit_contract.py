@@ -441,7 +441,10 @@ class _KeylessReviewResponder:
         if payload.get("rationale_paths"):
             return _rationale_reply(body, payload, assigned, self.mode)
         if "earlier citations" in body["messages"][0]["content"]:
-            assert self.mode == "challenge_receipts" and payload["family"] == "dependencies"
+            assert (
+                self.mode == "challenge_receipts"
+                and payload["family"] == "dependencies"
+            )
             return _grounded_rationale_reply(body, payload, self.packet["sources"])
         schema = body["response_format"]["schema"]["properties"]["path_assessments"]
         assert (
@@ -915,7 +918,9 @@ def _assert_family_decision(mode, result, coverage, summary):
         assert not result["coverage_gaps"]
         recovered = [row for row in coverage if "rationale_recovery" in row]
         assert [row["family"] for row in recovered] == ["dependencies"]
-        assert recovered[0]["result"]["reviewed_paths"] == recovered[0]["assigned_paths"]
+        assert (
+            recovered[0]["result"]["reviewed_paths"] == recovered[0]["assigned_paths"]
+        )
         for row in coverage:
             if row["family"] in {"runtime", "fuzz"}:
                 assert [

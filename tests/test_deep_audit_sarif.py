@@ -1593,6 +1593,42 @@ def test_osv_normalization_requires_host_replay_after_valid_retained_evidence(
 
 
 @pytest.mark.parametrize(
+    ("control_path", "complete"),
+    [(None, False), ("different.txt", False), ("requirements.txt", True)],
+)
+def test_syft_inventory_requires_matching_dependency_obligation(
+    monkeypatch, control_path, complete
+):
+    from factoryline import deep_audit_sarif as module
+
+    monkeypatch.setattr(module, "_native_accounting", lambda *_args: None)
+    monkeypatch.setattr(module, "_coverage_source_gaps", lambda *_args: [])
+    monkeypatch.setattr(module, "_coverage_tool_gaps", lambda *_args: [])
+    monkeypatch.setattr(module, "_rule_accounting_gaps", lambda *_args, **_kwargs: [])
+    lane = {
+        "engine": "syft",
+        "family": "dependencies",
+        "native_artifact_roles": ["sbom_json"],
+    }
+    obligations = (
+        [
+            {
+                "id": "lookup",
+                "family": "dependencies",
+                "engine": "osv",
+                "paths": [control_path],
+            }
+        ]
+        if control_path
+        else []
+    )
+    gaps, _, _ = module._coverage_gaps(
+        {}, {"obligations": []}, lane, {"requirements.txt": "a" * 64}, obligations
+    )
+    assert gaps == ([] if complete else ["OBLIGATION_COVERAGE_MISSING"])
+
+
+@pytest.mark.parametrize(
     "error",
     [
         RuntimeAuditError("E_OSV_ARTIFACT", "invalid"),

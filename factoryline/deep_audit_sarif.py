@@ -1948,11 +1948,13 @@ def _coverage_gaps(
     inventory_only = lane["engine"] == "syft" and lane.get("native_artifact_roles") == [
         "sbom_json"
     ]
-    missing = (
-        bool(observed or expected)
-        if inventory_only
-        else _obligation_coverage_missing(observed, expected)
-    )
+    missing = _obligation_coverage_missing(observed, expected)
+    if inventory_only:
+        # Inventory supports the dependency lane only with a bound lookup control.
+        lookup = _covered_obligation_ids(
+            obligations, {**lane, "engine": "osv"}, required
+        )
+        missing = bool(observed or expected) or not lookup
     if missing:
         gaps.append("OBLIGATION_COVERAGE_MISSING")
     return gaps, expected, observed
