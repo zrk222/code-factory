@@ -1734,12 +1734,13 @@ def test_osv_retained_challenge_tampering_is_rejected(damage):
     bound = obligation["challenges"][index]
     observation = challenges["observations"][index]
     evidence = observation["osv_native_evidence"]
-    if damage == "missing_raw_report":
-        del evidence["raw_report"]
-    elif damage == "missing_effective_config":
-        del evidence["effective_config"]
-    elif damage == "missing_database_identity":
-        del evidence["database_identity"]
+    missing_fields = {
+        "missing_raw_report": "raw_report",
+        "missing_effective_config": "effective_config",
+        "missing_database_identity": "database_identity",
+    }
+    if damage in missing_fields:
+        del evidence[missing_fields[damage]]
     elif damage == "bad_database_identity":
         wrong_database = {
             "path": "/opt/factory/osv-db/foreign/all.zip",
