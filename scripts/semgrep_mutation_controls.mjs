@@ -190,7 +190,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.parameter-sql-text': 11,
   'opt.factory.rules.javascript.request-command-injection': 5,
   'opt.factory.rules.javascript.request-html-injection': 18,
-  'opt.factory.rules.javascript.request-path-traversal': 28,
+  'opt.factory.rules.javascript.request-path-traversal': 30,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
@@ -279,6 +279,9 @@ export function javascriptControlManifest() {
     // non-exiting checks, raw concatenations, and reads that precede the check.
     ...[21, 39, 44, 48, 50, 58, 63, 67, 72, 81, 90].map(line => ({ rule: 'opt.factory.rules.javascript.request-path-traversal',
       path: 'typescript-path-guard.ts', line })),
+    ...[[98, 100], [107, 109]].map(([source_line, line]) => ({
+      rule: 'opt.factory.rules.javascript.request-path-traversal', path: 'typescript-path-guard.ts', source_line, line,
+    })),
     // Values inside inline event-handler attributes.
     ...[4, 9].map(line => ({ rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
       path: 'typescript-html-event-handler.ts', line })),
@@ -300,7 +303,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 394;
+const REVIEWED_FINDINGS = 396;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

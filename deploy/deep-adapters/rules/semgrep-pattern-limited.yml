@@ -702,6 +702,13 @@ rules:
           - metavariable-regex:
               metavariable: $KEY
               regex: ^(?i)\w*(path|file|filename|dir|directory|folder|dest|destination|target|output|location)\w*$
+      - patterns:
+          - pattern-either:
+              - pattern: 'const {..., $KEY, ...} = $ARGS'
+              - pattern: 'let {..., $KEY, ...} = $ARGS'
+          - metavariable-regex: {metavariable: $ARGS, regex: '^(params|args|input|payload|options)$'}
+          - metavariable-regex: {metavariable: $KEY, regex: '^(?i)(file|image|media|attachment|resource|document|asset)(key|name|path)$'}
+          - focus-metavariable: $KEY
     pattern-sanitizers:
       # Named containment/sanitizing helpers (safeRel, sanitizePath, resolveWithin...).
       - patterns:
@@ -824,6 +831,20 @@ rules:
     # Existence and metadata probes (exists, stat, access) neither read nor change file
     # content; each vulnerable read or write the probe guards is reported on its own.
     pattern-sinks:
+      - patterns:
+          - pattern: path.join(os.tmpdir(), $PART)
+          - pattern-either:
+              - pattern-inside: |
+                  const $TEMP = path.join(os.tmpdir(), $PART);
+                  ...
+                  const $DATA = await $IO({..., $TEMP, ...});
+                  ...
+              - pattern-inside: |
+                  const $TEMP = path.join(os.tmpdir(), $PART);
+                  ...
+                  await $IO({..., $TEMP, ...});
+                  ...
+          - focus-metavariable: $PART
       - patterns:
           - pattern: fs.readFile($PATH, ...)
           - focus-metavariable: $PATH
