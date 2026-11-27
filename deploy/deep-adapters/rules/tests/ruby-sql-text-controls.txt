@@ -67,3 +67,32 @@ class FinderController < ApplicationController
     @account = Account.find_or_create_by!(params[:account])
   end
 end
+
+
+
+def line_validated_literal(value)
+  case value
+  # ruleid: ruby.parameter-sql-text
+  when /^[01]+$/ then "B'#{value}'"
+  # ruleid: ruby.parameter-sql-text
+  when /^[0-9A-F]+$/i then "X'#{value}'"
+  end
+end
+
+def fully_validated_literal(value)
+  case value
+  # ok: ruby.parameter-sql-text
+  when /\A[01]+\z/ then "B'#{value}'"
+  # ok: ruby.parameter-sql-text
+  when /\A[0-9A-F]+\z/i then "X'#{value}'"
+  end
+end
+
+
+def render_trusted_literal(kind)
+  bits = "1"
+  case kind
+  # ok: ruby.parameter-sql-text
+  when /^flag$/ then "B'#{bits}'"
+  end
+end

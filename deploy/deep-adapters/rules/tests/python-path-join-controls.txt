@@ -266,3 +266,23 @@ def first_entry(root, entry_names):
 def describe(base, name):
     # ok: python.parameter-path-join-without-containment
     return str(base / ("preview-" + name))
+
+
+
+class CachedLocation:
+    def __init__(self, root, uri, prefix_length):
+        # ruleid: python.parameter-path-join-without-containment
+        uri = str(root / uri[prefix_length:])
+        self.source_path = Path(uri).resolve()
+        self.cached_path = self.source_path
+        return
+
+
+class CheckedLocation:
+    def __init__(self, root, uri, prefix_length):
+        # ok: python.parameter-path-join-without-containment
+        uri = str(root / uri[prefix_length:])
+        self.source_path = Path(uri).resolve()
+        self.source_path.relative_to(root.resolve())
+        self.cached_path = self.source_path
+        return

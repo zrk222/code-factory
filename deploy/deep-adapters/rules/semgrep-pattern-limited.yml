@@ -4913,6 +4913,11 @@ rules:
           - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?(?<!`)(?<!\\")#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
           # ActiveRecord query methods given an interpolated string.
           - pattern-regex: '\.(?:where|order|reorder|group|having|joins|select|pluck|from|find_by_sql|lock|count_by_sql)\(\s*(?:Arel\.sql\(\s*)?"[^"\n]*(?<!`)(?<!\\")#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+          # Match the same validated value on both sides using the portable regex frontend.
+          - patterns:
+              - pattern-regex: '(?m)^[ \t]*case[ \t]+(?P<VALUE>[A-Za-z_]\w*)[ \t]*\r?$(?:\n[ \t]*(?:when[ \t]+[^\r\n]*|#[^\r\n]*)?\r?$)+'
+              - pattern-regex: '(?m)^[ \t]*(?P<GUARD>when[ \t]+/\^[^/\r\n]+\$/[imxo]*[ \t]+then[ \t]+"[BX]''#\{(?P<VALUE>[A-Za-z_]\w*)\}''")'
+              - focus-metavariable: $GUARD
       - pattern-not-regex: '(?m)^[ \t]*#(?!\{).*$'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py", "**/db/migrate/**", "**/db/post_migrate/**"]
@@ -5076,6 +5081,16 @@ rules:
         - metavariable-regex:
             metavariable: $SINK
             regex: ^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$
+      # An initializer can publish a derived path for a later reader.
+      - patterns:
+        - pattern-inside: |
+            $P = str($BASE / $RELATIVE)
+            self.$PATH = pathlib.Path($P).resolve()
+            self.$SAVED = self.$PATH
+            return
+        - metavariable-regex:
+            metavariable: $PATH
+            regex: ^(?i)\w*(path|filename)\w*$
       - patterns:
         - pattern-inside: "def $F(...):\n  ...\n"
         - pattern-either:
