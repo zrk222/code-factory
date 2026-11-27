@@ -2,6 +2,7 @@ package controls
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"github.com/huandu/go-sqlbuilder"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
-	"github.com/huandu/go-sqlbuilder"
 )
 
 func archive(name string) error {
@@ -219,4 +219,10 @@ func orderedHostsFromLocal(tx *sqlx.Tx, column string, ids []uint) error {
 	// ruleid: go.parameter-sql-text
 	_, err := tx.Exec(stmt, args...)
 	return err
+}
+
+func renderJsonAttribute(w http.ResponseWriter, req *http.Request) {
+	data, _ := json.Marshal(req.FormValue("label"))
+	// ruleid: go.request-html-injection
+	fmt.Fprintf(w, "<span data-label='%s'></span>", data)
 }
