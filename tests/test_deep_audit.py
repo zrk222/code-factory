@@ -2548,7 +2548,7 @@ def test_runtime_junit_profile_normalizes_native_junit_and_coverage(tmp_path):
 
 
 def semgrep_execution_evidence(
-    language="javascript", source="app.js", version="1.141.0"
+    language="javascript", source="app.js", version="1.141.0", *, extra_sources=()
 ):
     import base64
     from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
@@ -2579,12 +2579,14 @@ def semgrep_execution_evidence(
         "timeout_seconds": 30,
     }
     sources = {"app.py": "a" * 64, source: "b" * 64}
+    sources.update(dict.fromkeys(extra_sources, "f" * 64))
     observations = []
     for index, (rule, path) in enumerate(zip(rules, (source, "app.py"))):
+        scanned = (path, *extra_sources) if index == 0 else (path,)
         native = {
             "version": lane["tool_version"],
             "errors": [],
-            "paths": {"scanned": ["/src/" + path]},
+            "paths": {"scanned": ["/src/" + name for name in scanned]},
             "results": [],
         }
         observations.append(
@@ -2642,7 +2644,7 @@ def semgrep_execution_evidence(
 
 
 def test_semgrep_native_source_budget_rejects_before_tool_execution(tmp_path):
-    from factoryline.deep_audit_io import _run_native_profile
+    from factoryline.deep_audit_io import INVENTORY_LIMIT, _run_native_profile
 
     with pytest.raises(RuntimeAuditError, match="bounded source inventory"):
         _run_native_profile(
@@ -2650,10 +2652,25 @@ def test_semgrep_native_source_budget_rejects_before_tool_execution(tmp_path):
             {},
             tmp_path,
             tmp_path,
-            {"files": [{}] * 65},
+            {"files": [{}] * (INVENTORY_LIMIT + 1)},
             {"engine": "semgrep", "native_artifact_roles": []},
             [],
         )
+
+
+def test_semgrep_native_verifies_all_paths_beyond_sixty_four():
+    from factoryline.deep_audit_io import verify_semgrep_rule_execution
+
+    extra_sources = tuple(f"app-{index:02d}.js" for index in range(64))
+    evidence, lane, sources, baseline = semgrep_execution_evidence(
+        extra_sources=extra_sources
+    )
+
+    checked = verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+
+    assert checked["state"] == "VERIFIED"
+    assert checked["rules"][0]["executed_sources"] == sorted((*extra_sources, "app.js"))
+    assert checked["rules"][0]["not_applicable_sources"] == ["app.py"]
 
 
 def test_osv_baseline_policy_requires_one_trusted_config_and_offline_scope():

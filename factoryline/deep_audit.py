@@ -4955,7 +4955,7 @@ def _run_native_profile(
         config = config_path.read_bytes()
         rule_inventory = _deep_audit_io._runtime_rule_inventory(config, lane)
     elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
-        if len(inventory["files"]) > 64:
+        if len(inventory["files"]) > _deep_audit_io.INVENTORY_LIMIT:
             raise _deep_audit_io.RuntimeAuditError(
                 "E_SEMGREP_EXECUTION", "bounded source inventory required"
             )
