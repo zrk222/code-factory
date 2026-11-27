@@ -762,3 +762,70 @@ def test_verify_registered_transport_rejects_stale_worker_hash():
     files["scripts/precision_native_capture.py"] = "0" * 64
     with pytest.raises(ValueError, match="NATIVE_TRANSPORT_SOURCE_CHANGED"):
         ranked.verify_registered_transport(root, profile, _sha)
+
+
+@pytest.mark.parametrize("corruption", ["none", "duplicate", "stale_packet", "missing"])
+def test_arm_g_adjudication_binds_unique_reviewer_rows(tmp_path, corruption):
+    from scripts.precision_cohort_preflight import arm_g_main
+
+    packet = tmp_path / "packet.json"
+    packet.write_text(
+        json.dumps(
+            {"instructions": "Review inert markers.", "items": [{"item": "marker"}]}
+        )
+    )
+    packet_sha = _sha(packet)
+    left = [{"item": "marker", "verdict": "FP", "reason": "Synthetic control."}]
+    right = [{"item": "marker", "verdict": "TP", "reason": "Synthetic control."}]
+    if corruption == "duplicate":
+        left += right
+    elif corruption == "missing":
+        left.clear()
+    (tmp_path / "labels-opus.json").write_text(
+        json.dumps(
+            {
+                "packet_sha256": "0" * 64
+                if corruption == "stale_packet"
+                else packet_sha,
+                "labels": left,
+            }
+        )
+    )
+    (tmp_path / "labels-fable.json").write_text(
+        json.dumps({"packet_sha256": packet_sha, "labels": right})
+    )
+
+    result = arm_g_main(["adjudication", str(tmp_path)])
+    output = tmp_path / "adjudication-packet.json"
+    if corruption == "none":
+        assert result == 0
+        assert [
+            row["item"] for row in json.loads(output.read_text())["disagreements"]
+        ] == ["marker"]
+    else:
+        assert result == 2
+        assert not output.exists()
+
+
+def test_arm_g_scoring_refuses_a_score_from_another_run(tmp_path, capsys):
+    from scripts.precision_cohort_preflight import arm_g_main
+
+    packet = tmp_path / "packet.json"
+    packet.write_text(json.dumps({"items": [{"item": "marker"}]}))
+    key = tmp_path / "key.json"
+    intended_score = tmp_path / "intended.json"
+    different_score = tmp_path / "different.json"
+    intended_score.write_text(json.dumps({"summary": {"scored": 1}}))
+    different_score.write_text(json.dumps({"summary": {"scored": 2}}))
+    key.write_text(
+        json.dumps(
+            {
+                "packet_sha256": _sha(packet),
+                "score_sha256": _sha(intended_score),
+                "key": {"marker": {}},
+            }
+        )
+    )
+
+    assert arm_g_main(["score", str(tmp_path), str(different_score), _sha(key)]) == 2
+    assert "sealed key bindings differ" in capsys.readouterr().err

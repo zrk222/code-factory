@@ -30,3 +30,10 @@ docs/evidence/rule-confidence.json text eol=lf
 docs/evidence/review-parts-*/part-*.json text eol=lf
 docs/evidence/recall-evaluation-*.json text eol=lf
 docs/evidence/loss-evidence/* -text
+# Arm G pins the raw bytes of the tooling and registered inputs.
+docs/evidence/precision-tier-prereg-20261127/*.txt text eol=lf
+docs/evidence/precision-tier-prereg-20261127/*.json text eol=lf
+scripts/precision_cohort_preflight.py text eol=lf
+scripts/recall_harness.mjs text eol=lf
+scripts/recall_coverage.mjs text eol=lf
+scripts/recall_losses.mjs text eol=lf

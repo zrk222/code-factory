@@ -1,76 +1,73 @@
 {
- "schema": "factory.arm-g-run-lock.v1",
- "date": "2026-11-27",
- "rule": "Run verify_lock.py first, from a clean checkout of the candidate commit. If it fails, do not open, scan or read any reserve or Q4 case.",
- "candidate": {
-  "commit": "the commit that adds this file (branch claude/arm-f-relock, parent origin/main eb697a31)",
-  "rules_sha256": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd"
- },
- "repo_files": {
-  "deploy/deep-adapters/rules/semgrep-pattern-limited.yml": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd",
-  "deploy/deep-adapters/profiles/semgrep-pattern-limited.json": "281cbc17e6317d0ba65347f1b90bea604e380ef0612623b16f1c12c911289c09",
-  "docs/evidence/recall-registered-exposed-161-profile.json": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
-  "docs/evidence/precision-tier-prereg-20261127/prereg.json": "88a4267be6f059e614f615126e4021ca07216f601c6b6ec35619e76cafd55cc1",
-  "docs/evidence/precision-tier-prereg-20261127/build_packet.py": "6a85f1a6841edee42ab1332aa15470b3c13ea849d00740e58ed1e7cf4721d812",
-  "docs/evidence/precision-tier-prereg-20261127/adjudication_packet.py": "a2955ec38ef05a522dff33ac89fba057601f839775cf1b30244bb1b7defa9c1f",
-  "docs/evidence/precision-tier-prereg-20261127/score_arm_g.py": "559df90353eed28e82224a26dd229c31bfa4fb633754a46b30a0a0c337085f0b",
-  "docs/evidence/precision-tier-prereg-20261127/triage_prompt_v3.txt": "18d3bd04e856e90be3e56889ea832c3e9aedb0a99613db347ef6f02aaed5c419",
-  "docs/evidence/precision-tier-prereg-20261127/triage_agent_prompt.txt": "f3f26e27365dd8cd831fd52d757dbfdb14d0043ce976557424ea76d20d1fe4c5",
-  "docs/evidence/precision-tier-prereg-20261127/labeler_prompt.txt": "d7f9e6536845aa4c66a334a1a8fd3b8a04d3f42d0740b3f184b1745a733e5059",
-  "docs/evidence/precision-tier-prereg-20261127/adjudication_prompt.txt": "dafc430139dd565d96856fc8fd7411c8104a4d0fc384fa4f03125dd5cfe4f06c",
-  "docs/evidence/precision-tier-prereg-20261127/verify_lock.py": "d176de92265255cba5a439c1edfb2085d0f7eb20f16eb236d87c36ae1a67fe0b"
- },
- "scorer": {
-  "source": "scripts/ at the candidate commit (identical to origin/main eb697a31)",
-  "files": {
-   "recall_harness.mjs": "e06ec30fc1b55448d5988362e1b04a65a0f8112fdd203a31ce1a37faa3bd8bf4",
-   "recall_coverage.mjs": "643ff35f7455429c2200008e84fb200344527a46c1f62c762d83e3ed3d8f25a5",
-   "recall_losses.mjs": "b5a622969c6f44c1aa267f0780f5083d18e033316e0e0155a9266093349809d8"
-  }
- },
- "engine": {
-  "name": "OpenGrep 2.1.0",
-  "sha256": {
-   "linux": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
-   "windows": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a"
+  "schema": "factory.arm-g-run-lock.v1",
+  "date": "2026-11-27",
+  "rule": "Run python scripts/precision_cohort_preflight.py arm-g verify-lock first from the clean candidate checkout. A failure prevents opening either cohort.",
+  "candidate": {
+    "commit": "the commit containing this lock, based on draft c9efbaf4",
+    "rules_sha256": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd"
   },
-  "score_args": [
-   "--profile",
-   "docs/evidence/recall-registered-exposed-161-profile.json",
-   "--scope",
-   "ecosystem",
-   "--scanner-path-policy",
-   "true",
-   "--jobs",
-   "4",
-   "--extra-arg",
-   "--timeout=15",
-   "--extra-arg",
-   "--jobs=1"
-  ]
- },
- "models": {
-  "triage_stage1": "claude-haiku-5-5, 3 fresh agents per part (Ha, Hb, Hc)",
-  "triage_stage2": "claude-sonnet-5-5, 3 fresh agents per part (Sa, Sb, Sc)",
-  "labelers": "claude-opus-5-5 and claude-fable-5-2",
-  "adjudicators": "a fresh claude-opus-5-5 and a fresh claude-fable-5-2"
- },
- "packet": {
-  "builder": "build_packet.py",
-  "seed": "20261127",
-  "max_items_per_part": 64
- },
- "steps": [
-  "1. verify_lock.py REPO HARNESS_SCRIPTS OPENGREP -> LOCK VERIFIED",
-  "2. score the reserve once: node scripts/recall_harness.mjs score --manifest RESERVE --rules RULES --opengrep ENGINE --workdir W --checkpoint-dir FRESH --out SCORE plus engine.score_args",
-  "3. node scripts/recall_harness.mjs review-alerts --score SCORE --score-sha256 SHA --workdir W --out alerts.json",
-  "4. build_packet.py RUN 20261127 RULES alerts.json=SCORE; record packet and key digests; split packet.json into parts of <= 64 items",
-  "5. stage 1: three fresh Haiku agents per part with triage_agent_prompt.txt -> triage-H{a,b,c}-partN.json",
-  "6. score_arm_g.py RUN --stage2 stage2.json; split; three fresh Sonnet agents per part with triage_agent_prompt.txt -> triage-S{a,b,c}-partN.json",
-  "7. labels (independent of steps 5-6): one Opus and one Fable agent per part of packet.json with labeler_prompt.txt -> labels-opus.json, labels-fable.json",
-  "8. adjudication_packet.py RUN; one fresh Opus and one fresh Fable agent with adjudication_prompt.txt -> adjudication-opus.json, adjudication-fable.json",
-  "9. score_arm_g.py RUN SCORE -> arm G endpoints and secondaries, once; Q4 run separately with the same steps",
-  "Blinding: triage agents never see labels; labelers and adjudicators never see triage outputs, key.json, rule ids, tiers or arms. A failed agent call is retried once, then its verdicts count as missing (SUPPRESS). All prompts and raw outputs are kept with the receipt."
- ],
- "whole_repo_endpoint": "not part of arm G; a separate comparison later"
+  "repo_files": {
+    "deploy/deep-adapters/rules/semgrep-pattern-limited.yml": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd",
+    "deploy/deep-adapters/profiles/semgrep-pattern-limited.json": "281cbc17e6317d0ba65347f1b90bea604e380ef0612623b16f1c12c911289c09",
+    "docs/evidence/recall-registered-exposed-161-profile.json": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+    "docs/evidence/precision-tier-prereg-20261127/prereg.json": "62273f14e14319a130253e28ab7c5845dfd42541166347f6c3b78b4ba8a5052f",
+    "docs/evidence/precision-tier-prereg-20261127/triage_prompt_v3.txt": "18d3bd04e856e90be3e56889ea832c3e9aedb0a99613db347ef6f02aaed5c419",
+    "docs/evidence/precision-tier-prereg-20261127/triage_agent_prompt.txt": "f2f9d01e30ceb0445ca27ccde24833cbf896ec2466a759d27ffdb613f6608978",
+    "docs/evidence/precision-tier-prereg-20261127/labeler_prompt.txt": "e732a32f03ce0527d4378cc3b2a345ecf5e5574da652e805e774b8e1bd35baf1",
+    "docs/evidence/precision-tier-prereg-20261127/adjudication_prompt.txt": "e35209ba29fbffc76ca12ecda0e228a4a04e27f5c90e518c2600af560b3427ee",
+    "scripts/precision_cohort_preflight.py": "5f727966db901503edb8a86f7e4ca7e4437bd91df3d4d1a9e28bade39a7020c1"
+  },
+  "scorer": {
+    "source": "scripts/ at the candidate commit (identical to origin/main eb697a31)",
+    "files": {
+      "recall_harness.mjs": "e06ec30fc1b55448d5988362e1b04a65a0f8112fdd203a31ce1a37faa3bd8bf4",
+      "recall_coverage.mjs": "643ff35f7455429c2200008e84fb200344527a46c1f62c762d83e3ed3d8f25a5",
+      "recall_losses.mjs": "b5a622969c6f44c1aa267f0780f5083d18e033316e0e0155a9266093349809d8"
+    }
+  },
+  "engine": {
+    "name": "OpenGrep 2.1.0",
+    "sha256": {
+      "linux": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+      "windows": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a"
+    },
+    "score_args": [
+      "--profile",
+      "docs/evidence/recall-registered-exposed-161-profile.json",
+      "--scope",
+      "ecosystem",
+      "--scanner-path-policy",
+      "true",
+      "--jobs",
+      "4",
+      "--extra-arg",
+      "--timeout=15",
+      "--extra-arg",
+      "--jobs=1"
+    ]
+  },
+  "models": {
+    "triage_stage1": "claude-haiku-5-5, 3 fresh agents per part (Ha, Hb, Hc)",
+    "triage_stage2": "claude-sonnet-5-5, 3 fresh agents per part (Sa, Sb, Sc)",
+    "labelers": "claude-opus-5-5 and claude-fable-5-2",
+    "adjudicators": "a fresh claude-opus-5-5 and a fresh claude-fable-5-2"
+  },
+  "packet": {
+    "builder": "scripts/precision_cohort_preflight.py arm-g packet",
+    "seed": "20261127",
+    "max_items_per_part": 64
+  },
+  "steps": [
+    "1. python scripts/precision_cohort_preflight.py arm-g verify-lock REPO OPENGREP -> LOCK VERIFIED",
+    "2. score the reserve once: node scripts/recall_harness.mjs score --manifest RESERVE --rules RULES --opengrep ENGINE --workdir W --checkpoint-dir FRESH --out SCORE plus engine.score_args",
+    "3. Record the score receipt SHA-256 from step 2. The next step invokes the pinned review-alerts export with that digest and the recorded score work directory.",
+    "4. python scripts/precision_cohort_preflight.py arm-g packet REPO RUN SCORE W SCORE_SHA256; record packet and key digests; split packet.json into parts of <=64 items. Provide only assigned parts and their parent packet digest to agents.",
+    "5. stage 1: three fresh Haiku agents per part with triage_agent_prompt.txt -> triage-H{a,b,c}-partN.json",
+    "6. python scripts/precision_cohort_preflight.py arm-g stage2 RUN; split stage2.json; give its digest and only assigned parts to fresh Sonnet agents -> triage-S{a,b,c}-partN.json",
+    "7. labels (independent of steps 5-6): one Opus and one Fable agent per part of packet.json with labeler_prompt.txt -> labels-opus.json, labels-fable.json",
+    "8. python scripts/precision_cohort_preflight.py arm-g adjudication RUN; give the output packet and its digest to fresh adjudicators -> adjudication-opus.json and adjudication-fable.json. With zero disagreements, no adjudicator output is needed.",
+    "9. python scripts/precision_cohort_preflight.py arm-g score RUN SCORE KEY_SHA256 -> Arm G endpoints, once. Q4 runs separately with the same steps.",
+    "Blinding: triage agents never see labels; labelers and adjudicators never see triage outputs, key.json, rule ids, tiers or arms. A failed agent call is retried once, then its verdicts count as missing (SUPPRESS). All prompts and raw outputs are kept with the receipt. Keep the key and raw scanner export in the operator work directory; never share that directory with reviewers. Preserve every part row when assembling labels so validation can reject duplicates."
+  ],
+  "whole_repo_endpoint": "not part of arm G; a separate comparison later"
 }

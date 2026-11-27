@@ -2,7 +2,7 @@
  "schema": "factory.precision-tier-prereg.v1",
  "date": "2026-11-27",
  "status": "Pre-registered before any scoring of the 323-case reserve or the 10-case Q4 calendar cohort.",
- "launch_readiness": "Amended 2026-11-27 before the 323-case reserve or the 10-case Q4 cohort is opened. Arm G is the only confirmatory arm. Its population is the recall harness's review-alerts export (exact changed-file membership, full spans, source digests, checked against the score receipt); build_packet.py binds the arm and tier key to the packet digest. Arms C and D (CodeQL corroboration) are not part of the confirmatory run and keep their draft status until source-bound corroboration is qualified.",
+ "launch_readiness": "Amended 2026-11-27 before the 323-case reserve or the 10-case Q4 cohort is opened. Arm G is the only confirmatory arm. Its population is the recall harness's review-alerts export (exact changed-file membership, full spans, source digests, checked against the score receipt); precision_cohort_preflight.py arm-g packet binds the arm and tier key to the packet digest. Arms C and D (CodeQL corroboration) are not part of the confirmatory run and keep their draft status until source-bound corroboration is qualified.",
  "tier_policy": {
   "finding": "alerts from rules whose metadata.confidence is HIGH or MEDIUM",
   "lead": "alerts from rules whose metadata.confidence is LOW (listed for review; nothing is suppressed)",
@@ -32,13 +32,13 @@
  },
  "labeling_protocol": {
   "population": "census of finding-tier alerts; lead-tier census up to 300 alerts, otherwise a seeded (20261127) sample of 300",
-  "packet": "build_packet.py: repository, file, line, span, claimed weakness, code context (+-5 and +-40 lines, file imports); no advisory id, rule id, arm, tier or outcome",
+  "packet": "precision_cohort_preflight.py arm-g packet: repository, file, line, span, claimed weakness, code context (+-5 and +-40 lines, file imports); no advisory id, rule id, arm, tier or outcome",
   "reviewers": "arm 1 fresh Claude Opus agents, arm 2 fresh Claude Sonnet agents, disjoint packet parts, reading only their part, no web",
   "judge": "one fresh Fable 5.2 agent on the disagreements, reading only the judge packet",
   "final": "score_labels.py: agreed verdict, else the judge verdict"
  },
  "tools_sha256": {
-  "build_packet.py": "24a4aa622c14a1a498b2b15ef10fe1b6751d066434379aea8270aba1804b97f0",
+  "scripts/precision_cohort_preflight.py": "5f727966db901503edb8a86f7e4ca7e4437bd91df3d4d1a9e28bade39a7020c1",
   "score_labels.py": "2366898135889db9e2eed59ae1b61363ddc187cc418ae4763ce6e0b1ad7d21fd",
   "tuning-rule-table.txt": "d2312a9f99d01fc7ec2c12130a38362ea5af125c56314daa9147ef606eda8c11"
  },
@@ -77,7 +77,7 @@
  },
  "arm_G_two_stage_triage": {
   "role": "success-criterion arm; replaces arm F as confirmatory. Arm F (Haiku 3/3) and Haiku 3/3 & Sonnet >= 2/3 are secondary, computed from the same votes, no multiplicity claims.",
-  "definition": "finding = an alert with at least 2 of 3 verified Claude Haiku 5.5 REPORT votes and then 3 of 3 verified Claude Sonnet 5.5 REPORT votes; every other alert is a lead (still listed). Both stages use triage_prompt_v3.txt on the same blinded items; Sonnet sees only items that passed the Haiku stage. A vote is verified (model-free, score_arm_g.py) only if it is REPORT, source_kind is a known kind, sink_line is the marked line, and source_line and entry_line appear in the item's numbered context. A missing verdict counts as SUPPRESS; failed calls are retried once, then counted missing.",
+  "definition": "finding = an alert with at least 2 of 3 verified Claude Haiku 5.5 REPORT votes and then 3 of 3 verified Claude Sonnet 5.5 REPORT votes; every other alert is a lead (still listed). Both stages use triage_prompt_v3.txt on the same blinded items; Sonnet sees only items that passed the Haiku stage. A vote is verified (model-free, precision_cohort_preflight.py arm-g score) only if it is REPORT, source_kind is a known kind, sink_line is the marked line, and source_line and entry_line appear in the item's numbered context. A missing verdict counts as SUPPRESS; failed calls are retried once, then counted missing.",
   "models": {
    "stage1": "claude-haiku-5-5, 3 fresh agents per part",
    "stage2": "claude-sonnet-5-5, 3 fresh agents per part",
@@ -98,7 +98,7 @@
    ],
    "disclosure": "Aggregate Q3 reads motivated arm F; no Q3 item informed arm G. The tuning labels used a Sonnet labeler; the reserve labels exclude every triage model."
   },
-  "reserve_labeling": "labelers claude-opus-5-5 and claude-fable-5-2, independently, on every reserve alert (shuffled, blinded: no triage votes, citations, rule id, tier, arm or outcome), labeler_prompt.txt. Splits go to one adjudication round (adjudication_packet.py, adjudication_prompt.txt): a fresh Opus and a fresh Fable each see both rationales; agreement decides, a remaining split is UNCLEAR and excluded from decided n. Sonnet and Haiku never label or adjudicate.",
+  "reserve_labeling": "labelers claude-opus-5-5 and claude-fable-5-2, independently, on every reserve alert (shuffled, blinded: no triage votes, citations, rule id, tier, arm or outcome), labeler_prompt.txt. Splits go to one adjudication round (precision_cohort_preflight.py arm-g adjudication, adjudication_prompt.txt): a fresh Opus and a fresh Fable each see both rationales; agreement decides, a remaining split is UNCLEAR and excluded from decided n. Sonnet and Haiku never label or adjudicate.",
   "decision_rule": {
    "unit": "alert identity (case, path, line, rule, span) from the review-alerts export; cluster ids: case and repository",
    "min_decided": 5,
