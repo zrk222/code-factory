@@ -4666,6 +4666,38 @@ rules:
     languages: [php]
     mode: taint
     pattern-sources:
+      # Bind the untyped property to its numeric default and the raw query append.
+      - label: RAW_OBJECT_SQL_PROPERTY
+        exact: true
+        patterns:
+        - pattern-inside: |-
+            function $F(...) {
+              ...
+              $this->$PROPERTY = $this->$PROPERTY ? $this->$PROPERTY : 0;
+              ...
+              $SQL = $START . $PREFIX . $TABLE;
+              ...
+              $SQL .= $ASSIGN . $this->$PROPERTY;
+              ...
+              $RESULT = $this->$DRIVER->query($SQL);
+              ...
+            }
+        - pattern: $SQL .= $ASSIGN . $VALUE;
+        - metavariable-pattern:
+            metavariable: $VALUE
+            pattern: $this->$PROPERTY
+        - metavariable-regex:
+            metavariable: $START
+            regex: '^["'']UPDATE '
+        - metavariable-regex:
+            metavariable: $ASSIGN
+            regex: ^["'], [A-Za-z_]\w*\s*=\s*["']$
+        - pattern-regex: (?m)\$[A-Za-z_]\w*\s*\.\s*=\s*[\x22\x27], [A-Za-z_]\w*\s*=\s*[\x22\x27]\s*\.\s*\$this->[A-Za-z_]\w*\s*;
+        - pattern-not-regex: (?m)\$this->(?<CAST_FIELD>[A-Za-z_]\w*)\s*=\s*\(\s*(?:int|integer|bool|boolean)\s*\)\s*\$this->\k<CAST_FIELD>[
+            \t]*;\s*\$[A-Za-z_]\w*\s*\.\s*=\s*[\x22\x27], [A-Za-z_]\w*\s*=\s*[\x22\x27]\s*\.\s*\$this->\k<CAST_FIELD>\s*;
+        - pattern-regex: (?ms)^[ \t]*public[ \t]+\$(?<UNTYPED_FIELD>[A-Za-z_]\w*)[ \t]*;(?:(?!^[ \t]*(?:class|trait|interface)\s).)*?\$this->\k<UNTYPED_FIELD>\s*=\s*\$this->\k<UNTYPED_FIELD>\s*\?\s*\$this->\k<UNTYPED_FIELD>\s*:\s*0\s*;(?:(?!^[
+            \t]*(?:class|trait|interface)\s).)*?\$[A-Za-z_]\w*\s*\.\s*=\s*[\x22\x27], [A-Za-z_]\w*\s*=\s*[\x22\x27]\s*\.\s*\$this->\k<UNTYPED_FIELD>\s*;
+        - focus-metavariable: $VALUE
       - label: PARAM
         patterns:
           - pattern-inside: function $F(..., $P, ...) { ... }
@@ -4728,6 +4760,10 @@ rules:
     - pattern: array_map('intval', ...)
       exact: true
     pattern-sinks:
+    - requires: RAW_OBJECT_SQL_PROPERTY
+      patterns:
+      - pattern: $SQL .= $ASSIGN . $VALUE;
+      - focus-metavariable: $VALUE
     - requires: PARAM
       patterns:
       - pattern-either:
@@ -4850,7 +4886,7 @@ rules:
       category: security
       confidence: LOW
       cwe: ["CWE-89"]
-      scope: Function parameters to query/fetch/exec SQL text in the same function; bound parameter arrays are not sinks.
+      scope: Function parameters to query text and untyped fields appended to numeric SQL updates.
   - id: go.parameter-sql-text
     message: A caller-provided value reaches SQL text or a template with SQL helpers. Use bound SQL parameters and restrict template helpers.
     severity: INFO
