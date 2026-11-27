@@ -78,3 +78,30 @@ function escapedFormattedBody(rows: { label: string }[]) {
   }
   return html;
 }
+
+function liveMarkup(node) {
+  // ruleid: javascript.dom-innerhtml-from-variable
+  const element = document.createElement("div");
+  const markup = node.attr("caption");
+  if (markup) {
+    element.innerHTML = decodeURIComponent(markup);
+  } else {
+    element.textContent = "";
+  }
+  const safe = sanitizeHtml(element.outerHTML);
+  return safe;
+}
+
+function localInertDocument(node) {
+  const document = new DOMParser().parseFromString("", "text/html");
+  // ok: javascript.dom-innerhtml-from-variable
+  const element = document.createElement("div");
+  const markup = node.attr("caption");
+  if (markup) {
+    element.innerHTML = decodeURIComponent(markup);
+  } else {
+    element.textContent = "";
+  }
+  const safe = sanitizeHtml(element.outerHTML);
+  return safe;
+}

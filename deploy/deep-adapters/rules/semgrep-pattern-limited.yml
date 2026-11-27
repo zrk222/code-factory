@@ -6303,6 +6303,26 @@ rules:
                         $VALUE = $ESC(...);
                         ...
                     - metavariable-regex: {metavariable: $ESC, regex: '(?i)^(?:[\w$]+\.)*[\w$]*(?:escap|saniti[sz]|encode|purif)[\w$]*$'}
+          # Build parser-derived markup in an inert document before sanitization.
+          - patterns:
+              - pattern: document.createElement(...)
+              - pattern-inside: |
+                  const $ELEMENT = document.createElement(...);
+                  ...
+                  const $CONTENT = $NODE.attr(...);
+                  ...
+                  if (...) {
+                    $ELEMENT.innerHTML = $DECODE($CONTENT);
+                    ...
+                  }
+                  ...
+                  const $SANITIZED = $CLEAN(..., $ELEMENT.outerHTML, ...);
+                  ...
+              - metavariable-regex: {metavariable: $DECODE, regex: '^(?:unescape|decodeURI(?:Component)?)$'}
+              - metavariable-regex: {metavariable: $CLEAN, regex: '(?i)^[A-Za-z_.$]*saniti[sz][A-Za-z_.$]*$'}
+              - pattern-not-inside: |
+                  const document = new DOMParser().parseFromString(...);
+                  ...
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
