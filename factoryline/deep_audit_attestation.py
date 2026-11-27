@@ -2299,7 +2299,7 @@ _PHP_INTERFILE_FLAGS = (
 )
 
 
-def _semgrep_rule_prefix(tool_version):
+def _semgrep_rule_prefix(tool_version, *, mode=None):
     argv = [
         "/usr/bin/semgrep",
         "scan",
@@ -2315,6 +2315,8 @@ def _semgrep_rule_prefix(tool_version):
     if tool_version in _OPENGREP_VERSIONS:
         argv[0] = "/usr/bin/opengrep"
         argv.remove("--metrics=off")
+    if mode == "pattern-inventory":
+        argv.insert(argv.index("--config"), "--x-ignore-semgrepignore-files")
     if tool_version == "2.0.0":
         argv[-1:-1] = _PHP_INTERFILE_FLAGS
     return argv
@@ -2411,7 +2413,9 @@ def _semgrep_rule_runs(
         config = _deep_audit_io.canonical_bytes({"rules": [rule]})
         config_path, report_path = directory / "rule.json", directory / "report.json"
         config_path.write_bytes(config)
-        argv = _semgrep_rule_prefix(profile.get("tool_version")) + [
+        argv = _semgrep_rule_prefix(
+            profile.get("tool_version"), mode=lane.get("mode")
+        ) + [
             str(config_path),
             "--json-output",
             str(report_path),
@@ -2483,6 +2487,7 @@ def verify_semgrep_rule_execution(
             observation,
             index,
             lane["tool_version"],
+            mode=lane.get("mode"),
             execution_context=execution_context,
         )
         facts = observation["execution"]
@@ -2556,7 +2561,7 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
 
 
 def _semgrep_observation_identity(
-    rule, observation, index, tool_version, *, execution_context=None
+    rule, observation, index, tool_version, *, mode=None, execution_context=None
 ):
     import base64
 
@@ -2598,16 +2603,20 @@ def _semgrep_observation_identity(
             "E_SEMGREP_EXECUTION", "native report digest differs"
         )
     _deep_audit_io._semgrep_raw_bindings(
-        observation, index, tool_version, execution_context=execution_context
+        observation, index, tool_version, mode=mode, execution_context=execution_context
     )
 
 
-def _semgrep_raw_bindings(observation, index, tool_version, *, execution_context=None):
+def _semgrep_raw_bindings(
+    observation, index, tool_version, *, mode=None, execution_context=None
+):
     import base64
     from pathlib import PurePosixPath
 
     argv = observation["argv"]
-    prefix = _semgrep_rule_prefix(observation["native_report"].get("version"))
+    prefix = _semgrep_rule_prefix(
+        observation["native_report"].get("version"), mode=mode
+    )
     if execution_context:
         _local_semgrep_raw_argv(observation, index, execution_context, prefix)
     else:

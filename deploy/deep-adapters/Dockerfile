@@ -40,7 +40,8 @@ FROM sdk-yaml AS semgrep-worker
 # The Semgrep-compatible OSS fork emits native source/sink traces without login.
 # Reuse the shared Python/module closure instead of another interpreter image.
 ADD --checksum=sha256:d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v2.1.0/opengrep_linux_x86 /usr/bin/opengrep
-COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.json /opt/factory/adapter-profile.json
+ARG SEMGREP_PROFILE=semgrep-pattern-limited.json
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/${SEMGREP_PROFILE} /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/semgrep-pattern-limited.yml /opt/factory/rules/semgrep-pattern-limited.yml
 RUN mkdir -p /src /out /opt/factory/rules
 WORKDIR /src

@@ -741,7 +741,13 @@ def _validate_lane_mode(lane: dict) -> None:
     semgrep_supplemental = (
         lane["engine"] == "semgrep"
         and lane["family"] == "static"
-        and lane["mode"] == "pattern-limited"
+        and (
+            lane["mode"] == "pattern-limited"
+            or (
+                lane["mode"] == "pattern-inventory"
+                and lane.get("tool_version") == "2.1.0"
+            )
+        )
     )
     if lane["family"] == "static" and not (full_static or semgrep_supplemental):
         raise RuntimeAuditError(

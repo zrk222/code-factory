@@ -1108,6 +1108,39 @@ def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path, shard):
             _semgrep_disable_rule(baseline, "unknown-detector")
 
 
+def test_inventory_scanner_binds_scope_to_signed_mode():
+    from factoryline.deep_audit_attestation import _semgrep_rule_prefix
+    from factoryline.deep_audit_contract import _validate_lane_mode
+    from factoryline.deep_audit_io import _semgrep_challenge_command
+
+    profiles = Path("deploy/deep-adapters/profiles")
+    legacy = json.loads((profiles / "semgrep-pattern-limited.json").read_text())
+    inventory = json.loads((profiles / "semgrep-pattern-inventory.json").read_text())
+    flag = "--x-ignore-semgrepignore-files"
+    assert flag not in _semgrep_challenge_command(legacy)["argv"]
+    assert flag in _semgrep_challenge_command(inventory)["argv"]
+    assert flag not in _semgrep_rule_prefix("2.1.0", mode=legacy["mode"])
+    assert flag in _semgrep_rule_prefix("2.1.0", mode=inventory["mode"])
+    lane = {
+        "engine": "semgrep",
+        "family": "static",
+        "mode": inventory["mode"],
+        "tool_version": "2.1.0",
+        "argv": [
+            "/opt/factory/bin/audit-adapter",
+            "semgrep",
+            "--mode",
+            inventory["mode"],
+        ],
+    }
+    _validate_lane_mode(lane)
+    with pytest.raises(RuntimeAuditError, match="E_ANALYSIS_MODE"):
+        _validate_lane_mode(dict(lane, tool_version="1.15.0"))
+    inventory["commands"][0]["argv"].remove(flag)
+    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_PROFILE"):
+        _semgrep_challenge_command(inventory)
+
+
 @pytest.mark.parametrize(
     "option", ["--disable-nosem", "--no-git-ignore", "--dataflow-traces"]
 )

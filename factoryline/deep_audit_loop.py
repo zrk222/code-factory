@@ -3935,6 +3935,8 @@ def _semgrep_challenge_command(profile, *, execution_context=None):
     if tool_version in _OPENGREP_VERSIONS:
         expected[0] = "/usr/bin/opengrep"
         expected.remove("--metrics=off")
+    if profile.get("mode") == "pattern-inventory":
+        expected.insert(expected.index("--config"), "--x-ignore-semgrepignore-files")
     if tool_version == "2.0.0":
         config_index = expected.index("--config")
         expected[config_index:config_index] = _PHP_INTERFILE_FLAGS
