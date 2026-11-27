@@ -398,6 +398,25 @@ def _family_reply(payload, assigned, mode):
     )
 
 
+def _grounded_rationale_reply(body, payload, sources):
+    selected = sorted(path for path in sources if path.endswith("requirements.txt"))[:2]
+    schema = body["response_format"]["schema"]
+    assert sorted(payload["sources"]) == selected == schema["required"]
+    assert set(payload["path_evidence"]) == set(selected)
+    assert body["max_tokens"] == 128 * len(selected)
+    recovered = {
+        path: {
+            "state": "REVIEWED",
+            "source_fact": "The synthetic test text states the scope of the fixture.",
+            "source_excerpt": "synthetic test text",
+            "source_line": 1,
+        }
+        for path in selected
+    }
+    choice = {"message": {"content": json.dumps(recovered)}, "finish_reason": "stop"}
+    return BytesIO(json.dumps({"choices": [choice]}).encode())
+
+
 class _KeylessReviewResponder:
     def __init__(self, review, plan, packet, mode):
         self.review = review
@@ -421,6 +440,9 @@ class _KeylessReviewResponder:
         assigned = sorted(payload["sources"])
         if payload.get("rationale_paths"):
             return _rationale_reply(body, payload, assigned, self.mode)
+        if "earlier citations" in body["messages"][0]["content"]:
+            assert self.mode == "challenge_receipts" and payload["family"] == "dependencies"
+            return _grounded_rationale_reply(body, payload, self.packet["sources"])
         schema = body["response_format"]["schema"]["properties"]["path_assessments"]
         assert (
             schema["required"] == assigned and schema["additionalProperties"] is False
@@ -762,6 +784,11 @@ class _KeylessReviewResponder:
         )
         assert disposition["decision"] == "INCOMPLETE"
         assert len(disposition["coverage_gaps"]) == len(assigned)
+        if payload["family"] == "dependencies":
+            result["path_assessments"][assigned[0]]["source_line"] = 2
+            result["path_assessments"][assigned[1]]["source_fact"] = (
+                "This file only lists pinned package versions."
+            )
         return BytesIO(
             json.dumps(
                 {
@@ -886,6 +913,9 @@ def _assert_family_decision(mode, result, coverage, summary):
     elif mode == "challenge_receipts":
         assert result["decision"] == "ACCEPT" and not result["findings"]
         assert not result["coverage_gaps"]
+        recovered = [row for row in coverage if "rationale_recovery" in row]
+        assert [row["family"] for row in recovered] == ["dependencies"]
+        assert recovered[0]["result"]["reviewed_paths"] == recovered[0]["assigned_paths"]
         for row in coverage:
             if row["family"] in {"runtime", "fuzz"}:
                 assert [
