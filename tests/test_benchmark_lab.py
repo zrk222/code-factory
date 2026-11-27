@@ -2634,6 +2634,92 @@ def _labels(packet: dict, verdicts: list[str], name: str, tmp_path: Path) -> Pat
     return path
 
 
+def test_native_review_preserves_blinding_and_capture_identity(tmp_path):
+    span = {"startLine": 12, "startColumn": 1, "endColumn": 6}
+    packet = {
+        "schema": "factory.recall-native-precision-packet.v1",
+        "items": [
+            {
+                "item": "opaque-review-id",
+                "file": "Example.java",
+                "context": "parse(input)",
+                "span": span,
+            }
+        ],
+    }
+
+    def write(name, document):
+        path = tmp_path / name
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    def sha(path):
+        return _gain["digest"](path.read_bytes())
+
+    packet_path = write("p.json", packet)
+    capture = {
+        "case": "synthetic-exposed-case",
+        "side": "fixed",
+        "rule": "java/example",
+        "source_bytes": 32,
+        "region": span,
+        "revision": "a" * 40,
+        **{
+            f"{name}_sha256": "b" * 64
+            for name in ("source", "alert", "observation", "sarif", "archive", "input")
+        },
+    }
+    key = {"packet_sha256": sha(packet_path), "key": {"opaque-review-id": capture}}
+    key_path = write("k.json", key)
+    evidence = write(
+        "evidence.json",
+        {
+            "schema": "factory.local-precision-evidence.v1",
+            "scope": {"joined_sha256": "c" * 64, "bundle_sha256": "d" * 64},
+            "packet_sha256": sha(packet_path),
+            "answer_key_sha256": sha(key_path),
+            "items": 1,
+            "case_count": 1,
+            "includes_fix_diff": False,
+            "eligible_hits_added": 0,
+        },
+    )
+    labels = [_labels(packet, ["FP"], name, tmp_path) for name in ("a", "b")]
+    out = tmp_path / "adjudicated.json"
+    args = [
+        "adjudicate",
+        "--packet",
+        str(packet_path),
+        "--key",
+        str(key_path),
+        "--labels",
+        *map(str, labels),
+        "--reviewer",
+        "a",
+        "b",
+        "--out",
+        str(out),
+    ]
+    with pytest.raises(SystemExit, match="native evidence"):
+        _gain["review_main"](args)
+    args += ["--native-evidence", str(evidence)]
+    _gain["review_main"](args)
+    result = json.loads(out.read_bytes())
+    assert result["schema"] == "factory.adjudicated-native-precision.v1"
+    assert result["inputs"]["native_evidence"]["sha256"] == sha(evidence)
+    assert result["final_counts"] == {"FP": 1}
+    assert result["rows"][0]["line"] == 12
+    assert all(result["rows"][0][field] == value for field, value in capture.items())
+    assert "case" not in json.loads(packet_path.read_bytes())["items"][0]
+    with pytest.raises(SystemExit, match="pattern confidence"):
+        _gain["compute_ledger"]([out])
+
+    capture["region"] = {**span, "startLine": 13}
+    write("k.json", key)
+    with pytest.raises(SystemExit, match="native evidence"):
+        _gain["review_main"](args)
+
+
 def test_judge_and_adjudication_flow(tmp_path):
     rules = tmp_path / "rules.yml"
     rules.write_text(REVIEW_RULES)

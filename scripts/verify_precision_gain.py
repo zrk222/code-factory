@@ -789,7 +789,9 @@ def _cache_path(cache: Path, case: dict, item: dict) -> Path:
     if not isinstance(item["parent"], str) or not _SHA1.fullmatch(item["parent"]):
         raise ValueError("invalid source parent")
 
-    return _recall_contained(cache, f"{case['ghsa']}/{item['parent'][:12]}/{item['path']}")
+    return _recall_contained(
+        cache, f"{case['ghsa']}/{item['parent'][:12]}/{item['path']}"
+    )
 
 
 def _filesystem_relative(value) -> Path:
@@ -2317,6 +2319,101 @@ def _adjudication_inputs(args, packet_sha: str, key_bytes: bytes) -> dict:
     return inputs
 
 
+NATIVE_PACKET_SCHEMA = "factory.recall-native-precision-packet.v1"
+NATIVE_ADJUDICATED_SCHEMA = "factory.adjudicated-native-precision.v1"
+NATIVE_CAPTURE_HASHES = (
+    "source_sha256",
+    "alert_sha256",
+    "observation_sha256",
+    "sarif_sha256",
+    "archive_sha256",
+    "input_sha256",
+)
+
+
+def _native_evidence_pin(args, packet: dict, packet_sha: str, key_bytes: bytes):
+    """Bind native verdicts to the exact preverified blind packet and answer key."""
+    path = getattr(args, "native_evidence", None)
+    if packet.get("schema") != NATIVE_PACKET_SCHEMA:
+        if path:
+            raise SystemExit("native evidence requires a native review packet")
+        return None
+    if not path:
+        raise SystemExit("native evidence is required for native adjudication")
+    path = Path(path)
+    evidence_bytes = path.read_bytes()
+    evidence = strict_json(evidence_bytes)
+    if (
+        evidence.get("schema") != "factory.local-precision-evidence.v1"
+        or evidence.get("packet_sha256") != packet_sha
+        or evidence.get("answer_key_sha256") != digest(key_bytes)
+        or evidence.get("items") != len(packet["items"])
+        or evidence.get("includes_fix_diff") is not False
+        or evidence.get("eligible_hits_added") != 0
+    ):
+        raise SystemExit("native evidence does not bind this blind packet and key")
+    scope = evidence.get("scope")
+    if not isinstance(scope, dict) or not all(
+        _hash(scope.get(field)) for field in ("joined_sha256", "bundle_sha256")
+    ):
+        raise SystemExit("native evidence is missing paired capture provenance")
+    return {"file": path.name, "sha256": digest(evidence_bytes)}
+
+
+def _native_review_row(item: dict, capture: dict) -> dict:
+    """Recover location and provenance from the sealed input after review."""
+    span = item.get("span")
+    if not isinstance(span, dict) or span != capture.get("region"):
+        raise SystemExit("native review span differs from the captured alert")
+    line = span.get("startLine")
+    if type(line) is not int or line < 1:
+        raise SystemExit("native review span is missing a valid start line")
+    if capture.get("side") not in ("old", "fixed") or not all(
+        _hash(capture.get(field)) for field in NATIVE_CAPTURE_HASHES
+    ):
+        raise SystemExit("native review is missing capture identity")
+    return {**capture, "file": item["file"], "line": line}
+
+
+def _adjudicated_rows(items, captures, first, second, judged, *, native):
+    """Bind each final verdict to the reviewed position and captured location."""
+    rows, final = [], {}
+    for index, (item, a, b) in enumerate(zip(items, first, second)):
+        if a["verdict"] == b["verdict"]:
+            verdict, judge = a["verdict"], None
+        elif index in judged:
+            verdict = judge = judged[index]
+        else:
+            raise SystemExit(f"disagreement at position {index} has no judge verdict")
+        if final.setdefault(item["item"], verdict) != verdict:
+            raise SystemExit(
+                f"duplicate item {item['item']} received different final verdicts"
+            )
+        capture = captures[item["item"]]
+        location = (
+            _native_review_row(item, capture)
+            if native
+            else {
+                "case": item["repository_case"],
+                "file": item["file"],
+                "line": item["line"],
+                **capture,
+            }
+        )
+        rows.append(
+            {
+                "position": index,
+                "item": item["item"],
+                **location,
+                "reviewer_1": a["verdict"],
+                "reviewer_2": b["verdict"],
+                "judge": judge,
+                "final": verdict,
+            }
+        )
+    return rows, len(final)
+
+
 def adjudicate(args) -> None:
     packet_bytes = Path(args.packet).read_bytes()
     packet, packet_sha = json.loads(packet_bytes), digest(packet_bytes)
@@ -2324,13 +2421,14 @@ def adjudicate(args) -> None:
     sealed = json.loads(key_bytes)
     if sealed["packet_sha256"] != packet_sha:
         raise SystemExit("key belongs to a different packet")
+    native_evidence = _native_evidence_pin(args, packet, packet_sha, key_bytes)
     first, second = review_label_pair(args.labels, packet, packet_sha, args.reviewer)
     disagreements = {
         index: item["item"]
         for index, (item, a, b) in enumerate(zip(packet["items"], first, second))
         if a["verdict"] != b["verdict"]
     }
-    judged, assignment_sha = {}, None
+    judged = {}
     if args.judge:
         if not args.judge_packet:
             raise SystemExit(
@@ -2342,36 +2440,22 @@ def adjudicate(args) -> None:
         judged = review_judge_verdicts(
             read_json(Path(args.judge)), packet_sha, disagreements, assignment_sha
         )
-    rows, final = [], {}
-    for index, (item, a, b) in enumerate(zip(packet["items"], first, second)):
-        if a["verdict"] == b["verdict"]:
-            verdict, judge = a["verdict"], None
-        elif index in judged:
-            verdict = judge = judged[index]
-        else:
-            raise SystemExit(f"disagreement at position {index} has no judge verdict")
-        if final.setdefault(item["item"], verdict) != verdict:
-            raise SystemExit(
-                f"duplicate item {item['item']} received different final verdicts"
-            )
-        rows.append(
-            {
-                "position": index,
-                "item": item["item"],
-                "case": item["repository_case"],
-                "file": item["file"],
-                "line": item["line"],
-                **sealed["key"][item["item"]],
-                "reviewer_1": a["verdict"],
-                "reviewer_2": b["verdict"],
-                "judge": judge,
-                "final": verdict,
-            }
-        )
+    rows, unique_positions = _adjudicated_rows(
+        packet["items"],
+        sealed["key"],
+        first,
+        second,
+        judged,
+        native=native_evidence is not None,
+    )
     inputs = _adjudication_inputs(args, packet_sha, key_bytes)
+    if native_evidence is not None:
+        inputs["native_evidence"] = native_evidence
     unique = {row["item"]: row for row in rows}
     out = {
-        "schema": "factory.adjudicated-precision.v3",
+        "schema": NATIVE_ADJUDICATED_SCHEMA
+        if native_evidence is not None
+        else "factory.adjudicated-precision.v3",
         "packet_sha256": packet_sha,
         "reviewers": list(args.reviewer),
         "judge": args.judge_name,
@@ -2396,7 +2480,7 @@ def adjudicate(args) -> None:
         json.dumps(
             {
                 "digest": write_json(Path(args.out), out),
-                "unique": len(final),
+                "unique": unique_positions,
                 "verdicts": out["final_counts"],
             }
         )
@@ -2417,7 +2501,10 @@ def tier_for(tp: int, fp: int) -> str:
 def _alert_identity(row: dict) -> tuple:
     """Exact alert identity: source snapshot, location, rule and rule semantics."""
     span = row.get("span")
-    location = (row["line"], json.dumps(span, sort_keys=True) if span is not None else None)
+    location = (
+        row["line"],
+        json.dumps(span, sort_keys=True) if span is not None else None,
+    )
     return (
         row.get("case") or row.get("repository_case"),
         row["file"],
@@ -2458,6 +2545,10 @@ def compute_ledger(paths, revisions: dict[str, str] | None = None) -> dict:
     for path in sorted(paths, key=lambda p: digest(Path(p).read_bytes())):
         data_bytes = Path(path).read_bytes()
         data = json.loads(data_bytes)
+        if data.get("schema") == NATIVE_ADJUDICATED_SCHEMA:
+            raise SystemExit(
+                "native adjudication cannot enter pattern confidence evidence"
+            )
         sha = digest(data_bytes)
         sources.append(
             {
@@ -2761,6 +2852,7 @@ def review_main(argv: list[str]) -> int:
     adjudicated = commands.add_parser("adjudicate")
     adjudicated.add_argument("--packet", required=True)
     adjudicated.add_argument("--key", required=True)
+    adjudicated.add_argument("--native-evidence")
     adjudicated.add_argument("--labels", nargs=2, required=True)
     adjudicated.add_argument("--reviewer", nargs=2, required=True)
     adjudicated.add_argument("--judge")
