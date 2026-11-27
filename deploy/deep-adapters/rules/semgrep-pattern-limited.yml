@@ -116,6 +116,35 @@ rules:
                       - pattern: $MOD.$LOAD(...)
                   - metavariable-regex: {metavariable: $LOAD, regex: '^(pickle_load|pickle_loads|load_pickle|loads_pickle|unpickle|unpickle_\w+)$'}
           - pattern-not: torch.load(..., weights_only=True, ...)
+          # Reached only when an opt-in environment setting that is off by default is
+          # enabled (FLAG = os.environ.get("X", "0") == "1" ... if FLAG: loads(...)).
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $FLAG:
+                      ...
+                - pattern-either:
+                    # With a default that is off ("0", "", "false", None).
+                    - patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $FLAG = $ENV.get($KEY, $OFF) == $ON
+                                ...
+                            - pattern-inside: |
+                                $FLAG = $ENV.getenv($KEY, $OFF) == $ON
+                                ...
+                        - metavariable-regex: {metavariable: $OFF, regex: '^(?:[''"](?i:0|false|no|off)?[''"]|None)$'}
+                    # Without a default: an unset variable is None.
+                    - pattern-inside: |
+                        $FLAG = $ENV.get($KEY) == $ON
+                        ...
+                    - pattern-inside: |
+                        $FLAG = $ENV.getenv($KEY) == $ON
+                        ...
+                - metavariable-regex: {metavariable: $FLAG, regex: '^[A-Za-z_]\w*$'}
+                - metavariable-regex: {metavariable: $ENV, regex: '^(?:os|os\.environ)$'}
+                - metavariable-regex: {metavariable: $KEY, regex: '^[''"][A-Z][A-Z0-9_]*[''"]$'}
+                - metavariable-regex: {metavariable: $ON, regex: '^[''"](?i:1|true|yes|on)[''"]$'}
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -667,6 +696,84 @@ rules:
               regex: ^(is_?[Vv]alid|[Vv]alidate|has|includes)[A-Za-z0-9_]*$
           - focus-metavariable: $X
       - pattern: path.basename(...)
+      # After a fail-closed containment check (if (...) return/throw) the checked path
+      # is contained for the rest of the function.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: if ($C) { ... return; }
+              - pattern: if ($C) { ... return $RV; }
+              - pattern: if ($C) { ... throw $EXC; }
+              - pattern: if ($C) return;
+              - pattern: if ($C) return $RV;
+              - pattern: if ($C) throw $EXC;
+          - metavariable-pattern:
+              metavariable: $C
+              patterns:
+                - pattern-either:
+                    # A named containment predicate on the path (isInside(p), isOptimizedDepFile(p)).
+                    - patterns:
+                        - pattern-either:
+                            - pattern: '!$PRED($F)'
+                            - pattern: '!$PO.$PRED($F)'
+                        - metavariable-regex:
+                            metavariable: $PRED
+                            regex: '(?i)^(?:\w*(?:safe|contain|within|inside|subpath)\w*|is(?!(?:absolute|binary|text|hidden|symlink|symboliclink|executable|readable|writable|empty|exist\w*)(?:file|path|dir|directory)$)\w+(?:file|path|dir|directory))$'
+                    - patterns:
+                        - pattern-either:
+                            - pattern: '!$F.startsWith($NB)'
+                            - pattern: $F.indexOf($NB) !== 0
+                            - pattern: $F.indexOf($NB) != 0
+                            - pattern: $F !== $B && !$F.startsWith($NB)
+                            - pattern: $F !== $B && $F.indexOf($NB) !== 0
+                            - pattern: $F !== $B && $F.indexOf($NB) != 0
+                        - metavariable-pattern:
+                            metavariable: $NB
+                            pattern-either:
+                              - pattern: $NBB + path.sep
+                              - pattern: $NBB + "/"
+                              - pattern: '$NBB.endsWith(path.sep) ? $NBB : $NBB + path.sep'
+                              - pattern: '`${$NBB}/`'
+          - focus-metavariable: $F
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: |
+                  $NB = $NBE;
+                  if ($C) { ... return; }
+              - pattern: |
+                  $NB = $NBE;
+                  if ($C) { ... return $RV; }
+              - pattern: |
+                  $NB = $NBE;
+                  if ($C) { ... throw $EXC; }
+              - pattern: |
+                  $NB = $NBE;
+                  if ($C) return;
+              - pattern: |
+                  $NB = $NBE;
+                  if ($C) return $RV;
+              - pattern: |
+                  $NB = $NBE;
+                  if ($C) throw $EXC;
+          - metavariable-pattern:
+              metavariable: $NBE
+              pattern-either:
+                - pattern: $NBB + path.sep
+                - pattern: $NBB + "/"
+                - pattern: '$NBB.endsWith(path.sep) ? $NBB : $NBB + path.sep'
+                - pattern: '`${$NBB}/`'
+          - metavariable-pattern:
+              metavariable: $C
+              patterns:
+                - pattern-either:
+                    - pattern: '!$F.startsWith($NB)'
+                    - pattern: $F.indexOf($NB) !== 0
+                    - pattern: $F.indexOf($NB) != 0
+                    - pattern: $F !== $B && !$F.startsWith($NB)
+                    - pattern: $F !== $B && $F.indexOf($NB) !== 0
+                    - pattern: $F !== $B && $F.indexOf($NB) != 0
+          - focus-metavariable: $F
     # Existence and metadata probes (exists, stat, access) neither read nor change file
     # content; each vulnerable read or write the probe guards is reported on its own.
     pattern-sinks:
@@ -712,11 +819,123 @@ rules:
               metavariable: $CALL
               regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync)$
           - focus-metavariable: $PATH
-      # Joining request text under a base directory is the traversal itself.
+      # Joining request text under a base directory is the traversal itself, unless the
+      # joined path is assigned and then rejected by a fail-closed containment check
+      # (if (...) return/throw); any read before that check is still a sink above.
+      # The assignment is matched by its path.join/resolve call, not as any statement:
+      # a generic first statement made these sequences time out on large bundles.
       - patterns:
           - pattern-either:
               - pattern: path.join($BASE, ..., $PATH, ...)
               - pattern: path.resolve($BASE, ..., $PATH, ...)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        if ($C) { ... return; }
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        if ($C) { ... return $RV; }
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        if ($C) { ... throw $EXC; }
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        if ($C) return;
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        if ($C) return $RV;
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        if ($C) throw $EXC;
+                - metavariable-pattern:
+                    metavariable: $C
+                    patterns:
+                      - pattern-either:
+                          # A named containment predicate on the path (isInside(p), isOptimizedDepFile(p)).
+                          - patterns:
+                              - pattern-either:
+                                  - pattern: '!$PRED($F)'
+                                  - pattern: '!$PO.$PRED($F)'
+                              - metavariable-regex:
+                                  metavariable: $PRED
+                                  regex: '(?i)^(?:\w*(?:safe|contain|within|inside|subpath)\w*|is(?!(?:absolute|binary|text|hidden|symlink|symboliclink|executable|readable|writable|empty|exist\w*)(?:file|path|dir|directory)$)\w+(?:file|path|dir|directory))$'
+                          # A separator-aware prefix check (startsWith(root + path.sep)).
+                          - patterns:
+                              - pattern-either:
+                                  - pattern: '!$F.startsWith($NB)'
+                                  - pattern: $F.indexOf($NB) !== 0
+                                  - pattern: $F.indexOf($NB) != 0
+                                  - pattern: $F !== $B && !$F.startsWith($NB)
+                                  - pattern: $F !== $B && $F.indexOf($NB) !== 0
+                                  - pattern: $F !== $B && $F.indexOf($NB) != 0
+                              - metavariable-pattern:
+                                  metavariable: $NB
+                                  pattern-either:
+                                    - pattern: $NBB + path.sep
+                                    - pattern: $NBB + "/"
+                                    - pattern: '$NBB.endsWith(path.sep) ? $NBB : $NBB + path.sep'
+                                    - pattern: '`${$NBB}/`'
+                - metavariable-regex: {metavariable: $JF, regex: '^(?:join|resolve)$'}
+          # The same check against a separator-terminated root kept in a variable.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        $NB = $NBE;
+                        if ($C) { ... return; }
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        $NB = $NBE;
+                        if ($C) { ... return $RV; }
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        $NB = $NBE;
+                        if ($C) { ... throw $EXC; }
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        $NB = $NBE;
+                        if ($C) return;
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        $NB = $NBE;
+                        if ($C) return $RV;
+                    - pattern-inside: |
+                        $F = <... path.$JF(...) ...>;
+                        ...
+                        $NB = $NBE;
+                        if ($C) throw $EXC;
+                - metavariable-pattern:
+                    metavariable: $NBE
+                    pattern-either:
+                      - pattern: $NBB + path.sep
+                      - pattern: $NBB + "/"
+                      - pattern: '$NBB.endsWith(path.sep) ? $NBB : $NBB + path.sep'
+                      - pattern: '`${$NBB}/`'
+                - metavariable-pattern:
+                    metavariable: $C
+                    patterns:
+                      - pattern-either:
+                          - pattern: '!$F.startsWith($NB)'
+                          - pattern: $F.indexOf($NB) !== 0
+                          - pattern: $F.indexOf($NB) != 0
+                          - pattern: $F !== $B && !$F.startsWith($NB)
+                          - pattern: $F !== $B && $F.indexOf($NB) !== 0
+                          - pattern: $F !== $B && $F.indexOf($NB) != 0
+                - metavariable-regex: {metavariable: $JF, regex: '^(?:join|resolve)$'}
           - focus-metavariable: $PATH
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -4231,13 +4450,25 @@ rules:
       - pattern: $OBJ->$M(...)
       - metavariable-regex:
           metavariable: $M
-          regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build\w*|in_set|wrap\w*|qstr|addq)$
+          regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build(?!\w*(?:query|sql|string|statement))\w*|in_set|wrap\w*|qstr|addq)$
     - patterns:
       - pattern: $FN(...)
       - metavariable-regex:
           metavariable: $FN
           regex: ^(?i:\w*escape\w*|\w*quote\w*|addslashes)$
     - pattern: intval(...)
+    - patterns:
+      - pattern-either:
+        - pattern: array_map(fn ($MV) => $MO->$MQ($MV), ...)
+        - pattern: 'array_map(function ($MV) { return $MO->$MQ($MV); }, ...)'
+      - metavariable-regex:
+          metavariable: $MQ
+          regex: ^(?i:\w*quote\w*|\w*escape\w*|qstr)$
+    - patterns:
+      - pattern: array_map([$MO, $MQS], ...)
+      - metavariable-regex:
+          metavariable: $MQS
+          regex: ^['"](?i:\w*quote\w*|\w*escape\w*|qstr)['"]$
     - pattern: (int) $V
     - pattern: (float) $V
     - pattern: $DB->quote(...)
@@ -4260,15 +4491,7 @@ rules:
     - pattern: count(...)
     - pattern: time()
     - pattern-regex: '`(?:\{\$[^{}`"\n]+\}|\$\w+(?:->\w+)*)`'
-    - patterns:
-      - pattern: $QL . $QX . $QR
-      - metavariable-regex:
-          metavariable: $QL
-          regex: (?s)\A['"].*`['"]\z
-      - metavariable-regex:
-          metavariable: $QR
-          regex: \A['"]`
-      - focus-metavariable: $QX
+    - pattern-regex: '`[''"]\s*\.\s*\$\w+(?:->\w+)*\s*\.\s*[''"]`'
     - pattern: array_map('intval', ...)
       exact: true
     pattern-sinks:
@@ -4551,6 +4774,22 @@ rules:
           - pattern-either:
               - pattern: $QF(...)
               - pattern: $QO.$QF(...)
+          - metavariable-regex: {metavariable: $QF, regex: '(?i)^(?:\w*(?:escape|quote)\w*|ident)$'}
+      # A local alias of such a helper (const q = qi.quoteIdentifier.bind(qi);
+      # const q = (name) => qi.quoteIdentifier(name)), called in the same function.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $QA = $QO.$QF.bind(...);
+                  ...
+              - pattern-inside: |
+                  $QA = $QO.$QF;
+                  ...
+              - pattern-inside: |
+                  $QA = ($QN) => $QO.$QF($QN);
+                  ...
+          - pattern: $QA(...)
+          - metavariable-regex: {metavariable: $QA, regex: '^[A-Za-z_$][\w$]*$'}
           - metavariable-regex: {metavariable: $QF, regex: '(?i)^(?:\w*(?:escape|quote)\w*|ident)$'}
       # A double-quoted SQL identifier ("${table}", "${schema}"."${column}"): the quote
       # follows a keyword, name, '.', ',' or '(', never a comparison or LIKE.
@@ -5450,6 +5689,15 @@ rules:
               - pattern-not-inside: |
                   $X = $O.encode(...);
                   ...
+          # Anywhere inside an inline event-handler attribute (onclick="run('${name}')") a
+          # value is script, where HTML escaping does not apply either.
+          - patterns:
+              - pattern: '`...${$X}...`'
+              - pattern-regex: <[A-Za-z][\w-]*[^<>`]*?\son[a-z]+\s*=\s*"[^"<>`\n]*?\$\{\s*(?P<VALUE>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\}[^"\n]*"
+              # UPPER_CASE constants and numeric names (counts, sizes, indexes).
+              - metavariable-regex:
+                  metavariable: $VALUE
+                  regex: '^(?!(?:[\w$]+\.)*[A-Z_][A-Z0-9_]*$)(?!(?:[\w$]+\.)*(?:width|height|x|y|size|opacity|index|idx|count|total|length|level|zIndex|i|j|k|n|\w*(?:Width|Height|Count|Total|Index|Length|Size))$)'
           # Attribute values spliced in by concatenation ('="' + value + '"' or "=\"" + v + "\"";
           # SQL's ='" + v + "'" quoting is a different shape). The leading
           # character class keeps out jQuery attribute selectors ([name="' + v + '"]),
