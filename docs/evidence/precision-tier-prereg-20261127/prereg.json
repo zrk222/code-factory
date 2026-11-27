@@ -1,0 +1,51 @@
+{
+ "schema": "factory.precision-tier-prereg.v1",
+ "date": "2026-11-27",
+ "status": "Pre-registered before any scoring of the 323-case reserve or the 10-case Q4 calendar cohort.",
+ "tier_policy": {
+  "finding": "alerts from rules whose metadata.confidence is HIGH or MEDIUM",
+  "lead": "alerts from rules whose metadata.confidence is LOW (listed for review; nothing is suppressed)",
+  "wiring": "deep_audit_sarif._sarif_result_finding sets report_tier from the SARIF rule tag \"<LEVEL> CONFIDENCE\"; missing or unknown confidence stays a finding. Gates are unchanged."
+ },
+ "demotion": {
+  "criterion_D1": "A MEDIUM rule becomes LOW when, at candidate 60f1d3b9 with the main 82c8ada5 scorer, it contributes no hunk-hit case on exposed-161 or Q2 AND its labeled exposed-161 precision is below 60% with at least 5 labeled alerts.",
+  "inputs": "exposed-161 and Q2 (tuning cohorts) and the adjudicated exposed label sets on main; see tuning-rule-table.txt",
+  "result": {
+   "php.request-html-injection": "0 hit cases; 27 TP / 21 FP labeled (56%); 130 alerts -> LOW"
+  },
+  "not_adopted": "A third background tier for LOW rules with no tuning hits (python.parameter-sql-text, go.request-html-injection): no effect on finding-tier precision."
+ },
+ "disclosure": "Q3 alerts at 60f1d3b9 were blind-labeled on 2026-11-27 before this record, and per-tier Q3 results were seen. Q3 is therefore not a confirmation of this policy; the reserve is. No Q3 label is used by any rule or criterion.",
+ "endpoints": {
+  "primary": [
+   "finding-tier precision = TP/(TP+FP) over finding-tier old-side alerts in changed files, Wilson 95% interval",
+   "finding-tier recall = scored cases with a hunk hit from a finding-tier rule / scored cases"
+  ],
+  "secondary": [
+   "overall precision and recall (all tiers)",
+   "lead-tier precision",
+   "UNCLEAR rate",
+   "Q4 (10 cases) reported separately"
+  ],
+  "arms": "frozen candidate vs main, same scorer, engine and profile"
+ },
+ "labeling_protocol": {
+  "population": "census of finding-tier alerts; lead-tier census up to 300 alerts, otherwise a seeded (20261127) sample of 300",
+  "packet": "build_packet.py: repository, file, line, span, claimed weakness, code context (+-5 and +-40 lines, file imports); no advisory id, rule id, arm, tier or outcome",
+  "reviewers": "arm 1 fresh Claude Opus agents, arm 2 fresh Claude Sonnet agents, disjoint packet parts, reading only their part, no web",
+  "judge": "one fresh Fable 5.2 agent on the disagreements, reading only the judge packet",
+  "final": "score_labels.py: agreed verdict, else the judge verdict"
+ },
+ "tools_sha256": {
+  "build_packet.py": "24a4aa622c14a1a498b2b15ef10fe1b6751d066434379aea8270aba1804b97f0",
+  "score_labels.py": "2366898135889db9e2eed59ae1b61363ddc187cc418ae4763ce6e0b1ad7d21fd",
+  "tuning-rule-table.txt": "d2312a9f99d01fc7ec2c12130a38362ea5af125c56314daa9147ef606eda8c11"
+ },
+ "candidate": {
+  "commit": "the commit that adds this record, on #431 (claude/port-q2-rules)",
+  "parent": "60f1d3b9",
+  "rules_sha256": "2dbd16a5134fdc20e54e5a4be6e12c39196a78266db0b984aa0e92d25813ce33",
+  "scorer": "origin/main 82c8ada5: recall_harness 4355f20f, recall_coverage 643ff35f, recall_losses b5a62296",
+  "engine": "OpenGrep 2.1.0, profile 8ec08b71, --timeout=15 --jobs=1"
+ }
+}

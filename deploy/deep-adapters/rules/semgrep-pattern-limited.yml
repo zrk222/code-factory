@@ -3822,7 +3822,9 @@ rules:
     metadata:
       tier: review
       category: security
-      confidence: MEDIUM
+      # Review lead, not a finding: no hunk hit on exposed-161 or Q2 and 56% labeled
+      # exposed precision (criterion D1, pre-registered 2026-11-27 from tuning data only).
+      confidence: LOW
       cwe: ["CWE-79"]
       scope: PHP superglobals echoed or printed without an HTML encoder in the same flow.
   - id: go.request-html-injection
