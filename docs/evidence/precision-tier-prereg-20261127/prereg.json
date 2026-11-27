@@ -55,5 +55,22 @@
   "endpoints": "arm C finding-tier precision and recall on the reserve, beside the tier-only arm, from the same labeled alerts",
   "tuning_evidence": "exposed-161, 83 CodeQL-scanned cases, head a73d398c: LOW corroborated 9 alerts, labeled 2 TP / 2 FP; LOW uncorroborated 51 alerts, 7 TP / 25 FP; finding-tier hit cases 14 -> 19 of 34. Small samples, tuning data.",
   "tool_sha256": "7ccad9dc116b5080faf9902081640e6fc2ef35d944d19648bb79e758806eb196"
+ },
+ "arm_D_two_engine_agreement": {
+  "status": "secondary, pre-registered 2026-11-27 before the reserve or Q4 is scored, and before any CodeQL scan of a Q3 case",
+  "definition": "finding = a pattern alert of any tier with a same-family CodeQL old-side result touching the same file within 3 lines (as in arm C); every other alert is a lead",
+  "target": "finding-tier precision >= 6x the Q3 overall pattern precision at 60f1d3b9 (8.2%), i.e. >= 49%; reported with its Wilson interval and alert count",
+  "scope": "CodeQL-supported ecosystems (PyPI, npm, RubyGems, Maven); others reported separately"
+ },
+ "codeql_corroboration_lane": {
+  "method": "old side only; analyze with the scored-family query suites below (security-extended queries whose CWE tags map to the scored families, plus every diagnostics query) instead of the full suite; scanned only for cases with at least one old-side pattern alert in changed files, the only cases where corroboration can change a tier",
+  "equivalence": "on exposed GHSA-23fx, -72qq, -7vxr, -3xgr the family suite gave identical same-family corroboration locations to the full suite (0, 60, 8, 10)",
+  "speed": "per-case wall 809 s -> 351 s on those four cases (2.3x); with alerted-cases-only about 10x or more for a reserve-sized cohort",
+  "suites_sha256": {
+   "java-families.qls": "a4ad351eb61e4c67619e9df8cc49b844133c3e1e34e45d5586e3fedd08106f75",
+   "javascript-families.qls": "6b415a866fb13ef2ba40ffc53140cf057abce76a9e44d82fe54dc573384c66d2",
+   "python-families.qls": "3c1fd18d5adb60b5f67ad7832ec00de603b7fc47c3d5383c3ac4feea09ab1d01",
+   "ruby-families.qls": "8a99c7caf231a6feaf1c63bd215c5ff5bc57431db05b7b55193e2986654bbde8"
+  }
  }
 }
