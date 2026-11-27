@@ -54,3 +54,32 @@ Runtime.getRuntime().exec("ping " + host);
 }
 }
 
+class TypedQuerySinkControls {
+  void request(javax.servlet.http.HttpServletRequest req, org.neo4j.driver.Session session,
+      org.neo4j.driver.Transaction transaction, org.springframework.jdbc.core.JdbcOperations jdbc) {
+    // source: java.request-sql-injection
+    String text = req.getParameter("query");
+    // ruleid: java.request-sql-injection
+    org.neo4j.cypherdsl.core.Cypher.raw(text);
+    // source: java.request-sql-injection
+    String sessionText = req.getParameter("sessionQuery");
+    // ruleid: java.request-sql-injection
+    session.run(sessionText);
+    // source: java.request-sql-injection
+    String transactionText = req.getParameter("transactionQuery");
+    // ruleid: java.request-sql-injection
+    transaction.run(transactionText);
+    // source: java.request-sql-injection
+    String jdbcText = req.getParameter("jdbcQuery");
+    // ruleid: java.request-sql-injection
+    jdbc.queryForList(jdbcText);
+    // ok: java.request-sql-injection
+    org.neo4j.cypherdsl.core.Cypher.raw("RETURN $E", org.neo4j.cypherdsl.core.Cypher.parameter("value", text));
+    // ok: java.request-sql-injection
+    session.run("RETURN $value", java.util.Map.of("value", text));
+    // ok: java.request-sql-injection
+    transaction.run("RETURN $value", java.util.Map.of("value", text));
+    // ok: java.request-sql-injection
+    jdbc.queryForList("SELECT id FROM records WHERE name = ?", text);
+  }
+}

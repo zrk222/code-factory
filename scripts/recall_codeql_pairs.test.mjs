@@ -461,3 +461,53 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   const overlap = json('registered-overlap.json', { ...bundle, cases: [...bundle.cases, linked.row] });
   assert.throws(() => run({ ...cohort, bundles: [overlap, supplemental] }), /Duplicate CodeQL advisory across/);
 });
+
+test('native detector arms retain their own extraction and count one shared case', t => {
+  const { root, row, value, binding, json, write, run } = stagedPair(t);
+  const single = value.cases[0];
+  const read = pin => JSON.parse(readFileSync(join(root, pin.path), 'utf8'));
+  const arm = (name, { hit, parsed }) => {
+    const id = 'test/' + name;
+    const query = write(name + '.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
+    const capture = side => {
+      const prior = single[side];
+      const report = read(prior.sarif), scan = report.runs[0];
+      scan.tool.driver.rules[0].id = id;
+      if (side === 'old' && hit) scan.results[0].ruleId = id;
+      else scan.results = [];
+      if (side === 'fixed' && !parsed) scan.invocations[0].toolExecutionNotifications = [];
+      const sarif = json(name + '-' + side + '.sarif', report);
+      const observation = json(name + '-' + side + '.json', { ...read(prior.observation),
+        query: id, query_sha256: query.sha256, native_sha256: sarif.sha256, reported_alerts: scan.results.length });
+      return { ...prior, sarif, observation };
+    };
+    return json(name + '-bundle.json', { ...value, cases: [{ ...single, query, query_id: id,
+      old: capture('old'), fixed: capture('fixed') }] });
+  };
+  const patternCase = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false,
+    file_hit: false, hunk_findings: [], fix_side_residual: [],
+    file_coverage: { fixed: binding.source_packets.fixed.map(packet => ({
+      ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths',
+    })) } };
+  const pattern = json('pattern-score.json', {
+    schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: value.manifest.sha256,
+    manifest_cases_sha256: caseDigest([row]), ruleset_sha256: 'c'.repeat(64), profile_sha256: 'd'.repeat(64),
+    engine: { executable_sha256: 'e'.repeat(64) }, summary: { cases: 1, hunk_hits: 0, file_hits: 0 },
+    cases: [patternCase],
+  });
+  const evaluate = bundles => run({ schema: 'factory.recall-codeql-cohort.v2', bundles },
+    { ...pattern, path: join(root, pattern.path) });
+  const incomplete = arm('incomplete', { hit: true, parsed: false });
+  const negative = arm('negative', { hit: false, parsed: true });
+  const complete = arm('complete', { hit: true, parsed: true });
+  const twoSignals = evaluate([incomplete, negative]);
+  assert.equal(twoSignals.scored_pairs, 1);
+  assert.equal(twoSignals.scored_arm_pairs, 2);
+  assert.equal(twoSignals.pattern_join.eligible_native_additions, 0);
+  const twoHits = evaluate([incomplete, complete]);
+  assert.equal(twoHits.strict_hunk_hits, 1);
+  assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
+  assert.equal(twoHits.cases[0].arms.length, 2);
+  const sameQuery = json('same-query.json', { ...read(complete), label: 'duplicate-query-attempt' });
+  assert.throws(() => evaluate([complete, sameQuery]), /overlapping query IDs/);
+});

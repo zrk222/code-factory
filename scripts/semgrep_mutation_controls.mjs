@@ -168,7 +168,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
   'opt.factory.rules.go.parameter-shell-command': 4,
   'opt.factory.rules.go.parameter-sql-text': 9,
-  'opt.factory.rules.go.request-command-injection': 3,
+  'opt.factory.rules.go.request-command-injection': 5,
   'opt.factory.rules.go.request-html-injection': 6,
   'opt.factory.rules.go.request-path-traversal': 1,
   'opt.factory.rules.go.request-sql-injection': 6,
@@ -180,7 +180,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.java.request-command-injection': 4,
   'opt.factory.rules.java.request-html-injection': 1,
   'opt.factory.rules.java.request-path-traversal': 1,
-  'opt.factory.rules.java.request-sql-injection': 3,
+  'opt.factory.rules.java.request-sql-injection': 7,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 4,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 6,
@@ -299,7 +299,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 382;
+const REVIEWED_FINDINGS = 388;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -324,7 +324,9 @@ export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
   for (const language of ['go', 'java', 'csharp', 'ruby']) {
     for (const family of ['command', 'sql']) {
       const rule = `opt.factory.rules.${language}.request-${family}-injection`;
-      const required = family === 'sql' && ['go', 'ruby'].includes(language) ? 4 : 3;
+      const required = language === 'go' && family === 'command' ? 5
+        : language === 'java' && family === 'sql' ? 7
+          : family === 'sql' && ['go', 'ruby'].includes(language) ? 4 : 3;
       if (!ruleIds.includes(rule) || manifest.filter(item => item.rule === rule &&
           Number.isInteger(item.source_line)).length !== required || !(safeCounts[rule] >= 3)) {
         throw new Error('Missing direct, alias, framework, safe or provider-mismatch flow control');

@@ -226,3 +226,18 @@ func renderJsonAttribute(w http.ResponseWriter, req *http.Request) {
 	// ruleid: go.request-html-injection
 	fmt.Fprintf(w, "<span data-label='%s'></span>", data)
 }
+
+func requestShellAppletControls(req *http.Request) {
+	// source: go.request-command-injection
+	value := req.FormValue("text")
+	// ruleid: go.request-command-injection
+	exec.Command("busybox", "sh", "-c", value)
+	// source: go.request-command-injection
+	other := req.FormValue("other")
+	// ruleid: go.request-command-injection
+	exec.CommandContext(req.Context(), "/usr/bin/toybox", "sh", "-c", other)
+	// ok: go.request-command-injection
+	exec.Command("busybox", "echo", value)
+	// ok: go.request-command-injection
+	exec.Command("busybox", "sh", "-c", "true", value)
+}

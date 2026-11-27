@@ -18,6 +18,7 @@ import { inputFingerprint } from './verify_registered_recall.mjs';
 const FORMAT = 'factory.recall-codeql-pairs.v1';
 const PLAN_BUNDLE = 'factory.recall-codeql-pairs.v2';
 const COHORT_BUNDLE = 'factory.recall-codeql-cohort.v1';
+const ARM_COHORT = 'factory.recall-codeql-cohort.v2';
 const extractionDiagnostics = new Map([
   ['Go', 'go/diagnostics/successfully-extracted-files'],
   ['Maven', 'java/diagnostics/successfully-extracted-files'],
@@ -325,10 +326,19 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     'Pattern hit count differs');
   const dispositions = observations.map(native => {
     const row = pattern.get(native.advisory), outcome = outcomes.get(native.advisory);
-    const extractionComplete = native.native_coverage.old.complete && native.native_coverage.fixed.complete;
+    const evidence = (native.arms ?? [native]).map(arm => {
+      const extraction_complete = arm.native_coverage.old.complete && arm.native_coverage.fixed.complete;
+      return { arm, extraction_complete, disposition: nativeDisposition(arm, row, outcome, extraction_complete) };
+    });
+    const selected = evidence.find(item => item.disposition === 'eligible')
+      ?? evidence.find(item => item.arm.hunk_hit) ?? evidence[0];
+    const disposition = selected.disposition === 'eligible' && native.fixed_hunk_residuals
+      ? 'fixed_side_residual' : selected.disposition;
     return { advisory: native.advisory, input_sha256: native.input_sha256, pattern_outcome: outcome,
       pattern_file_hit: searchedFileHit(row, outcome), native_hunk_hit: native.hunk_hit, native_file_hit: native.file_hit,
-      native_extraction_complete: extractionComplete, disposition: nativeDisposition(native, row, outcome, extractionComplete) };
+      native_extraction_complete: selected.extraction_complete, disposition,
+      ...(native.arms ? { arm_dispositions: evidence.map(({ arm, extraction_complete, disposition }) =>
+        ({ ...arm.detector_arm, native_bundle_sha256: arm.native_bundle_sha256, extraction_complete, disposition })) } : {}) };
   });
   const additions = dispositions.filter(row => row.disposition === 'eligible').length;
   const newHunkHits = dispositions.filter(row => row.native_hunk_hit && row.pattern_outcome !== 'hit').length;
@@ -398,7 +408,12 @@ function scorePreparedPair(row, context) {
   const anchored = anchoredTraceMatches({ oldFindings: old.findings, newFindings: fixed.findings,
     flows: old.flows, hunks, families, rules });
   return { advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
-    ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }), hunk_hit: score.hunk_hit,
+    ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }),
+    detector_arm: { engine: 'codeql', ecosystem: registered.ecosystem,
+      source_extensions: scopeExtensions(registered.ecosystem),
+      query_ids: policy.queries.map(query => query.id).sort(),
+      families: [...new Set(policy.queries.flatMap(query => query.families))].sort() },
+    hunk_hit: score.hunk_hit,
     file_hit: score.file_hit,
     trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
     hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
@@ -505,7 +520,8 @@ function verifyPairBundles(lanes) {
 function summarizeVerifiedPairs(bundle, registry, observations, patternPin) {
   const { manifestDigest, reference, cases, referenceCases } = registry;
   const patternJoin = patternPin && joinPatternScore(patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations);
-  const reused = observations.filter(row => Object.hasOwn(row, 'capture_reused_from')).length;
+  const reused = observations.filter(row => (row.arms ?? [row])
+    .every(arm => Object.hasOwn(arm, 'capture_reused_from'))).length;
   return { ...(patternJoin ? { pattern_join: patternJoin } : {}),
     reference_sha256: bundle.reference.sha256, registered_cases: cases.size, reference_hunk_hits: reference.candidate.hunk_hits,
     scored_pairs: observations.length, captured_pairs: observations.length - reused, reused_capture_pairs: reused,
@@ -515,6 +531,21 @@ function summarizeVerifiedPairs(bundle, registry, observations, patternPin) {
     strict_hits_on_reference_misses: observations.filter(row => row.reference === 'miss' && row.hunk_hit).length,
     deleted_line_hits: observations.filter(row => row.deleted_line_hit).length,
     fixed_hunk_residuals: observations.reduce((sum, row) => sum + row.fixed_hunk_residuals, 0), cases: observations };
+}
+
+function mergeVerifiedArms(observations) {
+  return [...Map.groupBy(observations, row => row.advisory)].map(([advisory, arms]) => {
+    const { input_sha256, reference } = arms[0];
+    const queries = arms.flatMap(arm => arm.detector_arm.query_ids);
+    requireProof(arms.every(arm => arm.input_sha256 === input_sha256 && arm.reference === reference)
+      && queries.length === new Set(queries).size, 'Detector arms have different cases or overlapping query IDs');
+    const hit = field => arms.some(arm => arm[field]);
+    return { advisory, input_sha256, reference, arms, hunk_hit: hit('hunk_hit'),
+      file_hit: hit('file_hit'), trace_hit: hit('trace_hit'), deleted_line_hit: hit('deleted_line_hit'),
+      matched_hunk_families: [...new Set(arms.flatMap(arm => arm.matched_hunk_families))].sort(),
+      cross_file_trace_matches: arms.flatMap(arm => arm.cross_file_trace_matches),
+      fixed_hunk_residuals: arms.reduce((sum, arm) => sum + arm.fixed_hunk_residuals, 0) };
+  });
 }
 
 function scoreCohortBundle(root, bytes, bundle, patternPin) {
@@ -530,12 +561,15 @@ function scoreCohortBundle(root, bytes, bundle, patternPin) {
   'Cohort bundles use different registry, reference or engine pins');
 
   const verified = verifyPairBundles(lanes);
-  const observations = verified.flatMap(({ observations }, index) =>
+  const captures = verified.flatMap(({ observations }, index) =>
     observations.map(row => ({ ...row, native_bundle_sha256: lanes[index].pin.sha256 })));
+  const grouped = bundle.schema === ARM_COHORT;
+  const observations = grouped ? mergeVerifiedArms(captures) : captures;
   const covered = new Set(observations.map(row => row.advisory));
   requireProof(covered.size === observations.length, 'Duplicate CodeQL advisory across cohort bundles');
   const { registry } = verified[0];
-  return { schema: 'factory.recall-codeql-cohort-score.v1', scope: 'verified paired native cohort',
+  return { schema: grouped ? 'factory.recall-codeql-cohort-score.v2' : 'factory.recall-codeql-cohort-score.v1',
+    scope: 'verified paired native cohort', ...(grouped ? { scored_arm_pairs: captures.length } : {}),
     input_sha256: sha256(bytes), manifest_sha256: first.manifest.sha256, engine_version: first.engine_version,
     bundles: verified.map((lane, index) => ({ ...lanes[index].pin, scope: lane.scope,
       scored_pairs: lane.observations.length, ...lane.coverage })),
@@ -547,7 +581,7 @@ export function scoreCodeqlPairs(bundlePath, patternPin = null) {
   const bytes = readFileSync(bundlePath);
   const root = realpathSync(dirname(bundlePath));
   const bundle = json(bytes);
-  if (bundle.schema === COHORT_BUNDLE) return scoreCohortBundle(root, bytes, bundle, patternPin);
+  if ([COHORT_BUNDLE, ARM_COHORT].includes(bundle.schema)) return scoreCohortBundle(root, bytes, bundle, patternPin);
   const [{ registry, observations, scope, coverage }] = verifyPairBundles([{ root, input: bundle }]);
   return { schema: 'factory.recall-codeql-pair-score.v1', scope, input_sha256: sha256(bytes), ...coverage,
     ...summarizeVerifiedPairs(bundle, registry, observations, patternPin) };

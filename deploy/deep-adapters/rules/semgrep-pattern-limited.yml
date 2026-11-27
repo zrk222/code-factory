@@ -1570,6 +1570,17 @@ rules:
               - pattern: "exec.Command($VALUE, ...)"
               - pattern: "exec.CommandContext($C, $VALUE, ...)"
           - focus-metavariable: $VALUE
+      - patterns:
+          - pattern-either:
+              - pattern: "exec.Command($APPLET, $SHELL, \"-c\", $VALUE, ...)"
+              - pattern: "exec.CommandContext($C, $APPLET, $SHELL, \"-c\", $VALUE, ...)"
+          - metavariable-regex:
+              metavariable: $APPLET
+              regex: ^"(/bin/|/usr/bin/)?(busybox|toybox)"$
+          - metavariable-regex:
+              metavariable: $SHELL
+              regex: ^"(sh|ash)"$
+          - focus-metavariable: $VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1777,10 +1788,14 @@ rules:
               - pattern: "(java.sql.Statement $DB).addBatch($VALUE)"
               - pattern: "(java.sql.Connection $DB).prepareStatement($VALUE, ...)"
               - pattern: "(java.sql.Connection $DB).prepareCall($VALUE, ...)"
+              - pattern: "org.neo4j.cypherdsl.core.Cypher.raw($VALUE, ...)"
+              - pattern: "(org.neo4j.driver.Session $DB).run($VALUE, ...)"
+              - pattern: "(org.neo4j.driver.Transaction $DB).run($VALUE, ...)"
           - focus-metavariable: $VALUE
       - patterns:
           - pattern-either:
               - pattern: "(org.springframework.jdbc.core.JdbcTemplate $DB).$METHOD($VALUE, ...)"
+              - pattern: "(org.springframework.jdbc.core.JdbcOperations $DB).$METHOD($VALUE, ...)"
               - pattern: "(javax.persistence.EntityManager $DB).$METHOD($VALUE, ...)"
               - pattern: "(jakarta.persistence.EntityManager $DB).$METHOD($VALUE, ...)"
           - metavariable-regex:

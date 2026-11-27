@@ -315,7 +315,7 @@ try {
     'deploy/deep-adapters/rules/tests/tsx-shell-wrapper-controls.txt', 'deploy/deep-adapters/rules/tests/tsx-shell-binding-controls.txt',
     'deploy/deep-adapters/rules/tests/tsx-shell-helper-controls.txt',
     'deploy/deep-adapters/rules/tests/tsx-html-output-controls.txt', 'deploy/deep-adapters/rules/tests/tsx-html-escaped-local-controls.txt',
-    'deploy/deep-adapters/rules/tests/java-flow-controls.txt',
+    'deploy/deep-adapters/rules/tests/java-flow-controls.txt', 'deploy/deep-adapters/rules/tests/go-parameter-sink-controls.txt',
     'deploy/deep-adapters/rules/tests/csharp-sql-library-controls.txt',
     'deploy/deep-adapters/rules/tests/rust-controls.txt',
     'deploy/deep-adapters/rules/tests/swift-trust-controls.txt',
