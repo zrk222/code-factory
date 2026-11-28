@@ -254,29 +254,41 @@ def deep_audit_lineage(root: Path, status: dict) -> dict:
         return {**base, "state": "INCOMPLETE"}
 
 
-def _flow_point(item: dict, kind: str, fallback: dict) -> str:
-    """First step marked kind (last for sinks), else the flow end, else the location."""
-    steps = [step for flow in item.get("flows") or [] for step in flow]
-    marked = [step for step in steps if kind in step.get("kinds", [])]
-    point = (marked or steps or [fallback])[0 if kind == "source" else -1]
+def _flow_steps(item: dict) -> list[dict]:
+    """Steps of the first flow whose steps all carry a path; malformed flows are skipped."""
+    for flow in item.get("flows") or []:
+        steps = flow if isinstance(flow, list) else []
+        if steps and all(
+            isinstance(s, dict) and isinstance(s.get("path"), str) for s in steps
+        ):
+            return steps
+    return []
+
+
+def _flow_point(steps: list[dict], kind: str) -> str:
+    """First step marked kind (last for sinks), else that end of the flow."""
+    marked = [step for step in steps if kind in (step.get("kinds") or [])]
+    point = (marked or steps)[0 if kind == "source" else -1]
     return f"{point['path']}:{point.get('start_line', '?')}"
 
 
 def _chain(item: dict, receipt: dict, relative: str) -> dict:
-    """One finding; its label reads rule, lead tier, taint origin -> sink."""
+    """One finding; its label reads rule, lead tier, taint origin -> sink of one flow."""
     location = item["locations"][0]
     tier = " (lead)" if item.get("report_tier") == "lead" else ""
+    steps = _flow_steps(item)
     flow = (
-        _flow_point(item, "source", location)
-        + " -> "
-        + _flow_point(item, "sink", location)
-        if item.get("flows")
+        _flow_point(steps, "source") + " -> " + _flow_point(steps, "sink")
+        if steps
         else f"{location['path']}:{location.get('start_line', '?')}"
     )
+    rule = str(item.get("rule_id") or item["finding_id"])
+    # Trim the rule, never the locations, to stay within the 240-character label.
+    rule = rule[: max(16, 240 - len(tier) - len(flow) - 2)]
     return {
         "finding_id": item["finding_id"],
         "source": location["path"],
-        "finding": f"{item.get('rule_id', item['finding_id'])}{tier}: {flow}"[:240],
+        "finding": f"{rule}{tier}: {flow}"[:240],
         "source_sha256": location["source_sha256"],
         "obligation": item.get("obligation_id", "unmapped"),
         "trace_sha256": item["trace_sha256"],

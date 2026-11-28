@@ -635,14 +635,34 @@ def test_imported_symbol_mismatch_does_not_create_contract_edge(tmp_path):
     assert edges == []
 
 
-def test_flow_point_prefers_marked_steps_then_ends_then_location():
+def test_flow_point_prefers_marked_steps_then_flow_ends():
     from factoryline.deep_audit_loop import _flow_point
 
     steps = [{"path": "a.py", "start_line": 1}, {"path": "b.py", "start_line": 2}]
-    fallback = {"path": "c.py", "start_line": 3}
-    assert _flow_point({"flows": [steps]}, "source", fallback) == "a.py:1"
-    assert _flow_point({"flows": [steps]}, "sink", fallback) == "b.py:2"
-    assert _flow_point({}, "sink", fallback) == "c.py:3"
+    assert _flow_point(steps, "source") == "a.py:1"
+    assert _flow_point(steps, "sink") == "b.py:2"
+    marked = [{**steps[0], "kinds": ["sink"]}, steps[1]]
+    assert _flow_point(marked, "sink") == "a.py:1"
+
+
+def test_flow_steps_skip_malformed_flows_and_keep_one_flow():
+    from factoryline.deep_audit_loop import _chain, _flow_steps
+
+    good = [{"path": "x.py", "start_line": 1}, {"path": "y.py", "start_line": 2}]
+    item = {"flows": [["x"], [{"start_line": 3}], good, [{"path": "z.py"}]]}
+    assert _flow_steps(item) == good
+    assert _flow_steps({"flows": "bad"}) == _flow_steps({}) == []
+    bare = {
+        "finding_id": "f",
+        "rule_id": None,
+        "trace_sha256": "b" * 64,
+        "locations": [{"path": "db.py", "start_line": 9, "source_sha256": "c" * 64}],
+        "flows": [["x"]],
+    }
+    assert _chain(bare, {"decision": "X"}, "r")["finding"] == "f: db.py:9"
+    long = {**bare, "rule_id": "r" * 400, "flows": [good]}
+    label = _chain(long, {"decision": "X"}, "r")["finding"]
+    assert len(label) <= 240 and label.endswith(": x.py:1 -> y.py:2")
 
 
 def test_chain_labels_taint_source_and_sink_and_marks_leads():
