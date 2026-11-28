@@ -27,6 +27,10 @@ import stat
 import tempfile
 import time
 from typing import Any, Iterable
+import http.client
+import urllib.error
+import urllib.parse
+import urllib.request
 from . import runtime_audit_process as _runtime_process
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -1271,15 +1275,22 @@ def export_otel(root: Path, out: Path) -> dict[str, Any]:
                     {
                         "spans": [
                             {
+                                "traceId": str(row["event_sha256"])[:32],
+                                "spanId": str(row["event_sha256"])[32:48],
+                                "kind": 1,  # SPAN_KIND_INTERNAL; OTLP/JSON encodes enums as integers
                                 "name": "factory.outcome",
                                 "startTimeUnixNano": int(
                                     _parse_timestamp(row["created_at"]) * 1_000_000_000
                                 ),
+                                "endTimeUnixNano": int(
+                                    _parse_timestamp(row["created_at"]) * 1_000_000_000
+                                )
+                                + int(row["duration_ms"]) * 1_000_000,
                                 "durationNano": int(row["duration_ms"]) * 1_000_000,
                                 "status": {
-                                    "code": "STATUS_CODE_OK"
+                                    "code": 1
                                     if row["result"] in {"success", "deployed"}
-                                    else "STATUS_CODE_ERROR"
+                                    else 2
                                 },
                                 "attributes": [
                                     {
@@ -1311,6 +1322,97 @@ def export_otel(root: Path, out: Path) -> dict[str, Any]:
     }
     path = _atomic_json(Path(out).resolve(), payload)
     return {**payload, "path": str(path)}
+
+
+def _otlp_endpoint_parts(endpoint: str) -> Any:
+    """Parse an endpoint, refusing malformed URLs and URLs without a host."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(endpoint)
+        host = parts.hostname
+    except ValueError as error:
+        raise EnterpriseOpsError("E_OTEL_ENDPOINT_INVALID", str(error)) from error
+    if not host:
+        raise EnterpriseOpsError(
+            "E_OTEL_ENDPOINT_INVALID", "OTLP endpoint needs a host"
+        )
+    return parts
+
+
+def _otlp_traces_url(endpoint: str) -> str:
+    """Return the collector's /v1/traces URL after refusing unsafe endpoints."""
+    parts = _otlp_endpoint_parts(endpoint)
+    loopback = parts.hostname in {"localhost", "127.0.0.1", "::1"}
+    if parts.scheme != "https" and not (parts.scheme == "http" and loopback):
+        raise EnterpriseOpsError(
+            "E_OTEL_ENDPOINT_INVALID",
+            "OTLP endpoint must be https, or http on a loopback host",
+        )
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise EnterpriseOpsError(
+            "E_OTEL_ENDPOINT_INVALID",
+            "OTLP endpoint must not carry credentials, a query or a fragment",
+        )
+    base = endpoint.rstrip("/")
+    return base if base.endswith("/v1/traces") else base + "/v1/traces"
+
+
+class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirected POST would become a bodiless GET elsewhere; fail instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Refuse every redirect so urllib raises the 3xx as an HTTP error."""
+        return None
+
+
+def push_otel(root: Path, out: Path, endpoint: str, timeout: float = 10.0) -> dict:
+    """Write the export, then POST its spans to an OTLP/HTTP JSON collector.
+
+    Each push sends the whole verified ledger; trace and span IDs come from the
+    event hashes, so a collector sees the same IDs for an event on every push.
+    """
+    url = _otlp_traces_url(endpoint)
+    exported = export_otel(root, out)
+    body = json.dumps({"resourceSpans": exported["resourceSpans"]}).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, method="POST", headers={"Content-Type": "application/json"}
+    )
+    # Loopback http must never travel through an environment proxy in cleartext.
+    proxies = {} if urllib.parse.urlsplit(url).scheme == "http" else None
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler(proxies), _RefuseRedirect
+    )
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            status, reply = int(response.status), response.read(65536)
+    except (urllib.error.URLError, http.client.HTTPException, OSError) as error:
+        raise EnterpriseOpsError("E_OTEL_PUSH_FAILED", str(error)) from error
+    rejected = _otlp_rejected_spans(reply)
+    if not 200 <= status < 300 or rejected:
+        raise EnterpriseOpsError(
+            "E_OTEL_PUSH_FAILED",
+            f"collector returned {status}; rejected spans {rejected}",
+        )
+    return {
+        **exported,
+        "marker": "OTEL_EXPORT_PUSHED",
+        "endpoint": url,
+        "status": status,
+    }
+
+
+def _otlp_rejected_spans(reply: bytes) -> int:
+    """Rejected span count from an OTLP/JSON partialSuccess reply; 0 when absent."""
+    try:
+        value = json.loads(reply or b"{}")
+    except ValueError:
+        return 0
+    partial = value.get("partialSuccess") if isinstance(value, dict) else None
+    try:
+        return int((partial or {}).get("rejectedSpans") or 0)
+    except (TypeError, ValueError):
+        return 1
 
 
 def _sla_manifest(manifest: Path | None) -> dict[str, Any]:

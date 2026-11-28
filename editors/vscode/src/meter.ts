@@ -84,7 +84,7 @@ export function savingsHtml(value: unknown): string {
     ["Token savings rate", percent(tokens.weighted_savings_rate)],
     ["Cost saved", cost.saved_total === null || cost.saved_total === undefined ? "unknown" : `${cost.saved_total} USD`],
     ["Cost savings rate", percent(cost.weighted_savings_rate)],
-    ["Productivity gain", productivity.gain_rate === null || productivity.gain_rate === undefined ? "withheld until equivalent-outcome proof" : percent(productivity.gain_rate)],
+    ["Productivity gain", productivity.gain_rate === null || productivity.gain_rate === undefined ? String(productivity.reason ?? "withheld until equivalent-outcome proof") : percent(productivity.gain_rate)],
     ["Productivity evidence coverage", percent(productivity.coverage_rate)],
   ];
   const body = rows.map(([label, entry]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(entry)}</td></tr>`).join("");

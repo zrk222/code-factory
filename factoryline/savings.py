@@ -16,6 +16,9 @@ from . import CodedError
 
 PAIR_SCHEMA = "factory.savings-pair.v1"
 PUBLIC_SCHEMA = "factory.savings-report.public.v1"
+# No public percentage rests on fewer exact pairs than this. Totals stay visible:
+# they are receipted sums, while a rate over a handful of pairs is not evidence.
+PUBLIC_RATE_MIN_PAIRS = 20
 PAIR_ID = re.compile(r"^[a-z\d][a-z\d._-]*$")
 MAX_PAIR_ID_LENGTH = 80
 MAX_PAIRS = 10_000
@@ -244,19 +247,34 @@ def _metric(rows: list[dict[str, Any]], key: str, saved_key: str) -> dict[str, A
         "baseline_total": before if exact else None,
         "factory_total": after if exact else None,
         "saved_total": saved if exact else None,
-        "weighted_savings_rate": _ratio(saved, before) if exact else None,
+        "weighted_savings_rate": _ratio(saved, before)
+        if len(exact) >= PUBLIC_RATE_MIN_PAIRS
+        else None,
+        "rate_min_pairs": PUBLIC_RATE_MIN_PAIRS,
+    }
+
+
+def _public_productivity(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Productivity gain over equivalent-outcome pairs, withheld below the pair floor."""
+    equivalent = [row for row in rows if row["equivalence"]["asserted"]]
+    before = sum(row["baseline"]["elapsed_ms"] for row in equivalent)
+    after = sum(row["factory"]["elapsed_ms"] for row in equivalent)
+    enough = len(equivalent) >= PUBLIC_RATE_MIN_PAIRS and after > 0
+    gain = float(_exact(before) / _exact(after) - 1) if enough else None
+    return {
+        "exact_pairs": len(equivalent),
+        "coverage_rate": len(equivalent) / len(rows) if rows else None,
+        "gain_rate": gain,
+        "reason": None
+        if gain is not None
+        else f"At least {PUBLIC_RATE_MIN_PAIRS} equivalent-outcome pairs are required.",
     }
 
 
 def public_savings_report(root: Path) -> dict[str, Any]:
     """Aggregate exact pairs without private identifiers, paths, or evidence digests."""
     rows = load_savings_pairs(root)
-    equivalent = [row for row in rows if row["equivalence"]["asserted"]]
-    before = sum(row["baseline"]["elapsed_ms"] for row in equivalent)
-    after = sum(row["factory"]["elapsed_ms"] for row in equivalent)
-    productivity = (
-        float(_exact(before) / _exact(after) - 1) if equivalent and after > 0 else None
-    )
+    productivity = _public_productivity(rows)
     report = {
         "schema": PUBLIC_SCHEMA,
         "marker": "SAVINGS_REPORT_AGGREGATE_SAFE",
@@ -265,20 +283,20 @@ def public_savings_report(root: Path) -> dict[str, Any]:
         "time": _metric(rows, "elapsed_ms", "time_saved_ms"),
         "tokens": _metric(rows, "tokens", "tokens_saved"),
         "cost_usd": _metric(rows, "cost_usd", "cost_saved_usd"),
-        "productivity": {
-            "exact_pairs": len(equivalent),
-            "coverage_rate": len(equivalent) / len(rows) if rows else None,
-            "gain_rate": productivity,
-            "reason": None
-            if productivity is not None
-            else "Equivalent-outcome evidence is required.",
-        },
+        "productivity": productivity,
     }
+    gain = productivity["gain_rate"]
     if any(
         metric.get("saved_total") is not None and metric["saved_total"] < 0
         for metric in (report["time"], report["tokens"], report["cost_usd"])
-    ) or (productivity is not None and productivity < 0):
+    ) or (gain is not None and gain < 0):
         report["markers"].append("SAVINGS_NEGATIVE_VISIBLE")
+    counts = [report[key]["exact_pairs"] for key in ("time", "tokens", "cost_usd")]
+    if any(
+        0 < count < PUBLIC_RATE_MIN_PAIRS
+        for count in counts + [productivity["exact_pairs"]]
+    ):
+        report["markers"].append("SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS")
     return report
 
 
