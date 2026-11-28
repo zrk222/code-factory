@@ -9,10 +9,64 @@ import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
   publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint, reviewCapturePath,
-  replayCaseScore } from './recall_harness.mjs';
+  replayCaseScore, sarifTraceThreads, anchoredTraceMatches } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 import { compileScannerPathPolicy, completeFixedCoverage, engineTargetIgnores, readRuleMetadata, scannerPathPolicy } from './recall_coverage.mjs';
 import { replayRegisteredCaptures } from './verify_registered_recall.mjs';
+
+test('sarifTraceThreads preserves thread boundaries and marks unavailable locations', () => {
+  const physical = (uri, startLine) => ({
+    location: { physicalLocation: { artifactLocation: { uri }, region: { startLine } } },
+  });
+  const result = { codeFlows: [
+    { threadFlows: [
+      { locations: [physical('values.py', 8), { location: {} }, physical('result.py', 21)] },
+      { locations: [physical('values.py', 0), physical('unbound.py', 4)] },
+    ] },
+    { threadFlows: [{ locations: [physical('result.py', 25)] }] },
+  ] };
+  const packets = new Set(['values.py', 'result.py']);
+  assert.deepEqual(sarifTraceThreads(result, ({ uri }) => packets.has(uri) ? uri : null), [
+    [
+      [{ path: 'values.py', line: 8 }, { state: 'nonphysical' }, { path: 'result.py', line: 21 }],
+      [{ path: 'values.py', state: 'invalid_line' }, { path: null, line: 4 }],
+    ],
+    [[{ path: 'result.py', line: 25 }]],
+  ]);
+  assert.deepEqual(sarifTraceThreads({}, () => assert.fail('unexpected path resolution')), []);
+});
+
+test('anchoredTraceMatches keeps the reported endpoint and rejects incomplete or off-hunk threads', () => {
+  const hunks = parseHunks([
+    'diff --git a/values.py b/values.py', '--- a/values.py', '+++ b/values.py', '@@ -8 +8 @@', '-value = 1', '+value = 2',
+    'diff --git a/result.py b/result_new.py', '--- a/result.py', '+++ b/result_new.py', '@@ -2 +2 @@', '-name = "a"', '+name = "b"',
+  ].join('\n'), ['py']);
+  const anchor = { path: 'values.py', line: 8 };
+  const endpoint = { path: 'result.py', line: 21 };
+  const inertRule = 'fixture.value';
+  const input = {
+    oldFindings: [{ rule: inertRule, ...endpoint, span: [2, 0, 6] }],
+    newFindings: [{ rule: inertRule, path: 'result_new.py', line: 24 }],
+    hunks, families: ['fixture'], rules: { [inertRule]: ['fixture'] },
+  };
+  const complete = [anchor, { state: 'nonphysical' }, endpoint];
+  assert.deepEqual(anchoredTraceMatches({ ...input, flows: [[[complete, complete]]] }), [{
+    rule: inertRule,
+    sink: { ...endpoint, span: [2, 0, 6] },
+    anchor,
+    source_paths: ['result.py', 'values.py'],
+    fixed_sink_residual: true,
+  }]);
+  const rejected = [
+    [anchor, { ...endpoint, line: 22 }],
+    [anchor, { path: null, line: 9 }, endpoint],
+    [{ ...anchor, line: 7 }, endpoint],
+    [endpoint],
+  ];
+  assert.deepEqual(anchoredTraceMatches({ ...input, flows: [[rejected]] }), []);
+  assert.deepEqual(anchoredTraceMatches({ ...input, oldFindings: [{ rule: inertRule, path: 'result.py', line: 2 }],
+    flows: [[[[anchor, { path: 'result.py', line: 2 }]]]] }), []);
+});
 
 test('readRuleMetadata reads byte-pinned YAML and rejects duplicate rule IDs', () => {
   const rule = '  - metadata: {cwe: [CWE-79]}\n    languages: [javascript]\n    id: fixture\n';
