@@ -110,6 +110,16 @@ def add_parser(sub: Any) -> None:
     ops_sla.add_argument("--manifest")
     ops_sla.add_argument("--out")
     ops_sla.add_argument("--json", action="store_true")
+    ops_ci = ops_sub.add_parser(
+        "ci-failure", help="sign one failed CI job log and recall verified repairs"
+    )
+    ops_ci.add_argument("--log", required=True)
+    ops_ci.add_argument("--workflow", required=True)
+    ops_ci.add_argument("--job", required=True)
+    ops_ci.add_argument("--step", default="")
+    ops_ci.add_argument("--index", default=".factory/ci-failures.jsonl")
+    ops_ci.add_argument("--remember", help="executed, passing fix-workflow receipt")
+    ops_ci.add_argument("--json", action="store_true")
     ops_policy = ops_sub.add_parser(
         "policy", help="compile explicit policy rules into deterministic checks"
     )
@@ -324,7 +334,22 @@ def _dispatch(args: Any) -> Any:
         return _metadata_result(args)
     if args.ops_cmd == "receipts":
         return _receipt_result(args)
+    if args.ops_cmd == "ci-failure":
+        return _guard(lambda: _ci_failure_result(args))
     return _verify_result(args)
+
+
+def _ci_failure_result(args: Any) -> dict[str, Any]:
+    """Sign a failed job log; remember a verified repair or recall earlier ones."""
+    from .failure_guidance import ci_failure_signature, remember_ci_repair
+    from .failure_guidance import triage_ci_failure
+
+    log = Path(args.log).read_text(encoding="utf-8", errors="replace")
+    signature = ci_failure_signature(log, args.workflow, args.job, args.step)
+    if args.remember:
+        receipt = json.loads(Path(args.remember).read_text(encoding="utf-8"))
+        return remember_ci_repair(Path(args.index), signature, receipt)
+    return triage_ci_failure(Path(args.index), signature)
 
 
 def _exit_code(command: str, result: dict[str, Any]) -> int:

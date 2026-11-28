@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+from pathlib import Path
 from typing import Any, Iterable
 
 
@@ -341,4 +345,141 @@ def explain_failure(
         "auto_correctable": auto_correctable,
         "next_action": next_action,
         "loop_instruction": "Repair the earliest causal failure only; preserve stronger gates and rerun the failed stage before continuing.",
+    }
+
+
+_CI_PREFIX = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ?|\x1b\[[0-9;]*[A-Za-z]")
+_CI_KEYS = (
+    ("pytest", re.compile(r"^FAILED (\S+)")),
+    ("assertion", re.compile(r"^E\s+(\w*(?:Error|Exception)\b.*)")),
+    ("exception", re.compile(r"^(\w+(?:Error|Exception): .*)$")),
+    ("node-test", re.compile(r"^not ok \d+ - (.+)$")),
+    ("format", re.compile(r"^Would reformat: (\S+)")),
+    ("lint", re.compile(r"^(\S+\.\w+:\d+:\d+: [A-Z]+\d+)")),
+    ("assert", re.compile(r"^(AssertionError: .*)$")),
+)
+_CI_VOLATILE = (
+    (re.compile(r"\b[0-9a-f]{8}-[0-9a-f-]{27}\b"), "U"),
+    (re.compile(r"\b[0-9a-f]{7,64}\b"), "H"),
+    (re.compile(r"\d+(?:\.\d+)*"), "N"),
+    (re.compile(r"\\"), "/"),
+)
+_CI_JOB_NOISE = re.compile(
+    r"\((?:[\w.-]+, )*[\w.-]+\)|\b(?:windows|ubuntu|macos)(?:-latest)?\b|python \d[\d.]*|shard \d+/\d+",
+    re.IGNORECASE,
+)
+
+
+def _ci_normal(text: str) -> str:
+    for pattern, replacement in _CI_VOLATILE:
+        text = pattern.sub(replacement, text)
+    return " ".join(text.split())[:240]
+
+
+def ci_failure_signature(
+    log: str, workflow: str, job: str, step: str
+) -> dict[str, Any]:
+    """Normalise one failed CI job into a content-only signature; volatile ids, numbers and paths are folded."""
+    lines = [_CI_PREFIX.sub("", line).strip() for line in log.splitlines()]
+    end = next(
+        (i for i, line in enumerate(lines) if line.startswith("##[error]")), len(lines)
+    )
+    start = max(
+        (i for i in range(end) if lines[i].startswith("##[endgroup]")), default=0
+    )
+    lines = lines[start:end]
+    keys, kind = set(), None
+    for line in lines:
+        for name, pattern in _CI_KEYS:
+            if match := pattern.match(line):
+                keys.add(_ci_normal(match.group(1)))
+                kind = kind or name
+                break
+    if not keys:
+        tail = [line for line in lines if line and not line.startswith("##[")]
+        keys = {_ci_normal(line) for line in tail[-3:]}
+        kind = "tail"
+    identity = {
+        "workflow": workflow,
+        "job": " ".join(_CI_JOB_NOISE.sub("", job).split()),
+        "step": _ci_normal(step),
+    }
+    keys = sorted(keys)[:12]
+    return {
+        "schema": "factory.ci-failure-signature.v1",
+        **identity,
+        "kind": kind,
+        "keys": keys,
+        "signature_sha256": _ci_sha({**identity, "keys": keys}),
+        "family_sha256": _ci_sha({**identity, "kind": kind}),
+    }
+
+
+def _ci_sha(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def _verified_fix_receipt(receipt: Any) -> bool:
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") != "factory.fix-workflow.v1"
+    ):
+        return False
+    core = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    from .fix_workflow import _sha
+
+    return (
+        receipt.get("mode") == "execute"
+        and receipt.get("state") == "PASS"
+        and receipt.get("receipt_sha256") == _sha(core)
+    )
+
+
+def remember_ci_repair(
+    index: Path, signature: dict[str, Any], receipt: Any
+) -> dict[str, Any]:
+    """Append a failure signature with its executed, passing fix receipt; anything else is refused."""
+    if not _verified_fix_receipt(receipt):
+        raise ValueError(
+            "fix receipt is not an executed, passing, self-consistent fix-workflow receipt"
+        )
+    entry = {
+        "signature_sha256": signature["signature_sha256"],
+        "family_sha256": signature["family_sha256"],
+        "fix_receipt_sha256": receipt["receipt_sha256"],
+        "fix_id": receipt.get("fix_id"),
+    }
+    index.parent.mkdir(parents=True, exist_ok=True)
+    with index.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    return entry
+
+
+def triage_ci_failure(index: Path, signature: dict[str, Any]) -> dict[str, Any]:
+    """Recall earlier verified repairs for this signature; the result is a lead for a human, never an action."""
+    entries = []
+    if index.is_file():
+        for line in index.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                entries.append(entry)
+    exact = [
+        e for e in entries if e.get("signature_sha256") == signature["signature_sha256"]
+    ]
+    family = [
+        e for e in entries if e.get("family_sha256") == signature["family_sha256"]
+    ]
+    return {
+        "schema": "factory.ci-failure-triage.v1",
+        "signature": signature,
+        "status": "KNOWN_FAILURE" if exact else "REQUIRES_HUMAN_ATTENTION",
+        "verified_repairs": exact,
+        "similar_repairs": [e for e in family if e not in exact][:5],
+        "authority": "none",
+        "next_action": "Re-run the recalled fix workflow against this failure before applying anything."
+        if exact
+        else "Diagnose the failure; record the executed, passing fix receipt so the next recurrence is recalled.",
     }

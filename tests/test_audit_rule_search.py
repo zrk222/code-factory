@@ -5083,3 +5083,58 @@ def test_request_batch_all_fields_frozen_vectors_and_reversed_unique_ids(fielded
     assert all(
         list(scores) == list(map(str, reversed(range(8)))) for scores in reversed_scores
     )
+
+
+def test_ci_failure_signature_folds_volatile_detail_and_keeps_the_cause():
+    from factoryline.failure_guidance import ci_failure_signature
+
+    log = (
+        "2026-11-28T05:00:00.0000000Z ##[group]Run pytest\n"
+        "2026-11-28T05:00:00.1000000Z ##[endgroup]\n"
+        "2026-11-28T05:00:01.0000000Z E   AssertionError: assert '2.1.0' == '1.15.0'\n"
+        "2026-11-28T05:00:01.1000000Z FAILED tests\\test_x.py::test_y - AssertionError\n"
+        "2026-11-28T05:00:02.0000000Z ##[error]Process completed with exit code 1.\n"
+        "2026-11-28T05:00:03.0000000Z Cleaning up orphan processes\n"
+    )
+    first = ci_failure_signature(
+        log, "ci", "test (ubuntu-latest, 3.12)", "Test shard 4/4"
+    )
+    again = ci_failure_signature(
+        log.replace("2.1.0", "2.2.0").replace("05:00", "06:10"),
+        "ci",
+        "test (windows-latest, 3.11)",
+        "Test shard 2/4",
+    )
+    assert first["kind"] == "assertion" and first["job"] == "test"
+    assert first["signature_sha256"] == again["signature_sha256"]
+    assert "tests/test_x.py::test_y" in first["keys"]
+    assert not any("orphan" in key for key in first["keys"])
+
+
+def test_ci_repairs_are_recalled_only_from_executed_passing_receipts(tmp_path):
+    import pytest
+
+    from factoryline.failure_guidance import (
+        ci_failure_signature,
+        remember_ci_repair,
+        triage_ci_failure,
+    )
+    from factoryline.fix_workflow import SCHEMA, _sha
+
+    signature = ci_failure_signature(
+        "ModuleNotFoundError: No module named 'x'\n", "ci", "lint", "Ruff"
+    )
+    index = tmp_path / "ci-failures.jsonl"
+    assert triage_ci_failure(index, signature)["status"] == "REQUIRES_HUMAN_ATTENTION"
+    core = {"schema": SCHEMA, "mode": "execute", "state": "PASS", "fix_id": "fix-1"}
+    with pytest.raises(ValueError):
+        remember_ci_repair(index, signature, {**core, "receipt_sha256": "0" * 64})
+    with pytest.raises(ValueError):
+        planned = {**core, "mode": "plan"}
+        remember_ci_repair(
+            index, signature, {**planned, "receipt_sha256": _sha(planned)}
+        )
+    remember_ci_repair(index, signature, {**core, "receipt_sha256": _sha(core)})
+    triage = triage_ci_failure(index, signature)
+    assert triage["status"] == "KNOWN_FAILURE" and triage["authority"] == "none"
+    assert triage["verified_repairs"][0]["fix_id"] == "fix-1"
