@@ -139,7 +139,7 @@ def tree_index(tree):
 
 
 _DUMP_DIGESTS = __import__("weakref").WeakKeyDictionary()
-_FORKED_JOB = None
+_FORKED_SCAN = None
 
 
 def ast_dump_digest(node):
@@ -169,25 +169,28 @@ def scan_workers(jobs):
     return max(1, min(wanted if wanted > 0 else min(8, os.cpu_count() or 1), jobs))
 
 
+def _init_forked(jobs, scan):
+    global _FORKED_SCAN
+    _FORKED_SCAN = (jobs, scan)
+
+
 def _run_forked(index):
-    return _FORKED_JOB(index)
+    jobs, scan = _FORKED_SCAN
+    return scan(*jobs[index])
 
 
 def map_scan_jobs(jobs, scan):
     """Return (job[0], scan(*job)) in input order; forked children inherit the parsed trees."""
     import multiprocessing
 
-    global _FORKED_JOB
     workers = scan_workers(len(jobs))
     if workers < 2:
         rows = [scan(*job) for job in jobs]
     else:
-        _FORKED_JOB = lambda index: scan(*jobs[index])  # noqa: E731
-        try:
-            with multiprocessing.get_context("fork").Pool(workers) as pool:
-                rows = pool.map(_run_forked, range(len(jobs)), chunksize=1)
-        finally:
-            _FORKED_JOB = None
+        with multiprocessing.get_context("fork").Pool(
+            workers, initializer=_init_forked, initargs=(jobs, scan)
+        ) as pool:
+            rows = pool.map(_run_forked, range(len(jobs)), chunksize=1)
     return [(job[0], row) for job, row in zip(jobs, rows)]
 
 

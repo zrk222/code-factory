@@ -6804,3 +6804,38 @@ def test_map_scan_jobs_keeps_order_in_and_out_of_workers(monkeypatch):
     pooled = scan_pool.map_scan_jobs(jobs, lambda name, index: f"{name}{index * 2}")
     assert serial == pooled == [(name, f"{name}{index * 2}") for name, index in jobs]
     assert scan_pool.scan_workers(3) == 1
+
+
+def test_overlapping_scan_pools_bind_their_own_jobs(monkeypatch):
+    import multiprocessing
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+    if scan_pool.scan_workers(4) == 1:
+        pytest.skip("requires the Linux fork pool")
+
+    context = multiprocessing.get_context("fork")
+    create_pool = context.Pool
+    both_starting = Barrier(2, timeout=15)
+
+    def synchronized_pool(*args, **kwargs):
+        both_starting.wait()
+        return create_pool(*args, **kwargs)
+
+    monkeypatch.setattr(context, "Pool", synchronized_pool)
+
+    def batch(root):
+        jobs = [(f"{root}/{index}.py", index) for index in range(4)]
+        return scan_pool.map_scan_jobs(
+            jobs, lambda path, index: (root, index, os.getpid())
+        )
+
+    roots = ("first", "second")
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        for root, rows in zip(roots, callers.map(batch, roots)):
+            assert [(path, label, index) for path, (label, index, _) in rows] == [
+                (f"{root}/{index}.py", root, index) for index in range(4)
+            ]
+            assert all(pid != os.getpid() for _, (_, _, pid) in rows)

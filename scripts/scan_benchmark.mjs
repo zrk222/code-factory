@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { cpus, platform } from 'node:os';
 import { join, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -33,7 +34,7 @@ export function corpusDigest(root) {
 }
 
 function timedScan(python, root, workers) {
-  const code = "import sys; from factoryline.cli import main; sys.argv=['factory','scan','--root',sys.argv[1],'--static-only','--json']; main()";
+  const code = "import sys; from factoryline.cli import main; sys.argv=['factory','scan','--root',sys.argv[1],'--static-only','--json']; raise SystemExit(main())";
   const start = process.hrtime.bigint();
   const run = spawnSync(python, ['-c', code, root], { env: { ...process.env, FACTORY_SCAN_WORKERS: String(workers) }, maxBuffer: 256 * 1024 * 1024 });
   const seconds = Number(process.hrtime.bigint() - start) / 1e9;
@@ -67,4 +68,4 @@ function main(argv) {
   return receipt.stable_output ? 0 : 1;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = main(process.argv.slice(2));
