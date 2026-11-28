@@ -12,6 +12,7 @@ deploy/deep-adapters/profiles/*.json text eol=lf
 deploy/deep-adapters/rules/*.toml text eol=lf
 deploy/deep-adapters/rules/*.yaml text eol=lf
 deploy/deep-adapters/rules/*.yml text eol=lf
+deploy/deep-adapters/rules/codeql-diagnostics/IdentifierPath.ql text eol=lf
 deploy/deep-adapters/rules/*.txt text eol=lf
 deploy/deep-adapters/rules/tests/**/*.js text eol=lf
 deploy/deep-adapters/rules/tests/**/*.txt text eol=lf
