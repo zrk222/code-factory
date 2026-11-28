@@ -5064,8 +5064,22 @@ def _run_native_profile(
             if semgrep_rules is not None
             else None
         )
+        php_source_execution = None
         if semgrep_execution is not None:
             import base64
+            from .deep_audit_attestation import _php_source_execution
+
+            if not execution_context:
+                php_source_execution = _php_source_execution(
+                    profile,
+                    lane,
+                    source,
+                    scratch,
+                    inventory,
+                    semgrep_execution,
+                    started,
+                    cancelled,
+                )
 
             semgrep_execution["ruleset_base64"] = base64.b64encode(config).decode(
                 "ascii"
@@ -5083,6 +5097,7 @@ def _run_native_profile(
         "raw_report": raw_report,
         "version_probe": version,
         "semgrep_rule_execution": semgrep_execution,
+        "php_source_execution": php_source_execution,
         "trivy_rule_execution": trivy_execution,
         "codeql_query_inventory": query_inventory,
         "codeql_query_execution": query_execution,

@@ -1203,6 +1203,108 @@ def test_native_opengrep_preserves_multiple_bindings_without_relaxing_proof_json
         _semgrep_rule_json(wrong, "2.1.0")
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "none",
+        "missing",
+        "extra",
+        "hash",
+        "argv",
+        "partial",
+        "empty",
+        "empty-hash",
+        "partial-nodes",
+        "timeout",
+        "budget",
+        "overflow",
+        "skipped",
+    ],
+)
+def test_php_extraction_conserves_scanned_paths_and_process_evidence(fault):
+    from factoryline.deep_audit_attestation import _semgrep_accounting
+    from factoryline.deep_audit_io import RuntimeAuditError
+
+    path = "app.php"
+    source_hash = "a" * 64
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "timeout_seconds": 2,
+        "duration_ms": 1,
+        "termination_reason": "process_exit",
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": "c" * 64,
+        "stderr_sha256": "d" * 64,
+        "stdout_bytes": 40,
+        "stderr_bytes": 0,
+    }
+    row = {
+        "source_sha256": source_hash,
+        "top_level_nodes": 1,
+        "execution": facts,
+        "argv_sha256": digest(
+            [
+                "/usr/bin/opengrep",
+                "scan",
+                "--dump-ast",
+                "--json",
+                "--lang",
+                "php",
+                "/src/app.php",
+            ]
+        ),
+    }
+    rows = {path: row}
+    native = {"skipped_rules": []}
+    evidence = {
+        "schema": "factory.php-source-execution.v1",
+        "candidate_sha256": "e" * 64,
+        "rows": rows,
+    }
+    execution = {
+        "php_source_execution": evidence,
+        "semgrep_rule_execution": {"observations": [{"native_report": native}]},
+    }
+    checked = {"rules": [{"executed_sources": [path]}, {"executed_sources": [path]}]}
+    if fault == "missing":
+        rows.clear()
+    elif fault == "extra":
+        rows["other.php"] = row
+    elif fault in {"hash", "argv"}:
+        row["source_sha256" if fault == "hash" else "argv_sha256"] = "0" * 64
+    elif fault in {"partial", "partial-nodes"}:
+        facts["exit_code"] = 3
+        row["top_level_nodes"] = None if fault == "partial" else 1
+    elif fault in {"empty", "empty-hash"}:
+        from hashlib import sha256
+
+        empty_program = b'{"Pr":[]}\n'
+        row["top_level_nodes"] = 0
+        facts["stdout_bytes"] = len(empty_program)
+        if fault == "empty":
+            facts["stdout_sha256"] = sha256(empty_program).hexdigest()
+    elif fault == "timeout":
+        facts["timed_out"] = True
+    elif fault == "budget":
+        facts["duration_ms"] = 2001
+    elif fault == "overflow":
+        facts["output_limit_exceeded"] = True
+    elif fault == "skipped":
+        native["skipped_rules"] = ["fixture"]
+    args = execution, {"timeout_seconds": 2}, {path: source_hash}, checked
+    if fault not in {"none", "partial", "empty"}:
+        with pytest.raises(RuntimeAuditError):
+            _semgrep_accounting(*args)
+        return
+    result = _semgrep_accounting(*args)
+    assert result["state"] == ("INCOMPLETE" if fault == "partial" else "COMPLETE")
+    assert result["measured_paths"] == ([] if fault == "partial" else [path])
+    assert result["php_source_execution_sha256"] == digest(evidence)
+
+
 def test_php_interfile_profile_keeps_bounded_flags_in_challenge_and_rule_execution():
     from factoryline.deep_audit_attestation import _semgrep_rule_prefix
     from factoryline.deep_audit_io import _semgrep_challenge_command

@@ -2851,6 +2851,11 @@ def _native_profile_coverage(
             lane,
             **({"execution_context": execution_context} if execution_context else {}),
         ),
+        **(
+            {"php_source_execution": execution["php_source_execution"]}
+            if execution.get("php_source_execution") is not None
+            else {}
+        ),
         "native_invocations": execution["invocations"],
         "invocation_sha256": _deep_audit_io.digest(execution["invocations"]),
         "version_probe": execution["version_probe"],
@@ -3575,6 +3580,170 @@ def _native_source_accounting(
     return _deep_audit_io._native_runtime_accounting(report, inventory, lane)
 
 
+# Canonical profile digest for the opt-in, container-only PHP worker.
+_PHP_INTERFILE_PROFILE = (
+    "be1495c4676ccfed731d9c0b59e32151a5c50bccb1534edfd2264dca369aedf7"
+)
+
+
+def _php_interfile_profile(profile_hash, lane):
+    return (
+        profile_hash == _PHP_INTERFILE_PROFILE
+        and lane["engine"] == "semgrep"
+        and lane["mode"] == "pattern-limited"
+        and lane["tool_version"] == "2.0.0"
+        and lane["ruleset_sha256"]
+        == "e1c392069575e6653a663865ad5c6a4bfb7079568e27970719a22c7ddc13c2dc"
+        and lane["languages"] == ["php"]
+        and "runner_binding" not in lane
+    )
+
+
+def _php_ast_argv(path):
+    return [
+        "/usr/bin/opengrep",
+        "scan",
+        "--dump-ast",
+        "--json",
+        "--lang",
+        "php",
+        f"/src/{path}",
+    ]
+
+
+def _php_source_execution(
+    profile, lane, source, scratch, inventory, rules, started, cancelled
+):
+    from .runtime_audit_process import MAX_OUTPUT, run_bounded_command
+
+    if not _php_interfile_profile(digest(profile), lane):
+        return None
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    scanned = set().union(
+        *(
+            _deep_audit_io._semgrep_scanned_sources(row["native_report"], sources, lane)
+            for row in rules["observations"]
+        )
+    )
+    scanned &= {
+        item["path"] for item in inventory["files"] if item["language"] == "php"
+    }
+    rows = {}
+    deadline = started + lane["timeout_seconds"]
+    for index, path in enumerate(sorted(scanned)):
+        directory = scratch / f"php-parse-{index}"
+        directory.mkdir()
+        ast = directory / "ast.json"
+        remaining = int(deadline - _deep_audit_io.time.monotonic())
+        if remaining < 1:
+            raise RuntimeAuditError("E_ADAPTER_TIMEOUT", "PHP parser budget exhausted")
+        argv = _php_ast_argv(path)
+        facts = run_bounded_command(
+            argv, source, remaining, directory, stdout_path=ast, cancelled=cancelled
+        )
+        if _deep_audit_io._adapter_command_failed(facts, [0, 3], deadline):
+            raise RuntimeAuditError("E_PHP_EXTRACTION", "PHP parser did not complete")
+        nodes = None
+        if facts["exit_code"] == 0:
+            raw = ast.read_bytes()
+            if (
+                len(raw) != facts["stdout_bytes"]
+                or sha256_bytes(raw) != facts["stdout_sha256"]
+            ):
+                raise RuntimeAuditError(
+                    "E_PHP_EXTRACTION", "captured PHP AST bytes differ"
+                )
+            program = strict_json(raw, max_bytes=MAX_OUTPUT).get("Pr")
+            if not isinstance(program, list):
+                raise RuntimeAuditError("E_PHP_EXTRACTION", "PHP program AST missing")
+            nodes = len(program)
+        ast.unlink()
+        rows[path] = {
+            "source_sha256": sources[path],
+            "argv_sha256": digest(argv),
+            "execution": facts,
+            "top_level_nodes": nodes,
+        }
+    return {
+        "schema": "factory.php-source-execution.v1",
+        "candidate_sha256": inventory["candidate_sha256"],
+        "rows": rows,
+    }
+
+
+def _php_extracted_paths(evidence, lane, sources, scanned):
+    from .runtime_audit_common import _validate_runner_facts
+    from .runtime_audit_process import MAX_OUTPUT
+
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != {"schema", "candidate_sha256", "rows"}
+        or evidence["schema"] != "factory.php-source-execution.v1"
+        or not isinstance(evidence["rows"], dict)
+        or set(evidence["rows"]) != scanned
+    ):
+        raise RuntimeAuditError(
+            "E_PHP_EXTRACTION", "PHP parse inventory differs from native scan"
+        )
+    require_digest(evidence["candidate_sha256"], "PHP parse candidate")
+    extracted = set()
+    duration_ms = 0
+    for path, row in evidence["rows"].items():
+        if (
+            not isinstance(row, dict)
+            or set(row)
+            != {"source_sha256", "argv_sha256", "execution", "top_level_nodes"}
+            or row["source_sha256"] != sources[path]
+            or row["argv_sha256"] != digest(_php_ast_argv(path))
+        ):
+            raise RuntimeAuditError(
+                "E_PHP_EXTRACTION", "PHP parser source or invocation differs"
+            )
+        facts = row["execution"]
+        _validate_runner_facts(facts, facts.get("timeout_seconds"))
+        duration_ms += facts["duration_ms"]
+        if (
+            facts["timeout_seconds"] > lane["timeout_seconds"]
+            or duration_ms > lane["timeout_seconds"] * 1000
+            or facts.get("termination_reason") != "process_exit"
+            or _deep_audit_io._adapter_command_failed(facts, [0, 3], float("inf"))
+            or facts.get("cancelled")
+            or facts["stdout_bytes"] > MAX_OUTPUT
+        ):
+            raise RuntimeAuditError(
+                "E_PHP_EXTRACTION", "PHP parse execution incomplete"
+            )
+        if facts["exit_code"] == 0:
+            nodes = require_int(
+                row["top_level_nodes"],
+                "PHP program nodes",
+                minimum=0,
+                maximum=MAX_OUTPUT,
+            )
+            if (
+                facts["stdout_bytes"] < len(b'{"Pr":[]}')
+                or nodes > facts["stdout_bytes"]
+                or facts["stdout_sha256"] == sha256_bytes(b"")
+            ):
+                raise RuntimeAuditError(
+                    "E_PHP_EXTRACTION", "PHP parser output is incomplete"
+                )
+            if nodes == 0:
+                empty_program = b'{"Pr":[]}\n'
+                if facts["stdout_bytes"] != len(empty_program) or facts[
+                    "stdout_sha256"
+                ] != sha256_bytes(empty_program):
+                    raise RuntimeAuditError(
+                        "E_PHP_EXTRACTION", "empty PHP program bytes differ"
+                    )
+            extracted.add(path)
+        elif row["top_level_nodes"] is not None:
+            raise RuntimeAuditError(
+                "E_PHP_EXTRACTION", "partial PHP AST cannot supply nodes"
+            )
+    return extracted
+
+
 def _semgrep_source_accounting(execution, inventory, lane, *, execution_context=None):
     sources = {item["path"]: item["sha256"] for item in inventory["files"]}
     checked = _deep_audit_io.verify_semgrep_rule_execution(
@@ -3584,30 +3753,49 @@ def _semgrep_source_accounting(execution, inventory, lane, *, execution_context=
         execution["raw_report"],
         execution_context=execution_context,
     )
-    measured = set().union(
-        *(set(rule["executed_sources"]) for rule in checked["rules"])
-    )
     required = {
-        item["path"]
+        item["path"]: item["sha256"]
         for item in inventory["files"]
         if item["language"] in lane["languages"]
     }
-    missing = sorted(required - measured)
-    blade_gap = (
+    return _semgrep_accounting(execution, lane, required, checked)
+
+
+def _semgrep_accounting(execution, lane, required, checked):
+    measured = set().union(*(row["executed_sources"] for row in checked["rules"]))
+    missing = sorted(required.keys() - measured)
+    if missing and not (
         lane.get("tool_version") == "2.0.0"
         and "php" in lane["languages"]
         and all(path.lower().endswith(".blade.php") for path in missing)
-    )
-    if missing and not blade_gap:
-        raise _deep_audit_io.RuntimeAuditError(
+    ):
+        raise RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "native source accounting incomplete"
         )
+    extraction = execution.get("php_source_execution")
+    if extraction is not None:
+        if any(
+            row["native_report"].get("skipped_rules") != []
+            for row in execution["semgrep_rule_execution"]["observations"]
+        ):
+            raise RuntimeAuditError("E_PHP_EXTRACTION", "skipped PHP rule execution")
+        measured = _php_extracted_paths(
+            extraction, lane, required, measured & required.keys()
+        )
+        missing = sorted(required.keys() - measured)
     return {
-        "state": "INCOMPLETE" if missing else "COMPLETE",
+        "state": "INCOMPLETE"
+        if missing or (extraction is not None and not required)
+        else "COMPLETE",
         "required_paths": sorted(required),
         "measured_paths": sorted(measured),
         "missing_paths": missing,
-        "rule_execution_sha256": _deep_audit_io.digest(checked),
+        "rule_execution_sha256": digest(checked),
+        **(
+            {"php_source_execution_sha256": digest(extraction)}
+            if extraction is not None
+            else {}
+        ),
     }
 
 

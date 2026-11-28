@@ -1199,6 +1199,14 @@ def _worker_artifacts(bundle, lane, inventory, run_id):
 
 
 def _bind_native_inventory(coverage, lane, inventory):
+    if "php_source_execution" in coverage:
+        from .deep_audit_attestation import _php_interfile_profile
+
+        extraction = _object(coverage["php_source_execution"])
+        if not _php_interfile_profile(coverage.get("profile_sha256"), lane):
+            raise RuntimeAuditError("E_WORKER_BINDING", "unexpected PHP parser profile")
+        if extraction.get("candidate_sha256") != inventory["candidate_sha256"]:
+            raise RuntimeAuditError("E_WORKER_BINDING", "PHP parser candidate differs")
     if lane["engine"] != "gitleaks" or "native_source_inventory" not in coverage:
         return
     if (
@@ -1873,10 +1881,11 @@ def _fuzz_retained_evidence_gaps(report, lane, sources):
 def _semgrep_rule_execution_gaps(
     coverage, lane, required, report, *, execution_context=None
 ):
+    from .deep_audit_attestation import _php_interfile_profile, _semgrep_accounting
     from .deep_audit_io import verify_semgrep_rule_execution
 
     try:
-        verify_semgrep_rule_execution(
+        checked = verify_semgrep_rule_execution(
             coverage.get("semgrep_rule_execution"),
             lane,
             required,
@@ -1885,6 +1894,24 @@ def _semgrep_rule_execution_gaps(
         )
     except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
         return ["SEMGREP_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+    account = coverage.get("source_accounting") or {}
+    if not isinstance(account, dict):
+        return ["PHP_SOURCE_EXTRACTION_UNVERIFIED"]
+    if (
+        "php_source_execution" not in coverage
+        and "php_source_execution_sha256" not in account
+    ):
+        return []  # Historical scan receipts carry no extraction assertion.
+    try:
+        if execution_context or not _php_interfile_profile(
+            coverage.get("profile_sha256"), lane
+        ):
+            return ["PHP_SOURCE_EXTRACTION_UNVERIFIED"]
+        expected = _semgrep_accounting(coverage, lane, required, checked)
+        if account != expected or expected["state"] != "COMPLETE":
+            return ["PHP_SOURCE_EXTRACTION_UNVERIFIED"]
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["PHP_SOURCE_EXTRACTION_UNVERIFIED"]
     return []
 
 
