@@ -4064,6 +4064,33 @@ def test_documented_http_logging_override_requires_stable_import(
     assert symbols(source) == expected
 
 
+@pytest.mark.parametrize(
+    ("hook", "parameters", "compatible"),
+    [
+        ("log_message", "self, _format, /, *args", True),
+        ("log_error", "self, *args, quiet=True", True),
+        ("log_request", "self, code='-', size='-'", True),
+        ("log_request", "self, *args", True),
+        ("log_message", "self", False),
+        ("log_error", "self, format, value=0", False),
+        ("log_message", "self, format, value, *args", False),
+        ("log_error", "self, *args, quiet", False),
+        ("log_request", "", False),
+        ("log_request", "self, code, size='-'", False),
+        ("log_request", "self, code='-'", False),
+        ("log_request", "self, *, code='-', size='-'", False),
+    ],
+)
+def test_http_logging_hook_accepts_stdlib_calls(hook, parameters, compatible):
+    source = (
+        "from http.server import BaseHTTPRequestHandler\n"
+        "class Handler(BaseHTTPRequestHandler):\n"
+        f"    def {hook}({parameters}):\n"
+        "        pass\n"
+    )
+    assert symbols(source) == (set() if compatible else {hook})
+
+
 def test_documented_http_logging_overrides_preserve_unfinished_siblings():
     source = '''
 from http.server import BaseHTTPRequestHandler

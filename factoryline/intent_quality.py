@@ -149,17 +149,22 @@ from .semantic_credential_sensor import (
 )
 
 
-_HTTP_LOG_HOOKS = {"log_message", "log_error", "log_request"}
+_HTTP_LOG_MIN_POSITIONAL = {"log_message": 2, "log_error": 2, "log_request": 1}
 
 
 def _http_logging_hook(node, parents, aliases):
-    if node.name not in _HTTP_LOG_HOOKS or node.decorator_list:
+    name = node.name
+    if name not in _HTTP_LOG_MIN_POSITIONAL or node.decorator_list:
         return False
     owner = parents.get(node)
-    if (
-        not isinstance(owner, ast.ClassDef)
-        or _borrowed_method(owner, node.name) is not node
-    ):
+    if not isinstance(owner, ast.ClassDef) or _borrowed_method(owner, name) is not node:
+        return False
+    args = node.args
+    positional = len(args.posonlyargs) + len(args.args)
+    required = positional - len(args.defaults)
+    if required > _HTTP_LOG_MIN_POSITIONAL[name] or None in args.kw_defaults:
+        return False
+    if args.vararg is None and (name != "log_request" or positional < 3):
         return False
     doc = ast.get_docstring(node)
     body = node.body if doc is None else node.body[1:]
