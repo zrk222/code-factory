@@ -102,6 +102,7 @@ from .implementation_audit import (  # noqa: F401
     _BoundSourceBytes,
     _bind_file_contracts,
     _bind_imported_base,
+    _borrowed_method,
     _concrete_contract_method,
     _contract_body_nodes,
     _declared_stub_method,
@@ -146,6 +147,50 @@ from .semantic_credential_sensor import (
     flask_upload_expression as flask_upload_expression,
     password_comparison_finding as password_comparison_finding,
 )
+
+
+_HTTP_LOG_HOOKS = {"log_message", "log_error", "log_request"}
+
+
+def _http_logging_hook(node, parents, aliases):
+    if node.name not in _HTTP_LOG_HOOKS or node.decorator_list:
+        return False
+    owner = parents.get(node)
+    if (
+        not isinstance(owner, ast.ClassDef)
+        or _borrowed_method(owner, node.name) is not node
+    ):
+        return False
+    doc = ast.get_docstring(node)
+    body = node.body if doc is None else node.body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Pass):
+        return False
+    if re.search(r"todo|tbd|not implemented|fixme", doc or "", re.I):
+        return False
+    return _stdlib_http_base(owner, parents, aliases)
+
+
+def _stdlib_http_base(owner, parents, aliases):
+    module = parents.get(owner)
+    if not isinstance(module, ast.Module) or owner.decorator_list or owner.keywords:
+        return False
+    if len(owner.bases) != 1:
+        return False
+    root, dot, suffix = ast.unparse(owner.bases[0]).partition(".")
+    imported = aliases.get(root, "")
+    if f"{imported}{dot}{suffix}" != "http.server.BaseHTTPRequestHandler":
+        return False
+    bindings = sum(_scope_statement_binds_name(stmt, root) for stmt in module.body)
+    wildcard = any(
+        isinstance(stmt, ast.ImportFrom) and stmt.names[0].name == "*"
+        for stmt in ast.walk(module)
+    )
+    return (
+        bindings == 1
+        and not wildcard
+        and _stable_import_contract(module, root, owner.lineno)
+        and _stable_api_origin(owner, parents, {root: imported}, {imported})
+    )
 
 
 _PLACEHOLDER_RE = re.compile(
