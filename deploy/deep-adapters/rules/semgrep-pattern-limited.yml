@@ -821,7 +821,7 @@ rules:
               - pattern: '!$F.startsWith($NB)'
               - pattern: $F.indexOf($NB) !== 0
               - pattern: $F.indexOf($NB) != 0
-              - pattern: $F !== $B && !'!$F.startsWith($NB)'
+              - pattern: $F !== $B && !$F.startsWith($NB)
               - pattern: $F !== $B && $F.indexOf($NB) !== 0
               - pattern: $F !== $B && $F.indexOf($NB) != 0
           - pattern-inside: |
@@ -871,7 +871,7 @@ rules:
               - pattern: '!$F.startsWith($NB)'
               - pattern: $F.indexOf($NB) !== 0
               - pattern: $F.indexOf($NB) != 0
-              - pattern: $F !== $B && !'!$F.startsWith($NB)'
+              - pattern: $F !== $B && !$F.startsWith($NB)
               - pattern: $F !== $B && $F.indexOf($NB) !== 0
               - pattern: $F !== $B && $F.indexOf($NB) != 0
           - pattern-inside: |

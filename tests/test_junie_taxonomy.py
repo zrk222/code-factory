@@ -971,6 +971,7 @@ def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     assert set(variants) == {
         "javascript_typescript",
         "ruby",
+        "rust",
         "github_actions",
         "java",
         "csharp",
