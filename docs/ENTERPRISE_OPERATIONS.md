@@ -103,6 +103,13 @@ factory ops summary --root .
 factory ops otel --root . --out .factory/ops/outcomes-otel.json
 ```
 
+Add `--endpoint https://collector.example.com:4318` to also POST the same spans
+to an OTLP/HTTP JSON collector at `/v1/traces`. The endpoint must be `https`
+(plain `http` only on a loopback host) and carry no credentials or query; the
+file is written first, and a collector error fails the command with
+`E_OTEL_PUSH_FAILED`. Spans carry trace and span IDs derived from each
+ledger event hash.
+
 ## Enterprise boundary
 
 The bundle is a deployable local reference, not a managed control plane. It

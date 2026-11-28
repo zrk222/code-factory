@@ -102,6 +102,9 @@ def add_parser(sub: Any) -> None:
     )
     ops_otel.add_argument("--root", default=".")
     ops_otel.add_argument("--out", required=True)
+    ops_otel.add_argument(
+        "--endpoint", help="also POST spans to this OTLP/HTTP JSON collector"
+    )
     ops_otel.add_argument("--json", action="store_true")
     ops_sla = ops_sub.add_parser(
         "sla", help="evaluate seven evidence gates without activating an SLA"
@@ -240,6 +243,7 @@ def _outcome_result(args: Any) -> Any:
         evaluate_sla,
         export_otel,
         outcome_summary,
+        push_otel,
         record_outcome,
     )
 
@@ -262,6 +266,8 @@ def _outcome_result(args: Any) -> Any:
     if args.ops_cmd == "summary":
         return _guard(lambda: outcome_summary(root))
     if args.ops_cmd == "otel":
+        if args.endpoint:
+            return _guard(lambda: push_otel(root, Path(args.out), args.endpoint))
         return _guard(lambda: export_otel(root, Path(args.out)))
     manifest = Path(args.manifest) if args.manifest else None
     output = Path(args.out) if args.out else None

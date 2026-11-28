@@ -16,6 +16,8 @@ from . import CodedError
 
 PAIR_SCHEMA = "factory.savings-pair.v1"
 PUBLIC_SCHEMA = "factory.savings-report.public.v1"
+# No public percentage rests on fewer exact pairs than this; totals stay visible.
+PUBLIC_RATE_MIN_PAIRS = 20
 PAIR_ID = re.compile(r"^[a-z\d][a-z\d._-]*$")
 MAX_PAIR_ID_LENGTH = 80
 MAX_PAIRS = 10_000
@@ -244,7 +246,10 @@ def _metric(rows: list[dict[str, Any]], key: str, saved_key: str) -> dict[str, A
         "baseline_total": before if exact else None,
         "factory_total": after if exact else None,
         "saved_total": saved if exact else None,
-        "weighted_savings_rate": _ratio(saved, before) if exact else None,
+        "weighted_savings_rate": _ratio(saved, before)
+        if len(exact) >= PUBLIC_RATE_MIN_PAIRS
+        else None,
+        "rate_min_pairs": PUBLIC_RATE_MIN_PAIRS,
     }
 
 
@@ -255,7 +260,9 @@ def public_savings_report(root: Path) -> dict[str, Any]:
     before = sum(row["baseline"]["elapsed_ms"] for row in equivalent)
     after = sum(row["factory"]["elapsed_ms"] for row in equivalent)
     productivity = (
-        float(_exact(before) / _exact(after) - 1) if equivalent and after > 0 else None
+        float(_exact(before) / _exact(after) - 1)
+        if len(equivalent) >= PUBLIC_RATE_MIN_PAIRS and after > 0
+        else None
     )
     report = {
         "schema": PUBLIC_SCHEMA,
@@ -271,7 +278,7 @@ def public_savings_report(root: Path) -> dict[str, Any]:
             "gain_rate": productivity,
             "reason": None
             if productivity is not None
-            else "Equivalent-outcome evidence is required.",
+            else f"At least {PUBLIC_RATE_MIN_PAIRS} equivalent-outcome pairs are required.",
         },
     }
     if any(
@@ -279,6 +286,8 @@ def public_savings_report(root: Path) -> dict[str, Any]:
         for metric in (report["time"], report["tokens"], report["cost_usd"])
     ) or (productivity is not None and productivity < 0):
         report["markers"].append("SAVINGS_NEGATIVE_VISIBLE")
+    if rows and len(rows) < PUBLIC_RATE_MIN_PAIRS:
+        report["markers"].append("SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS")
     return report
 
 

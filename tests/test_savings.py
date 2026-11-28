@@ -102,7 +102,22 @@ def test_public_report_is_aggregate_safe_and_exported_atomically(tmp_path):
     report = public_savings_report(tmp_path)
     assert report["pairs"] == 1
     assert report["time"]["saved_total"] == 20
+    assert report["tokens"]["weighted_savings_rate"] is None
+    assert report["productivity"]["gain_rate"] is None
+    assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" in report["markers"]
+    for index in range(19):
+        record_savings_pair(
+            tmp_path,
+            f"pair-{index}",
+            {"elapsed_ms": 100, "tokens": 50},
+            {"elapsed_ms": 80, "tokens": 40},
+            equivalent_outcome=True,
+            evidence=evidence,
+        )
+    report = public_savings_report(tmp_path)
     assert report["tokens"]["weighted_savings_rate"] == 0.2
+    assert report["productivity"]["gain_rate"] == 0.25
+    assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" not in report["markers"]
     encoded = json.dumps(report)
     for private in (
         "private-feature-name",

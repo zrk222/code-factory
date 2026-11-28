@@ -1271,10 +1271,17 @@ def export_otel(root: Path, out: Path) -> dict[str, Any]:
                     {
                         "spans": [
                             {
+                                "traceId": str(row["event_sha256"])[:32],
+                                "spanId": str(row["event_sha256"])[32:48],
+                                "kind": "SPAN_KIND_INTERNAL",
                                 "name": "factory.outcome",
                                 "startTimeUnixNano": int(
                                     _parse_timestamp(row["created_at"]) * 1_000_000_000
                                 ),
+                                "endTimeUnixNano": int(
+                                    _parse_timestamp(row["created_at"]) * 1_000_000_000
+                                )
+                                + int(row["duration_ms"]) * 1_000_000,
                                 "durationNano": int(row["duration_ms"]) * 1_000_000,
                                 "status": {
                                     "code": "STATUS_CODE_OK"
@@ -1311,6 +1318,51 @@ def export_otel(root: Path, out: Path) -> dict[str, Any]:
     }
     path = _atomic_json(Path(out).resolve(), payload)
     return {**payload, "path": str(path)}
+
+
+def _otlp_traces_url(endpoint: str) -> str:
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(endpoint)
+    loopback = parts.hostname in {"localhost", "127.0.0.1", "::1"}
+    if parts.scheme != "https" and not (parts.scheme == "http" and loopback):
+        raise EnterpriseOpsError(
+            "E_OTEL_ENDPOINT_INVALID",
+            "OTLP endpoint must be https, or http on a loopback host",
+        )
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise EnterpriseOpsError(
+            "E_OTEL_ENDPOINT_INVALID",
+            "OTLP endpoint must not carry credentials, a query or a fragment",
+        )
+    base = endpoint.rstrip("/")
+    return base if base.endswith("/v1/traces") else base + "/v1/traces"
+
+
+def push_otel(root: Path, out: Path, endpoint: str, timeout: float = 10.0) -> dict:
+    """Write the export, then POST its spans to an OTLP/HTTP JSON collector."""
+    import urllib.error
+    import urllib.request
+
+    url = _otlp_traces_url(endpoint)
+    exported = export_otel(root, out)
+    body = json.dumps({"resourceSpans": exported["resourceSpans"]}).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, method="POST", headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = int(response.status)
+    except (urllib.error.URLError, OSError) as error:
+        raise EnterpriseOpsError("E_OTEL_PUSH_FAILED", str(error)) from error
+    if not 200 <= status < 300:
+        raise EnterpriseOpsError("E_OTEL_PUSH_FAILED", f"collector returned {status}")
+    return {
+        **exported,
+        "marker": "OTEL_EXPORT_PUSHED",
+        "endpoint": url,
+        "status": status,
+    }
 
 
 def _sla_manifest(manifest: Path | None) -> dict[str, Any]:
