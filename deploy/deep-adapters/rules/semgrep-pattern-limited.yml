@@ -1159,7 +1159,7 @@ rules:
       cwe: ["CWE-89"]
       scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
   - id: php.request-path-traversal
-    message: Request data reaches a filesystem operand; normalize and enforce allowed-root containment before access.
+    message: Normalize paths before verifying containment and enforce the verified path at filesystem access.
     severity: WARNING
     languages: [php]
     mode: taint
@@ -1184,6 +1184,23 @@ rules:
               metavariable: $I
               regex: .*UploadedFileInterface$
           - pattern: $this->getName()
+      # A path checked before transformation has no containment proof for its new value.
+      - patterns:
+          - pattern-inside: |
+              if (!$GUARD_CLASS::$GUARD($PATH)) {
+                ...
+                throw $ERROR;
+              }
+              ...
+              return $BASE . DIRECTORY_SEPARATOR . $NORMALIZE_CLASS::$NORMALIZE($PATH);
+          - pattern: $NORMALIZE_CLASS::$NORMALIZE($PATH)
+          - metavariable-regex:
+              metavariable: $GUARD
+              regex: '(?i)^(?:ensurePathIsContained|isPathContained|isWithinRoot|isPathWithinRoot)$'
+          - metavariable-regex:
+              metavariable: $NORMALIZE
+              regex: '(?i)^(?:normalizePath|canonicalizePath)$'
+        exact: true
     pattern-sanitizers:
       - pattern: (int) $VALUE
       - pattern: basename(...)
@@ -1217,6 +1234,7 @@ rules:
               - pattern: \move_uploaded_file($TMP, $VALUE)
               - pattern: $UPLOADED->move($VALUE, ...)
               - pattern: $UPLOADED->moveTo($VALUE)
+              - pattern: return $BASE . DIRECTORY_SEPARATOR . $VALUE;
           - focus-metavariable: $VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -1224,7 +1242,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-22"]
-      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+      scope: PHP request taint and local containment-before-normalization checks; callee provider identity remains unresolved.
   - id: php.request-file-inclusion
     message: Request data reaches an inclusion operand; use a fixed allowlist of local includes.
     severity: INFO

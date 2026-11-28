@@ -3,7 +3,7 @@
   "engine": "semgrep",
   "mode": "pattern-limited",
   "tool_version": "2.0.0",
-  "ruleset_sha256": "289d9bf5e27e926aca40ea00384e2ef34590dea0561d1ee2ece09bbd794a9361",
+  "ruleset_sha256": "e1c392069575e6653a663865ad5c6a4bfb7079568e27970719a22c7ddc13c2dc",
   "commands": [{
     "argv": [
       "/usr/bin/opengrep", "scan", "--disable-version-check", "--no-git-ignore",
