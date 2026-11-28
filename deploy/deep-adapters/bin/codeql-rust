@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+export PATH="/opt/rust/bin:$PATH"
+export CARGO_HOME="${HOME:-/tmp}/.cargo" CARGO_NET_OFFLINE=true
+
+if [ "${1:-}" = database ] && [ "${2:-}" = create ]; then
+    source_root=
+    for arg do
+        case "$arg" in
+            --source-root=/src) source_root=/src ;;
+            --source-root|--source-root=*) source_root=invalid; break ;;
+        esac
+    done
+    if [ "$source_root" != /src ]; then
+        printf '%s\n' 'E_CODEQL_RUST_SOURCE_ROOT' >&2
+        exit 2
+    fi
+    cargo_config=$(find /src \( -path '*/.cargo/config' -o -path '*/.cargo/config.toml' \) -print -quit)
+    if [ -n "$cargo_config" ]; then
+        printf '%s\n' 'E_CODEQL_RUST_CARGO_CONFIG_UNSUPPORTED' >&2
+        exit 2
+    fi
+fi
+
+# The pinned extractor still runs build scripts in --build-mode=none by default.
+export CODEQL_EXTRACTOR_RUST_OPTION_BUILD_SCRIPT_COMMAND='["/usr/bin/true"]'
+export CODEQL_EXTRACTOR_RUST_OPTION_PROC_MACRO_SERVER=none
+exec /opt/codeql/codeql/codeql "$@"

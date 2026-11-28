@@ -181,3 +181,20 @@ function readNamedFileBad() {
     // ruleid: php.request-path-traversal
     readfile("/srv/attachments/" . $name);
 }
+
+function join_guarded_path_before_normalization(string $root, string $candidate): string {
+    if (!PathPolicy::isPathContained($candidate)) {
+        throw new InvalidArgumentException('Path outside the root.');
+    }
+    // ruleid: php.request-path-traversal
+    return $root . DIRECTORY_SEPARATOR . Utility::normalizePath($candidate);
+}
+
+function join_guarded_normalized_path(string $root, string $candidate): string {
+    $candidate = Utility::normalizePath($candidate);
+    if (!PathPolicy::isPathContained($candidate)) {
+        throw new InvalidArgumentException('Path outside the root.');
+    }
+    // ok: php.request-path-traversal
+    return $root . DIRECTORY_SEPARATOR . $candidate;
+}

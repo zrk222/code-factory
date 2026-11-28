@@ -2371,3 +2371,38 @@ test('reviewCapturePath verifies that both literal and resolved files stay withi
   assert.throws(() => reviewCapturePath(realpathSync(work), '../outside.json'), /leaves the work directory/);
   assert.throws(() => reviewCapturePath(realpathSync(work), 'alias.json'), /leaves the work directory/);
 });
+
+test('captured OpenGrep traces preserve precise off-hunk matches across source files', () => {
+  const anchor = 'src/controller.ts', sink = 'src/operation.ts';
+  const eligibleFiles = new Set([anchor, sink]);
+  const position = (path, line) => ({ location: { physicalLocation: {
+    artifactLocation: { uri: path }, region: { startLine: line },
+  } } });
+  const make = threads => ({ runs: [{ results: [{
+    ruleId: 'test.javascript.fixture',
+    locations: [position(sink, 9).location],
+    codeFlows: [{ threadFlows: threads.map(locations => ({ locations })) }],
+  }] }] });
+  const hunks = {
+    [anchor]: { old: [3], new: [3], new_path: anchor },
+    [sink]: { old: [1], new: [1], new_path: 'src/moved.ts' },
+  };
+  const score = (threads, newFindings = [], families = ['sql']) => scoreCase({
+    hunks, families, oldFindings: sarifFindings(make(threads), eligibleFiles, undefined, undefined, true),
+    newFindings, rules: { 'javascript.fixture': ['sql'] },
+  });
+  const source = position(anchor, 3), endpoint = position(sink, 9);
+  const positive = score([[source, endpoint], [source, endpoint]]);
+  assert.equal(positive.hunk_hit, false);
+  assert.deepEqual(positive.anchored_trace_matches, [{
+    rule: 'javascript.fixture', sink: { path: sink, line: 9 }, anchor: { path: anchor, line: 3 },
+    source_paths: [anchor, sink], fixed_sink_residual: false,
+  }]);
+  const fixed = [{ rule: 'javascript.fixture', path: 'src/moved.ts', line: 15 }];
+  assert.equal(score([[source, endpoint]], fixed).anchored_trace_matches[0].fixed_sink_residual, true);
+  assert.equal(score([[source, endpoint]], [], ['cmd']).anchored_trace_matches, undefined);
+  for (const threads of [[[source], [endpoint]], [[endpoint, source]], [[source, position(sink, 10)]],
+    [[source, position('src/unbound.ts', 4), endpoint]], [[source, position(anchor, 0), endpoint]]]) {
+    assert.equal(score(threads).anchored_trace_matches, undefined);
+  }
+});

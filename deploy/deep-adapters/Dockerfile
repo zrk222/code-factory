@@ -39,15 +39,9 @@ ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk-yaml AS semgrep-worker
 # The Semgrep-compatible OSS fork emits native source/sink traces without login.
 # Reuse the shared Python/module closure instead of another interpreter image.
-ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476469656 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_manylinux_x86 /usr/bin/opengrep
-# Materialize the signed-release payload at build time. Runtime scratch remains
-# non-executable; run the fixed, root-owned standalone payload from the image.
-RUN XDG_CACHE_HOME=/opt/factory/opengrep-cache /usr/bin/opengrep --version \
-    && chmod -R a+rX /opt/factory/opengrep-cache \
-    && test -x /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin \
-    && printf '#!/bin/sh\nexec /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin --legacy "$@"\n' > /usr/bin/opengrep \
-    && /usr/bin/opengrep --version
-COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.json /opt/factory/adapter-profile.json
+ADD --checksum=sha256:d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v2.1.0/opengrep_linux_x86 /usr/bin/opengrep
+ARG SEMGREP_PROFILE=semgrep-pattern-limited.json
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/${SEMGREP_PROFILE} /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/semgrep-pattern-limited.yml /opt/factory/rules/semgrep-pattern-limited.yml
 RUN mkdir -p /src /out /opt/factory/rules
 WORKDIR /src
@@ -136,6 +130,28 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-go-full.json /opt/fa
 USER 1000:1000
 RUN go version | grep -Fx 'go version go1.27.2 linux/amd64'
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="go"
+
+# Install only the official, hash-pinned components needed by the offline Rust extractor.
+FROM python-source AS codeql-rust-toolchain
+ADD --checksum=sha256:0a8787303c88b018af61b5c53a0c7024d516d175e623eeab35a35eab11dbcad0 https://static.rust-lang.org/dist/2026-07-09/rustc-1.97.0-x86_64-unknown-linux-gnu.tar.xz /tmp/rustc.tar.xz
+ADD --checksum=sha256:5c5bc94af02797b699bb7d4e85b356192eab9fb50376053a1e6edf509fcf7129 https://static.rust-lang.org/dist/2026-07-09/cargo-1.97.0-x86_64-unknown-linux-gnu.tar.xz /tmp/cargo.tar.xz
+ADD --checksum=sha256:0c43618128a7a6b96b0b04c04cf7b28dd52fb0991a74c9615fbd1a684ff88712 https://static.rust-lang.org/dist/2026-07-09/rust-std-1.97.0-x86_64-unknown-linux-gnu.tar.xz /tmp/rust-std.tar.xz
+ADD --checksum=sha256:f2530acd6b4da25a21151e3560d908b31f082edd6968f96d2682c8c2c15c66b7 https://static.rust-lang.org/dist/2026-07-09/rust-src-1.97.0.tar.xz /tmp/rust-src.tar.xz
+RUN mkdir /tmp/rust-components \
+    && python -I -c 'import glob,tarfile; [tarfile.open(p, "r:xz").extractall("/tmp/rust-components", filter="data") for p in glob.glob("/tmp/*.tar.xz")]' \
+    && for component in /tmp/rust-components/*; do "$component/install.sh" --prefix=/opt/rust --disable-ldconfig || exit; done \
+    && test -r /opt/rust/lib/rustlib/src/rust/library/core/src/lib.rs
+
+FROM codeql-bundle AS codeql-rust-worker
+USER 0:0
+COPY --from=codeql-rust-toolchain /opt/rust /opt/rust
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite deploy/deep-adapters/bin/codeql-rust /opt/factory/bin/
+RUN /opt/factory/bin/codeql-check-suite rust 0.1.43
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-rust-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+RUN /opt/rust/bin/rustc --version | grep -F 'rustc 1.97.0 ' \
+    && /opt/rust/bin/cargo --version | grep -F 'cargo 1.97.0 '
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="rust"
 
 FROM go-sdk AS osv-build
 ADD --checksum=sha256:1ce45371bd4b6480ac512156c2ea70d563753eba62283d160360bfe3cf94a7ab https://github.com/google/osv-scanner/archive/a14aa98ab8408547083d4411091c5fbaf5b47d8e.tar.gz /tmp/osv-scanner.tar.gz

@@ -89,3 +89,39 @@ export function readRawStoredPrefix(req: any, root: string) {
   // ruleid: javascript.request-path-traversal
   return fs.readFileSync(file)
 }
+
+import os from "os";
+import crypto from "crypto";
+
+async function reviewedResourceBuffer(params, transfer) {
+  // source: javascript.request-path-traversal
+  const { imageKey } = params;
+  // ruleid: javascript.request-path-traversal
+  const temporaryPath = path.join(os.tmpdir(), `asset-${imageKey}`);
+  const buffer = await transfer({ temporaryPath });
+  return buffer;
+}
+
+async function reviewedResourceWrite(input, transfer) {
+  // source: javascript.request-path-traversal
+  let { fileKey } = input;
+  // ruleid: javascript.request-path-traversal
+  const temporaryPath = path.join(os.tmpdir(), `asset-${fileKey}`);
+  await transfer({ temporaryPath });
+}
+
+async function generatedResourceBuffer(params, transfer) {
+  const { imageKey } = params;
+  // ok: javascript.request-path-traversal
+  const temporaryPath = path.join(os.tmpdir(), `asset-${crypto.randomUUID()}`);
+  return await transfer({ imageKey, temporaryPath });
+}
+
+async function boundedResourceBuffer(args, transfer) {
+  const { fileKey } = args;
+  const name = path.basename(fileKey);
+  // ok: javascript.request-path-traversal
+  const temporaryPath = path.join(os.tmpdir(), `asset-${name}`);
+  const buffer = await transfer({ temporaryPath });
+  return buffer;
+}

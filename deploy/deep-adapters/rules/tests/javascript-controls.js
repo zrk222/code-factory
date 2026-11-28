@@ -153,3 +153,43 @@ async function storedDocumentSafe(req, res, Document) {
   // ok: javascript.request-path-traversal
   return fs.readFileSync(path.resolve(record.filePath), "utf-8");
 }
+
+function rawMarkdownRenderer(md, Token) {
+  md.renderer.rules.paragraph_open = (tokens, index) => {
+    // source: javascript.request-html-injection
+    const children = tokens[index].children;
+    const label = children.reduce((text, child) => text + child.content, "");
+    const raw = new Token("html_inline", "", 0);
+    // ruleid: javascript.request-html-injection
+    raw.content = label;
+    return md.renderer.renderInline([raw], {}, {});
+  };
+}
+
+function rawMarkdownBlock(md, Token) {
+  md.renderer.rules.paragraph_open = function (items, index) {
+    // source: javascript.request-html-injection
+    const label = items[index].content;
+    let raw = new Token("html_block", "", 0);
+    // ruleid: javascript.request-html-injection
+    raw.content = label;
+    return md.renderer.render([raw], {}, {});
+  };
+}
+
+function safeMarkdownRenderer(md, Token) {
+  md.renderer.rules.paragraph_open = (tokens, index) => {
+    const payload = tokens[index].content;
+    const text = new Token("text", "", 0);
+    // ok: javascript.request-html-injection
+    text.content = payload;
+    const escaped = md.utils.escapeHtml(payload);
+    const html = new Token("html_inline", "", 0);
+    // ok: javascript.request-html-injection
+    html.content = escaped;
+    const decoration = new Token("html_inline", "", 0);
+    // ok: javascript.request-html-injection
+    decoration.content = "<span>";
+    return md.renderer.renderInline([text, html, decoration], {}, {});
+  };
+}

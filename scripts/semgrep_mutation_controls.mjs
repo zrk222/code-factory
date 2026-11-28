@@ -157,6 +157,7 @@ export const javascriptControlEndpoints = [
   ['command', 4, 9], ['sql', 23, 26], ['html', 36, 38],
   ['path', 55, 59], ['path', 63, 66], ['path', 70, 73], ['path', 99, 101],
   ['html', 106, 106], ['html', 110, 112], ['html', 116, 118],
+  ['html', 160, 164], ['html', 172, 175],
 ];
 export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.c.unsafe-gets': 2,
@@ -167,8 +168,8 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.disabled-tls-verification': 2,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
   'opt.factory.rules.go.parameter-shell-command': 4,
-  'opt.factory.rules.go.parameter-sql-text': 9,
-  'opt.factory.rules.go.request-command-injection': 3,
+  'opt.factory.rules.go.parameter-sql-text': 10,
+  'opt.factory.rules.go.request-command-injection': 5,
   'opt.factory.rules.go.request-html-injection': 6,
   'opt.factory.rules.go.request-path-traversal': 1,
   'opt.factory.rules.go.request-sql-injection': 6,
@@ -180,32 +181,32 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.java.request-command-injection': 4,
   'opt.factory.rules.java.request-html-injection': 1,
   'opt.factory.rules.java.request-path-traversal': 1,
-  'opt.factory.rules.java.request-sql-injection': 3,
+  'opt.factory.rules.java.request-sql-injection': 7,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
-  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 4,
+  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 8,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 6,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.parameter-shell-command': 9,
   'opt.factory.rules.javascript.parameter-sql-text': 11,
   'opt.factory.rules.javascript.request-command-injection': 5,
-  'opt.factory.rules.javascript.request-html-injection': 12,
-  'opt.factory.rules.javascript.request-path-traversal': 28,
+  'opt.factory.rules.javascript.request-html-injection': 18,
+  'opt.factory.rules.javascript.request-path-traversal': 30,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
   'opt.factory.rules.php.parameter-shell-command': 1,
-  'opt.factory.rules.php.parameter-sql-text': 14,
+  'opt.factory.rules.php.parameter-sql-text': 15,
   'opt.factory.rules.php.request-command-injection': 13,
   'opt.factory.rules.php.request-file-inclusion': 2,
   'opt.factory.rules.php.request-html-injection': 4,
-  'opt.factory.rules.php.request-path-traversal': 12,
+  'opt.factory.rules.php.request-path-traversal': 13,
   'opt.factory.rules.php.request-sql-injection': 19,
   'opt.factory.rules.php.request-unsafe-deserialization': 5,
   'opt.factory.rules.python.archive-path-traversal': 4,
   'opt.factory.rules.python.disabled-tls-verification': 6,
-  'opt.factory.rules.python.parameter-path-join-without-containment': 22,
-  'opt.factory.rules.python.parameter-shell-command': 7,
-  'opt.factory.rules.python.parameter-sql-text': 3,
+  'opt.factory.rules.python.parameter-path-join-without-containment': 24,
+  'opt.factory.rules.python.parameter-shell-command': 8,
+  'opt.factory.rules.python.parameter-sql-text': 4,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-html-injection': 1,
   'opt.factory.rules.python.request-path-traversal': 29,
@@ -216,7 +217,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.ruby.archive-path-traversal': 2,
   'opt.factory.rules.ruby.disabled-tls-verification': 6,
   'opt.factory.rules.ruby.parameter-shell-command': 7,
-  'opt.factory.rules.ruby.parameter-sql-text': 5,
+  'opt.factory.rules.ruby.parameter-sql-text': 8,
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 5,
@@ -227,17 +228,17 @@ export const fixedReviewedFindingCounts = Object.freeze({
 // Fixed reviewed sink lines of the rule-family controls appended to the .ts
 // fixture (see extensionControlFiles); search-mode rules carry no source line.
 export const typescriptExtensionEndpoints = Object.freeze([
-  ['archive-path-traversal', 165], ['archive-path-traversal', 185], ['archive-path-traversal', 194],
+  ['archive-path-traversal', 205], ['archive-path-traversal', 225], ['archive-path-traversal', 234],
   // The direct sink and interpolation are separate native spans on these lines.
-  ['parameter-shell-command', 207], ['parameter-shell-command', 217],
-  ['parameter-sql-text', 233], ['parameter-path-join-without-containment', 247],
-  ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
-  ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
-  ['request-path-traversal', 305], ['request-path-traversal', 312],
-  ['parameter-path-join-without-containment', 328], ['parameter-sql-text', 343],
-  ['parameter-shell-command', 358], ['parameter-shell-command', 360],
-  ['request-path-traversal', 379], ['request-path-traversal', 381],
-  ['parameter-path-join-without-containment', 403],
+  ['parameter-shell-command', 247], ['parameter-shell-command', 257],
+  ['parameter-sql-text', 273], ['parameter-path-join-without-containment', 287],
+  ['html-template-unescaped-interpolation', 301], ['html-template-unescaped-interpolation', 311],
+  ['dom-innerhtml-from-variable', 321], ['tls-reject-unauthorized-disabled', 330],
+  ['request-path-traversal', 345], ['request-path-traversal', 352],
+  ['parameter-path-join-without-containment', 368], ['parameter-sql-text', 383],
+  ['parameter-shell-command', 398], ['parameter-shell-command', 400],
+  ['request-path-traversal', 419], ['request-path-traversal', 421],
+  ['parameter-path-join-without-containment', 443],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -250,8 +251,8 @@ export function javascriptControlManifest() {
   const combined = ['js', 'ts', 'tsx'].flatMap(extension => {
     const path = `semgrep-pattern-limited.${extension}`;
     const additional = extension === 'tsx' ? [
-      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 159, line: 162 },
-      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 163, line: 165 },
+      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 199, line: 202 },
+      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 203, line: 205 },
     ] : extension === 'ts' ? typescriptExtensionEndpoints.map(([rule, line, spans]) => ({
       rule: `opt.factory.rules.javascript.${rule}`, line, ...(spans ? { spans } : {}),
     })) : [];
@@ -269,6 +270,8 @@ export function javascriptControlManifest() {
       path: 'typescript-html-escaped-local.ts', line: 35 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable',
       path: 'typescript-html-escaped-local.ts', line: 51 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable',
+      path: 'typescript-html-escaped-local.ts', line: 85 },
     { rule: 'opt.factory.rules.javascript.parameter-shell-command',
       path: 'typescript-html-escaped-local.ts', line: 56 },
     // Values stay reported; quoted identifiers, placeholder lists and aliased quoting helpers do not.
@@ -278,6 +281,9 @@ export function javascriptControlManifest() {
     // non-exiting checks, raw concatenations, and reads that precede the check.
     ...[21, 39, 44, 48, 50, 58, 63, 67, 72, 81, 90].map(line => ({ rule: 'opt.factory.rules.javascript.request-path-traversal',
       path: 'typescript-path-guard.ts', line })),
+    ...[[98, 100], [107, 109]].map(([source_line, line]) => ({
+      rule: 'opt.factory.rules.javascript.request-path-traversal', path: 'typescript-path-guard.ts', source_line, line,
+    })),
     // Values inside inline event-handler attributes.
     ...[4, 9].map(line => ({ rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
       path: 'typescript-html-event-handler.ts', line })),
@@ -286,6 +292,9 @@ export function javascriptControlManifest() {
     { rule: 'opt.factory.rules.javascript.request-command-injection', path: 'report-cli-markup.tsx', line: 4 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 11 },
     { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 24 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 40 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 66 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable', path: 'report-cli-markup.tsx', line: 84 },
   ];
 }
 
@@ -299,7 +308,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 379;
+const REVIEWED_FINDINGS = 407;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -324,7 +333,9 @@ export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
   for (const language of ['go', 'java', 'csharp', 'ruby']) {
     for (const family of ['command', 'sql']) {
       const rule = `opt.factory.rules.${language}.request-${family}-injection`;
-      const required = family === 'sql' && ['go', 'ruby'].includes(language) ? 4 : 3;
+      const required = language === 'go' && family === 'command' ? 5
+        : language === 'java' && family === 'sql' ? 7
+          : family === 'sql' && ['go', 'ruby'].includes(language) ? 4 : 3;
       if (!ruleIds.includes(rule) || manifest.filter(item => item.rule === rule &&
           Number.isInteger(item.source_line)).length !== required || !(safeCounts[rule] >= 3)) {
         throw new Error('Missing direct, alias, framework, safe or provider-mismatch flow control');

@@ -266,3 +266,48 @@ def first_entry(root, entry_names):
 def describe(base, name):
     # ok: python.parameter-path-join-without-containment
     return str(base / ("preview-" + name))
+
+
+
+class CachedLocation:
+    def __init__(self, root, uri, prefix_length):
+        # ruleid: python.parameter-path-join-without-containment
+        uri = str(root / uri[prefix_length:])
+        self.source_path = Path(uri).resolve()
+        self.cached_path = self.source_path
+        return
+
+
+class CheckedLocation:
+    def __init__(self, root, uri, prefix_length):
+        # ok: python.parameter-path-join-without-containment
+        uri = str(root / uri[prefix_length:])
+        self.source_path = Path(uri).resolve()
+        self.source_path.relative_to(root.resolve())
+        self.cached_path = self.source_path
+        return
+
+import os, shutil
+def discard_collection_Review(paths, root):
+    for item in paths:
+        target = os.path.join(root, item)
+        if exists(target):
+            # ruleid: python.parameter-path-join-without-containment
+            shutil.rmtree(target)
+
+import os, shutil
+
+def check_collection_path_Guarded(value):
+    if not value or value.rstrip(" .") != value or os.path.basename(value) != value:
+        raise ValueError("invalid component")
+
+class CollectionStorageGuarded:
+    def discard_collection_Guarded(self, paths, root, other):
+        if paths:
+            for value in paths:
+                check_collection_path_Guarded(value)
+            for item in paths:
+                target = os.path.join(root, item)
+                if exists(target):
+                    # ok: python.parameter-path-join-without-containment
+                    shutil.rmtree(target)

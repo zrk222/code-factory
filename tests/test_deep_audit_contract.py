@@ -8,6 +8,7 @@ import pytest
 from factoryline.deep_audit_contract import (
     PLAN_SCHEMA,
     PLAN_TYPE,
+    load_execution_manifest,
     verify_deep_audit_plan,
 )
 from factoryline.deep_audit_io import digest
@@ -90,7 +91,8 @@ def test_keyless_coordinator_seals_exact_eight_lane_plan(tmp_path, monkeypatch, 
 
     exec(command, {})
     manifest_bytes = (root / "manifest.json").read_bytes()
-    manifest = json.loads(manifest_bytes)
+    manifest = load_execution_manifest(root / "manifest.json", sha256_bytes(manifest_bytes))
+    assert manifest == json.loads(manifest_bytes)
     payload = json.loads((root / "authorization-payload.json").read_bytes())
     assert len(manifest["lanes"]) == 8 and len(manifest["obligations"]) == 10
     assert len({lane["family"] for lane in manifest["lanes"]}) == 6
@@ -6456,7 +6458,7 @@ def test_native_ram_binding_preserves_literal_report_path(codeql):
 
 
 @pytest.mark.parametrize(
-    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go"]
+    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go", "rust"]
 )
 def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     profile = json.loads(

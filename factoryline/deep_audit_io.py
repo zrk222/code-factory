@@ -1792,6 +1792,7 @@ _MOVED_EXPORTS = {
         _gitleaks_ledger_binding
         _gitleaks_ledger_identity
         _gitleaks_ledger_matrix
+        _lane_source_applies
         _gitleaks_ledger_rows
         _gitleaks_ledger_shape
         _gitleaks_ledger_status
