@@ -5083,3 +5083,141 @@ def test_request_batch_all_fields_frozen_vectors_and_reversed_unique_ids(fielded
     assert all(
         list(scores) == list(map(str, reversed(range(8)))) for scores in reversed_scores
     )
+
+
+def test_ci_failure_signature_folds_volatile_detail_and_keeps_the_cause():
+    from factoryline.failure_guidance import ci_failure_signature
+
+    log = (
+        "2026-11-28T05:00:00.0000000Z ##[group]Run pytest\n"
+        "2026-11-28T05:00:00.1000000Z ##[endgroup]\n"
+        "2026-11-28T05:00:01.0000000Z E   AssertionError: assert '2.1.0' == '1.15.0'\n"
+        "2026-11-28T05:00:01.1000000Z FAILED tests\\test_x.py::test_y - AssertionError\n"
+        "2026-11-28T05:00:02.0000000Z ##[error]Process completed with exit code 1.\n"
+        "2026-11-28T05:00:03.0000000Z Cleaning up orphan processes\n"
+    )
+    first = ci_failure_signature(
+        log, "ci", "test (ubuntu-latest, 3.12)", "Test shard 4/4"
+    )
+    again = ci_failure_signature(
+        log.replace("2.1.0", "2.2.0").replace("05:00", "06:10"),
+        "ci",
+        "test (windows-latest, 3.11)",
+        "Test shard 2/4",
+    )
+    assert first["kind"] == "assertion" and first["job"] == "test"
+    assert first["signature_sha256"] == again["signature_sha256"]
+    assert "tests/test_x.py::test_y" in first["keys"]
+    assert not any("orphan" in key for key in first["keys"])
+
+
+def _fix_receipt(**changes):
+    from factoryline.fix_workflow import SCHEMA, _sha
+
+    core = {
+        "schema": SCHEMA,
+        "marker": "FIX_WORKFLOW_RECEIPT",
+        "mode": "execute",
+        "state": "PASS",
+        "fix_id": "fix-1",
+        "contract_sha256": "c" * 64,
+        "reproduction": {
+            "required": True,
+            "observed": True,
+            "receipt_sha256": "a" * 64,
+        },
+        "repair": {"candidate_receipt_sha256": "b" * 64, "regression_checks": None},
+        **changes,
+    }
+    return {**core, "receipt_sha256": _sha(core)}
+
+
+def test_ci_repairs_are_recalled_only_from_executed_passing_receipts(tmp_path):
+    import pytest
+
+    from factoryline.failure_guidance import (
+        ci_failure_signature,
+        remember_ci_repair,
+        triage_ci_failure,
+    )
+
+    signature = ci_failure_signature(
+        "ModuleNotFoundError: No module named 'x'\n", "ci", "lint", "Ruff"
+    )
+    index = tmp_path / "ci-failures.jsonl"
+    assert triage_ci_failure(index, signature)["status"] == "REQUIRES_HUMAN_ATTENTION"
+    for forged in (
+        {**_fix_receipt(), "receipt_sha256": "0" * 64},
+        _fix_receipt(mode="plan"),
+        _fix_receipt(marker=None),
+        _fix_receipt(reproduction={"observed": False, "receipt_sha256": "a" * 64}),
+        _fix_receipt(repair={}),
+    ):
+        with pytest.raises(ValueError):
+            remember_ci_repair(index, signature, forged)
+    first = remember_ci_repair(index, signature, _fix_receipt(), "fix.json")
+    assert remember_ci_repair(index, signature, _fix_receipt()) == first
+    triage = triage_ci_failure(index, signature)
+    assert triage["status"] == "KNOWN_FAILURE" and triage["authority"] == "none"
+    assert [entry["fix_receipt_path"] for entry in triage["recorded_repairs"]] == [
+        "fix.json"
+    ]
+
+
+def test_ci_failure_index_refuses_a_tampered_chain(tmp_path):
+    import json
+
+    import pytest
+
+    from factoryline.failure_guidance import (
+        ci_failure_signature,
+        remember_ci_repair,
+        triage_ci_failure,
+    )
+
+    signature = ci_failure_signature("KeyError: 'name'\n", "ci", "test", "pytest")
+    index = tmp_path / "ci-failures.jsonl"
+    remember_ci_repair(index, signature, _fix_receipt())
+    forged = json.loads(index.read_text(encoding="utf-8"))
+    forged["fix_id"] = "fix-2"
+    index.write_text(
+        index.read_text(encoding="utf-8") + json.dumps(forged) + "\n", encoding="utf-8"
+    )
+    triage = triage_ci_failure(index, signature)
+    assert (triage["status"], triage["index_intact"]) == (
+        "REQUIRES_HUMAN_ATTENTION",
+        False,
+    )
+    with pytest.raises(ValueError):
+        remember_ci_repair(index, signature, _fix_receipt(fix_id="fix-3"))
+
+
+def test_ci_signatures_keep_rule_codes_test_ids_and_statuses_apart():
+    from factoryline.failure_guidance import ci_failure_signature
+
+    def sign(text):
+        return ci_failure_signature(text, "ci", "test", "step")["signature_sha256"]
+
+    assert sign("x.py:10:5: F401 unused") == sign("x.py:99:1: F401 unused")
+    assert sign("x.py:10:5: F401 unused") != sign("x.py:10:5: F841 unused")
+    assert sign("FAILED t.py::test_case_1") != sign("FAILED t.py::test_case_2")
+    assert sign("ValueError: status 404") != sign("ValueError: status 500")
+    assert sign("ValueError: took 1532 ms") == sign("ValueError: took 2048 ms")
+
+
+def test_ci_signature_reads_the_failing_step_and_refuses_empty_logs(tmp_path):
+    import pytest
+
+    from factoryline.failure_guidance import ci_failure_signature, remember_ci_repair
+
+    log = (
+        "##[endgroup]\n##[error]tests/t.py#L3 annotation\n"
+        "FAILED tests/t.py::test_a - AssertionError\n"
+        "##[error]Process completed with exit code 1.\n"
+    )
+    signature = ci_failure_signature(log, "ci", "test", "pytest")
+    assert (signature["kind"], signature["keys"]) == ("pytest", ["tests/t.py::test_a"])
+    empty = ci_failure_signature("", "ci", "test", "pytest")
+    assert empty["kind"] is None
+    with pytest.raises(ValueError):
+        remember_ci_repair(tmp_path / "i.jsonl", empty, _fix_receipt())
