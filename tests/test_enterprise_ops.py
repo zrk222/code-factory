@@ -569,7 +569,7 @@ def _one_outcome_root(tmp_path: Path) -> Path:
     return root
 
 
-def _loopback_collector(received: list) -> Any:
+def _loopback_collector(received: list, reply: bytes = b"") -> Any:
     import http.server
 
     class Collector(http.server.BaseHTTPRequestHandler):
@@ -577,7 +577,9 @@ def _loopback_collector(received: list) -> Any:
             body = self.rfile.read(int(self.headers["Content-Length"]))
             received.append((self.path, json.loads(body)))
             self.send_response(200)
+            self.send_header("Content-Length", str(len(reply)))
             self.end_headers()
+            self.wfile.write(reply)
 
         def log_message(self, *args):
             return None
@@ -602,12 +604,46 @@ def test_otel_push_posts_only_resource_spans_to_v1_traces(tmp_path: Path):
     ]
 
 
+def _push_once(root: Path, reply: bytes = b"") -> tuple[Any, list]:
+    import threading
+
+    received: list = []
+    server = _loopback_collector(received, reply)
+    thread = threading.Thread(target=server.handle_request)
+    thread.start()
+    try:
+        return push_otel(
+            root, root / "otel.json", f"http://127.0.0.1:{server.server_port}"
+        ), received
+    finally:
+        thread.join(5)
+        server.server_close()
+
+
+def test_otel_push_to_loopback_ignores_an_environment_proxy(tmp_path, monkeypatch):
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    pushed, received = _push_once(_one_outcome_root(tmp_path))
+    assert pushed["status"] == 200 and len(received) == 1
+
+
+def test_otel_push_fails_when_the_collector_rejects_spans(tmp_path: Path):
+    from factoryline.enterprise_ops import _otlp_rejected_spans
+
+    reply = json.dumps({"partialSuccess": {"rejectedSpans": "1"}}).encode()
+    with pytest.raises(EnterpriseOpsError) as error:
+        _push_once(_one_outcome_root(tmp_path), reply)
+    assert error.value.code == "E_OTEL_PUSH_FAILED"
+    assert (_otlp_rejected_spans(b""), _otlp_rejected_spans(b"not json")) == (0, 0)
+
+
 def test_otel_spans_carry_otlp_ids_and_end_time(tmp_path: Path):
     root = _one_outcome_root(tmp_path)
     exported = export_otel(root, root / "otel.json")
     span = exported["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
     assert (len(span["traceId"]), len(span["spanId"])) == (32, 16)
     assert span["endTimeUnixNano"] - span["startTimeUnixNano"] == 42_000_000
+    assert (span["kind"], span["status"]["code"]) == (1, 1)  # OTLP/JSON integer enums
 
 
 def test_otel_push_fails_instead_of_following_a_redirect(tmp_path: Path):
@@ -638,7 +674,12 @@ def test_otel_push_fails_instead_of_following_a_redirect(tmp_path: Path):
 
 
 def test_otlp_traces_url_appends_the_traces_path_once():
-    from factoryline.enterprise_ops import _otlp_traces_url
+    from factoryline.enterprise_ops import _otlp_endpoint_parts, _otlp_traces_url
+
+    assert (
+        _otlp_endpoint_parts("https://collector.example.com").hostname
+        == "collector.example.com"
+    )
 
     base = "https://collector.example.com:4318"
     assert _otlp_traces_url(base + "/") == base + "/v1/traces"
@@ -651,6 +692,8 @@ def test_otlp_traces_url_appends_the_traces_path_once():
         "http://collector.example.com",
         "https://user:pw@collector.example.com",
         "https://collector.example.com/?token=x",
+        "https:///v1/traces",
+        "https://[::1/v1/traces",
     ],
 )
 def test_otel_push_rejects_unsafe_endpoints(tmp_path: Path, endpoint: str):

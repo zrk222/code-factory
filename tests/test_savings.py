@@ -155,6 +155,20 @@ def test_public_rates_publish_at_twenty_pairs(tmp_path):
     assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" not in report["markers"]
 
 
+def test_withheld_marker_follows_each_metric_not_the_row_count(tmp_path):
+    for index in range(20):
+        record_savings_pair(
+            tmp_path,
+            f"pair-{index}",
+            {"elapsed_ms": 100, "cost_usd": 1.0 if index < 5 else None},
+            {"elapsed_ms": 80, "cost_usd": 0.5 if index < 5 else None},
+        )
+    report = public_savings_report(tmp_path)
+    assert (report["pairs"], report["cost_usd"]["exact_pairs"]) == (20, 5)
+    assert report["cost_usd"]["weighted_savings_rate"] is None
+    assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" in report["markers"]
+
+
 def test_public_productivity_needs_equivalence_and_the_pair_floor():
     from factoryline.savings import _public_productivity
 

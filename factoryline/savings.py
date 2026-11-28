@@ -16,7 +16,8 @@ from . import CodedError
 
 PAIR_SCHEMA = "factory.savings-pair.v1"
 PUBLIC_SCHEMA = "factory.savings-report.public.v1"
-# No public percentage rests on fewer exact pairs than this; totals stay visible.
+# No public percentage rests on fewer exact pairs than this. Totals stay visible:
+# they are receipted sums, while a rate over a handful of pairs is not evidence.
 PUBLIC_RATE_MIN_PAIRS = 20
 PAIR_ID = re.compile(r"^[a-z\d][a-z\d._-]*$")
 MAX_PAIR_ID_LENGTH = 80
@@ -290,7 +291,11 @@ def public_savings_report(root: Path) -> dict[str, Any]:
         for metric in (report["time"], report["tokens"], report["cost_usd"])
     ) or (gain is not None and gain < 0):
         report["markers"].append("SAVINGS_NEGATIVE_VISIBLE")
-    if 0 < len(rows) < PUBLIC_RATE_MIN_PAIRS:
+    counts = [report[key]["exact_pairs"] for key in ("time", "tokens", "cost_usd")]
+    if any(
+        0 < count < PUBLIC_RATE_MIN_PAIRS
+        for count in counts + [productivity["exact_pairs"]]
+    ):
         report["markers"].append("SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS")
     return report
 

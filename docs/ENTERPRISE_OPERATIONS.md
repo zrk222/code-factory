@@ -105,10 +105,12 @@ factory ops otel --root . --out .factory/ops/outcomes-otel.json
 
 Add `--endpoint https://collector.example.com:4318` to also POST the same spans
 to an OTLP/HTTP JSON collector at `/v1/traces`. The endpoint must be `https`
-(plain `http` only on a loopback host) and carry no credentials or query; the
-file is written first, and a collector error fails the command with
-`E_OTEL_PUSH_FAILED`. Spans carry trace and span IDs derived from each
-ledger event hash.
+(plain `http` only on a loopback host, which never goes through an environment
+proxy) and carry no credentials or query. The file is written first. Redirects,
+non-2xx replies, a `partialSuccess` with rejected spans, and network errors fail
+the command with `E_OTEL_PUSH_FAILED`. Each push sends the whole verified
+ledger; trace and span IDs come from each event hash, so an event keeps the
+same IDs on every push. Span kind and status use OTLP/JSON integer enums.
 
 ## Enterprise boundary
 
