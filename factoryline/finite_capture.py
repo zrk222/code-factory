@@ -4378,10 +4378,10 @@ def finite_provider_mutation_index(
 ):
     """Collect provider mutation facts from writes, reflective calls, captured assignments, passed aliases, and returned aliases."""
     nodes = tuple(nodes)
-    bindings = _provider_alias_bindings(nodes)
+    events, bindings = _local_provider_events(nodes, parents, aliases, audit)
     facts = set()
     _provider_mutation_facts(
-        nodes,
+        events,
         aliases,
         audit,
         parents,
@@ -4402,6 +4402,60 @@ def finite_provider_mutation_index(
         )
     )
     return facts
+
+
+_PROVIDER_EVENT_TYPES = (
+    ast.Call,
+    ast.Assign,
+    ast.AnnAssign,
+    ast.NamedExpr,
+    ast.Return,
+    ast.Yield,
+    ast.YieldFrom,
+)
+
+
+def _provider_events(nodes, parents):
+    """The nodes _provider_mutation_for_node can record from, in order; the rest are inert."""
+    return tuple(
+        node
+        for node in nodes
+        if isinstance(node, _PROVIDER_EVENT_TYPES)
+        or isinstance(node, (ast.Attribute, ast.Subscript))
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        or isinstance(node, (ast.Name, ast.Attribute))
+        and _provider_call_argument(node, parents)
+    )
+
+
+def _local_provider_events(nodes, parents, aliases, audit):
+    """Events and bindings per module; with the plain alias resolver, only alias-reachable events."""
+    from . import provider_event_roots, provider_expr_root, provider_reachable_names
+    from .review_audits import _resolved_ast_name
+
+    module = nodes[0] if nodes and isinstance(nodes[0], ast.Module) else None
+    cached = getattr(module, "_security_provider_events", None)
+    if not (
+        cached and cached[1] is parents and (cached[0] is nodes or cached[0] == nodes)
+    ):
+        events, bindings = (
+            _provider_events(nodes, parents),
+            _provider_alias_bindings(nodes),
+        )
+        roots = tuple(map(provider_event_roots, events))
+        values = {
+            k: frozenset(filter(None, map(provider_expr_root, v)))
+            for k, v in bindings.items()
+        }
+        cached = (nodes, parents, events, bindings, roots, values)
+        if module is not None:
+            module._security_provider_events = cached
+    events, bindings, roots, values = cached[2:]
+    if getattr(audit, "_resolved_ast_name", None) is not _resolved_ast_name:
+        return events, bindings
+    reachable = provider_reachable_names(aliases, values)
+    kept = tuple(e for e, r in zip(events, roots) if not r.isdisjoint(reachable))
+    return kept, bindings
 
 
 def _foreign_provider_mutation_facts(
@@ -4590,27 +4644,8 @@ def _foreign_provider_inputs(module, data, source_hash, aliases):
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
     }
-    events = tuple(
-        node
-        for node in nodes
-        if isinstance(
-            node,
-            (
-                ast.Call,
-                ast.Assign,
-                ast.AnnAssign,
-                ast.NamedExpr,
-                ast.Return,
-                ast.Yield,
-                ast.YieldFrom,
-            ),
-        )
-        or isinstance(node, (ast.Attribute, ast.Subscript))
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-        or isinstance(node, (ast.Name, ast.Attribute))
-        and _provider_call_argument(node, parents)
-    )
     # Keep source order and reevaluate every predicate; only inert nodes are omitted.
+    events = _provider_events(nodes, parents)
     result = (events, aliases(nodes), parents, _provider_alias_bindings(nodes))
     if isinstance(cache, dict) and len(cache) < 4096:
         cache[key] = result

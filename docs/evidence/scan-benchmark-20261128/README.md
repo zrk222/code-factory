@@ -7,7 +7,7 @@ Reproduce: copy the files into an empty directory, then run `node scripts/scan_b
 | Receipt | Median | Runs |
 | --- | --- | --- |
 | main e68f3871 ([main-e68f3871.json](main-e68f3871.json)) | 116.424 s | 115.512, 116.424, 116.511 |
-| this branch ([branch.json](branch.json)) | 70.931 s | 68.569, 70.931, 71.074 |
+| this branch ([branch.json](branch.json)) | 57.646 s | 56.056, 57.646, 57.694 |
 
 Both receipts carry the same output digest: the scan JSON is byte-identical.
 
@@ -45,3 +45,5 @@ Files:
 - semantic_credential_sensor.py
 - test_callback_closure.py
 - verification.py
+
+The provider-mutation index now visits only nodes that can record a fact (stores, calls, assignments, returns, call arguments), cached per module, and, with the plain alias resolver, only those whose root names reach an alias key directly or through recorded bindings. A one-off check over 150 modules (3 alias maps x 2 predicates) found the filtered and unfiltered indexes identical in all 900 comparisons.

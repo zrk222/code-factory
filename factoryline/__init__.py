@@ -251,6 +251,46 @@ def scan_batch_bridge(source_model_out):
     return settle, absorb
 
 
+def provider_expr_root(expr):
+    """The Name at the bottom of an Attribute/Subscript chain, else None (as _provider_paths walks)."""
+    while isinstance(expr, (ast.Attribute, ast.Subscript)):
+        expr = expr.value
+    return expr.id if isinstance(expr, ast.Name) else None
+
+
+def provider_event_roots(node):
+    """Root names through which _provider_mutation_for_node could record a fact for node.
+
+    Facts come only from _provider_paths on the receiver or value below, and a
+    bare name resolves only through the alias map or its recorded bindings.
+    """
+    if isinstance(node, ast.Call):
+        exprs = node.args[:1]
+        if isinstance(node.func, ast.Attribute):
+            exprs = [*exprs, node.func.value]
+    elif isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+        node.ctx, (ast.Store, ast.Del)
+    ):
+        exprs = [node.value]
+    elif isinstance(node, (ast.Name, ast.Attribute)):
+        exprs = [node]  # a provider passed as a call argument
+    else:
+        exprs = [getattr(node, "value", None)]
+    return frozenset(root for root in map(provider_expr_root, exprs) if root)
+
+
+def provider_reachable_names(aliases, binding_roots):
+    """Alias keys plus every name whose recorded binding values reach one, transitively."""
+    reachable, changed = set(aliases), True
+    while changed:
+        changed = False
+        for name, roots in binding_roots.items():
+            if name not in reachable and not roots.isdisjoint(reachable):
+                reachable.add(name)
+                changed = True
+    return reachable
+
+
 class CodedError(ValueError):
     """Fail-closed validation error carrying a stable machine-readable code."""
 

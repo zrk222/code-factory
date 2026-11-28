@@ -10,13 +10,13 @@
   },
   "workers": 0,
   "runs_seconds": [
-    68.569,
-    70.931,
-    71.074
+    56.056,
+    57.646,
+    57.694
   ],
-  "median_seconds": 70.931,
-  "spread": 0.0353,
-  "lines_per_second": 575,
+  "median_seconds": 57.646,
+  "spread": 0.0284,
+  "lines_per_second": 707,
   "output_sha256": [
     "5405358500bf16029881747ea31cf948b6231ca160b3b82212b470b0c4158602"
   ],

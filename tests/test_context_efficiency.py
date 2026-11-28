@@ -6814,10 +6814,17 @@ def _raise_on_third(name, index):
     return name
 
 
+def _single_threaded(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(threading, "active_count", lambda: 1)
+    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+
+
 def test_map_scan_jobs_replays_a_worker_exception_in_the_parent(monkeypatch):
     from factoryline.runtime_audit_common import RuntimeAuditError
 
-    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+    _single_threaded(monkeypatch)
     jobs = [(name, index) for index, name in enumerate("abcdef")]
     with pytest.raises(RuntimeAuditError) as error:
         scan_pool.map_scan_jobs(jobs, _raise_on_third)
@@ -6826,7 +6833,7 @@ def test_map_scan_jobs_replays_a_worker_exception_in_the_parent(monkeypatch):
 
 
 def test_map_scan_jobs_absorbs_every_worker_settle_state(monkeypatch):
-    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+    _single_threaded(monkeypatch)
     jobs = [(name, index) for index, name in enumerate("abcdef")]
     seen = []
     rows = scan_pool.map_scan_jobs(
@@ -6839,16 +6846,10 @@ def test_map_scan_jobs_absorbs_every_worker_settle_state(monkeypatch):
 def test_scan_workers_stays_serial_in_a_threaded_process(monkeypatch):
     import threading
 
-    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+    _single_threaded(monkeypatch)
     assert scan_pool.scan_workers(6) == 2
-    stop = threading.Event()
-    thread = threading.Thread(target=stop.wait)
-    thread.start()
-    try:
-        assert scan_pool.scan_workers(6) == 1
-    finally:
-        stop.set()
-        thread.join()
+    monkeypatch.setattr(threading, "active_count", lambda: 2)
+    assert scan_pool.scan_workers(6) == 1
 
 
 def test_batch_bridge_rejects_a_stale_worker_and_merges_validated_paths():
@@ -6864,3 +6865,67 @@ def test_batch_bridge_rejects_a_stale_worker_and_merges_validated_paths():
     assert index.validated == {"a.py": True, "b.py": True}
     with pytest.raises(RuntimeAuditError):
         absorb([(False, {})])
+
+
+def test_provider_event_roots_follow_the_paths_the_index_reads():
+    def node(source):
+        return ast.parse(source).body[0]
+
+    assert scan_pool.provider_expr_root(ast.parse("a.b[0].c", mode="eval").body) == "a"
+    assert scan_pool.provider_expr_root(ast.parse("f().c", mode="eval").body) is None
+    call = node("setattr(client, 'x', 1)").value
+    assert scan_pool.provider_event_roots(call) == {"client"}
+    assert scan_pool.provider_event_roots(
+        node("s.mount.__setattr__('x', 1)").value
+    ) == {"s"}
+    assert scan_pool.provider_event_roots(node("cfg.items[k] = v").targets[0]) == {
+        "cfg"
+    }
+    assert scan_pool.provider_event_roots(node("x = requests.Session()")) == set()
+    assert scan_pool.provider_event_roots(node("return session")) == {"session"}
+
+
+def test_provider_reachable_names_close_over_bindings():
+    roots = {"s": frozenset({"r"}), "t": frozenset({"s"}), "u": frozenset({"q"})}
+    assert scan_pool.provider_reachable_names({"r": "requests"}, roots) == {
+        "r",
+        "s",
+        "t",
+    }
+
+
+def test_alias_reachable_events_give_the_same_provider_facts():
+    from types import SimpleNamespace
+
+    from factoryline import finite_capture, review_audits
+
+    source = (
+        "import requests as r\nimport other\n"
+        "s = r\nt = s\nt.verify = False\nother.x = 1\n"
+        "setattr(t, 'auth', None)\nuse(s)\n"
+    )
+    tree = ast.parse(source)
+    nodes, parents = scan_pool.tree_index(tree)
+    aliases = review_audits._module_security_aliases(tree)
+    plain = SimpleNamespace(_resolved_ast_name=review_audits._resolved_ast_name)
+    custom = SimpleNamespace(
+        _resolved_ast_name=lambda node, names: review_audits._resolved_ast_name(
+            node, names
+        )
+    )
+    events, _ = finite_capture._local_provider_events(nodes, parents, aliases, plain)
+    everything, _ = finite_capture._local_provider_events(
+        nodes, parents, aliases, custom
+    )
+    assert (
+        len(events)
+        < len(everything)
+        == len(finite_capture._provider_events(nodes, parents))
+    )
+    filtered = finite_capture.finite_provider_mutation_index(
+        nodes, aliases, plain, parents
+    )
+    unfiltered = finite_capture.finite_provider_mutation_index(
+        nodes, aliases, custom, parents
+    )
+    assert filtered == unfiltered and ("requests", "verify") in filtered
