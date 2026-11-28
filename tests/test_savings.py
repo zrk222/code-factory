@@ -103,21 +103,6 @@ def test_public_report_is_aggregate_safe_and_exported_atomically(tmp_path):
     assert report["pairs"] == 1
     assert report["time"]["saved_total"] == 20
     assert report["tokens"]["weighted_savings_rate"] is None
-    assert report["productivity"]["gain_rate"] is None
-    assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" in report["markers"]
-    for index in range(19):
-        record_savings_pair(
-            tmp_path,
-            f"pair-{index}",
-            {"elapsed_ms": 100, "tokens": 50},
-            {"elapsed_ms": 80, "tokens": 40},
-            equivalent_outcome=True,
-            evidence=evidence,
-        )
-    report = public_savings_report(tmp_path)
-    assert report["tokens"]["weighted_savings_rate"] == 0.2
-    assert report["productivity"]["gain_rate"] == 0.25
-    assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" not in report["markers"]
     encoded = json.dumps(report)
     for private in (
         "private-feature-name",
@@ -133,6 +118,52 @@ def test_public_report_is_aggregate_safe_and_exported_atomically(tmp_path):
         json.loads(output.read_text(encoding="utf-8"))["schema"]
         == "factory.savings-report.public.v1"
     )
+
+
+def _equivalent_pairs(root, count):
+    evidence = root / "evidence.json"
+    evidence.write_text("same", encoding="utf-8")
+    for index in range(count):
+        record_savings_pair(
+            root,
+            f"pair-{index}",
+            {"elapsed_ms": 100, "tokens": 50},
+            {"elapsed_ms": 80, "tokens": 40},
+            equivalent_outcome=True,
+            evidence=evidence,
+        )
+    return public_savings_report(root)
+
+
+def test_public_rates_are_withheld_below_twenty_pairs(tmp_path):
+    report = _equivalent_pairs(tmp_path, 19)
+    rates = (
+        report["tokens"]["weighted_savings_rate"],
+        report["productivity"]["gain_rate"],
+    )
+    assert rates == (None, None)
+    assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" in report["markers"]
+
+
+def test_public_rates_publish_at_twenty_pairs(tmp_path):
+    report = _equivalent_pairs(tmp_path, 20)
+    rates = (
+        report["tokens"]["weighted_savings_rate"],
+        report["productivity"]["gain_rate"],
+    )
+    assert rates == (0.2, 0.25)
+    assert "SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS" not in report["markers"]
+
+
+def test_public_productivity_needs_equivalence_and_the_pair_floor():
+    from factoryline.savings import _public_productivity
+
+    assert _public_productivity([]) == {
+        "exact_pairs": 0,
+        "coverage_rate": None,
+        "gain_rate": None,
+        "reason": "At least 20 equivalent-outcome pairs are required.",
+    }
 
 
 def test_savings_cli_records_and_exports_exact_pair(tmp_path, capsys):

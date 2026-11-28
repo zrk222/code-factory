@@ -27,6 +27,8 @@ import stat
 import tempfile
 import time
 from typing import Any, Iterable
+import urllib.error
+import urllib.request
 from . import runtime_audit_process as _runtime_process
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -1321,6 +1323,7 @@ def export_otel(root: Path, out: Path) -> dict[str, Any]:
 
 
 def _otlp_traces_url(endpoint: str) -> str:
+    """Return the collector's /v1/traces URL after refusing unsafe endpoints."""
     from urllib.parse import urlsplit
 
     parts = urlsplit(endpoint)
@@ -1339,11 +1342,16 @@ def _otlp_traces_url(endpoint: str) -> str:
     return base if base.endswith("/v1/traces") else base + "/v1/traces"
 
 
+class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirected POST would become a bodiless GET elsewhere; fail instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Refuse every redirect so urllib raises the 3xx as an HTTP error."""
+        return None
+
+
 def push_otel(root: Path, out: Path, endpoint: str, timeout: float = 10.0) -> dict:
     """Write the export, then POST its spans to an OTLP/HTTP JSON collector."""
-    import urllib.error
-    import urllib.request
-
     url = _otlp_traces_url(endpoint)
     exported = export_otel(root, out)
     body = json.dumps({"resourceSpans": exported["resourceSpans"]}).encode("utf-8")
@@ -1351,7 +1359,8 @@ def push_otel(root: Path, out: Path, endpoint: str, timeout: float = 10.0) -> di
         url, data=body, method="POST", headers={"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        opener = urllib.request.build_opener(_RefuseRedirect)
+        with opener.open(request, timeout=timeout) as response:
             status = int(response.status)
     except (urllib.error.URLError, OSError) as error:
         raise EnterpriseOpsError("E_OTEL_PUSH_FAILED", str(error)) from error

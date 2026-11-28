@@ -9,6 +9,7 @@ import sys
 import time
 
 import pytest
+from typing import Any
 
 from factoryline.enterprise_ops import (
     EnterpriseOpsError,
@@ -553,10 +554,7 @@ def test_outcomes_are_hash_linked_and_otel_export_is_metadata_only(tmp_path: Pat
     assert "prompts" in exported["disclosure"]
 
 
-def test_otel_push_sends_valid_otlp_spans_to_a_loopback_collector(tmp_path: Path):
-    import http.server
-    import threading
-
+def _one_outcome_root(tmp_path: Path) -> Path:
     root = _init(tmp_path)
     record_outcome(
         root,
@@ -568,7 +566,11 @@ def test_otel_push_sends_valid_otlp_spans_to_a_loopback_collector(tmp_path: Path
         duration_ms=42,
         deployed=True,
     )
-    received: list[tuple[str, dict]] = []
+    return root
+
+
+def _loopback_collector(received: list) -> Any:
+    import http.server
 
     class Collector(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
@@ -578,30 +580,84 @@ def test_otel_push_sends_valid_otlp_spans_to_a_loopback_collector(tmp_path: Path
             self.end_headers()
 
         def log_message(self, *args):
-            pass
+            return None
 
-    server = http.server.HTTPServer(("127.0.0.1", 0), Collector)
+    return http.server.HTTPServer(("127.0.0.1", 0), Collector)
+
+
+def test_otel_push_posts_only_resource_spans_to_v1_traces(tmp_path: Path):
+    import threading
+
+    root, received = _one_outcome_root(tmp_path), []
+    server = _loopback_collector(received)
     thread = threading.Thread(target=server.handle_request)
     thread.start()
-    pushed = push_otel(
-        root, root / "otel.json", f"http://127.0.0.1:{server.server_port}"
-    )
+    url = f"http://127.0.0.1:{server.server_port}"
+    pushed = push_otel(root, root / "otel.json", url)
     thread.join(5)
     server.server_close()
-    assert pushed["marker"] == "OTEL_EXPORT_PUSHED" and pushed["status"] == 200
-    path, body = received[0]
-    assert path == "/v1/traces" and set(body) == {"resourceSpans"}
-    span = body["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
-    assert len(span["traceId"]) == 32 and len(span["spanId"]) == 16
+    assert (pushed["marker"], pushed["status"]) == ("OTEL_EXPORT_PUSHED", 200)
+    assert [(path, set(body)) for path, body in received] == [
+        ("/v1/traces", {"resourceSpans"})
+    ]
+
+
+def test_otel_spans_carry_otlp_ids_and_end_time(tmp_path: Path):
+    root = _one_outcome_root(tmp_path)
+    exported = export_otel(root, root / "otel.json")
+    span = exported["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    assert (len(span["traceId"]), len(span["spanId"])) == (32, 16)
     assert span["endTimeUnixNano"] - span["startTimeUnixNano"] == 42_000_000
-    for endpoint in (
+
+
+def test_otel_push_fails_instead_of_following_a_redirect(tmp_path: Path):
+    import http.server
+    import threading
+
+    from factoryline.enterprise_ops import _RefuseRedirect
+
+    class Redirector(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:9/elsewhere")
+            self.end_headers()
+
+        def log_message(self, *args):
+            return None
+
+    root = _one_outcome_root(tmp_path)
+    server = http.server.HTTPServer(("127.0.0.1", 0), Redirector)
+    thread = threading.Thread(target=server.handle_request)
+    thread.start()
+    with pytest.raises(EnterpriseOpsError) as error:
+        push_otel(root, root / "otel.json", f"http://127.0.0.1:{server.server_port}")
+    thread.join(5)
+    server.server_close()
+    assert error.value.code == "E_OTEL_PUSH_FAILED"
+    assert _RefuseRedirect().redirect_request(None, None, 302, "", {}, "x") is None
+
+
+def test_otlp_traces_url_appends_the_traces_path_once():
+    from factoryline.enterprise_ops import _otlp_traces_url
+
+    base = "https://collector.example.com:4318"
+    assert _otlp_traces_url(base + "/") == base + "/v1/traces"
+    assert _otlp_traces_url(base + "/v1/traces") == base + "/v1/traces"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
         "http://collector.example.com",
         "https://user:pw@collector.example.com",
         "https://collector.example.com/?token=x",
-    ):
-        with pytest.raises(EnterpriseOpsError) as error:
-            push_otel(root, root / "otel.json", endpoint)
-        assert error.value.code == "E_OTEL_ENDPOINT_INVALID"
+    ],
+)
+def test_otel_push_rejects_unsafe_endpoints(tmp_path: Path, endpoint: str):
+    root = _one_outcome_root(tmp_path)
+    with pytest.raises(EnterpriseOpsError) as error:
+        push_otel(root, root / "otel.json", endpoint)
+    assert error.value.code == "E_OTEL_ENDPOINT_INVALID"
 
 
 def test_sla_requires_all_seven_explicit_gates(tmp_path: Path):

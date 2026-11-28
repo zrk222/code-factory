@@ -253,17 +253,27 @@ def _metric(rows: list[dict[str, Any]], key: str, saved_key: str) -> dict[str, A
     }
 
 
-def public_savings_report(root: Path) -> dict[str, Any]:
-    """Aggregate exact pairs without private identifiers, paths, or evidence digests."""
-    rows = load_savings_pairs(root)
+def _public_productivity(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Productivity gain over equivalent-outcome pairs, withheld below the pair floor."""
     equivalent = [row for row in rows if row["equivalence"]["asserted"]]
     before = sum(row["baseline"]["elapsed_ms"] for row in equivalent)
     after = sum(row["factory"]["elapsed_ms"] for row in equivalent)
-    productivity = (
-        float(_exact(before) / _exact(after) - 1)
-        if len(equivalent) >= PUBLIC_RATE_MIN_PAIRS and after > 0
-        else None
-    )
+    enough = len(equivalent) >= PUBLIC_RATE_MIN_PAIRS and after > 0
+    gain = float(_exact(before) / _exact(after) - 1) if enough else None
+    return {
+        "exact_pairs": len(equivalent),
+        "coverage_rate": len(equivalent) / len(rows) if rows else None,
+        "gain_rate": gain,
+        "reason": None
+        if gain is not None
+        else f"At least {PUBLIC_RATE_MIN_PAIRS} equivalent-outcome pairs are required.",
+    }
+
+
+def public_savings_report(root: Path) -> dict[str, Any]:
+    """Aggregate exact pairs without private identifiers, paths, or evidence digests."""
+    rows = load_savings_pairs(root)
+    productivity = _public_productivity(rows)
     report = {
         "schema": PUBLIC_SCHEMA,
         "marker": "SAVINGS_REPORT_AGGREGATE_SAFE",
@@ -272,21 +282,15 @@ def public_savings_report(root: Path) -> dict[str, Any]:
         "time": _metric(rows, "elapsed_ms", "time_saved_ms"),
         "tokens": _metric(rows, "tokens", "tokens_saved"),
         "cost_usd": _metric(rows, "cost_usd", "cost_saved_usd"),
-        "productivity": {
-            "exact_pairs": len(equivalent),
-            "coverage_rate": len(equivalent) / len(rows) if rows else None,
-            "gain_rate": productivity,
-            "reason": None
-            if productivity is not None
-            else f"At least {PUBLIC_RATE_MIN_PAIRS} equivalent-outcome pairs are required.",
-        },
+        "productivity": productivity,
     }
+    gain = productivity["gain_rate"]
     if any(
         metric.get("saved_total") is not None and metric["saved_total"] < 0
         for metric in (report["time"], report["tokens"], report["cost_usd"])
-    ) or (productivity is not None and productivity < 0):
+    ) or (gain is not None and gain < 0):
         report["markers"].append("SAVINGS_NEGATIVE_VISIBLE")
-    if rows and len(rows) < PUBLIC_RATE_MIN_PAIRS:
+    if 0 < len(rows) < PUBLIC_RATE_MIN_PAIRS:
         report["markers"].append("SAVINGS_RATE_WITHHELD_UNDER_MIN_PAIRS")
     return report
 
