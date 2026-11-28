@@ -606,6 +606,11 @@ test('native detector arms retain their own extraction and count one shared case
   const patternCase = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false,
     file_hit: false, hunk_findings: [], fix_side_residual: [],
     file_coverage: scannedCoverage(binding.source_packets) };
+  for (const side of ['old', 'fixed']) patternCase.file_coverage[side].push(
+    { path: 'nested/bridge.ts', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
+    { path: 'resources/mapper.xml', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
+    { path: 'readme.md', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
+  );
   const pattern = json('pattern-score.json', {
     schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: value.manifest.sha256,
     manifest_cases_sha256: caseDigest([row]), ruleset_sha256: 'c'.repeat(64), profile_sha256: 'd'.repeat(64),
@@ -632,6 +637,16 @@ test('native detector arms retain their own extraction and count one shared case
   assert.deepEqual(assessment.layers.map(layer => layer.stage),
     ['sink_collection', 'parser_coverage', 'source_to_sink', 'fixed_side', 'verdict']);
   assert.equal(assessment.layers[4].state, 'unresolved');
+  const { routes, inventoried_paths } = assessment.layers[1].source_routing.old;
+  assert.equal(inventoried_paths, 4);
+  assert.equal(routes.find(x => x.path === 'sample.py').sha256, binding.source_packets.old[0].sha256);
+  assert.equal(routes.find(x => x.path === 'sample.py').state, 'pattern_parsed');
+  assert.deepEqual(routes.filter(x => !x.sha256), [
+    { path: 'nested/bridge.ts', state: 'cross_language' },
+    { path: 'resources/mapper.xml', state: 'context_required' },
+  ]);
+  assert.deepEqual(unobservedFamily.pattern_join.follow_up[0].source_follow_up, assessment.layers[4].source_follow_up);
+  assert.equal(assessment.layers[4].source_follow_up.length, 4);
   const { layers, evidence_sha256: evidenceSha, ...pins } = assessment;
   let prior = caseDigest([pins]);
   for (const { output_sha256: output, ...packet } of layers) {
@@ -672,9 +687,11 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(splitUncertainty.pattern_join.eligible_native_additions, 0);
   const twoHits = evaluate([incomplete, complete]);
   assert.equal(twoHits.strict_hunk_hits, 1);
-  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].state, 'verified_native_addition');
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].state, 'unresolved');
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].next, 'resolve_source_routes');
   assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].historical_hunk_hit, false);
-  assert.equal(twoHits.pattern_join.follow_up.length, 0);
+  assert.equal(twoHits.pattern_join.follow_up.length, 1);
+  assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
   assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
   assert.equal(twoHits.cases[0].arms.length, 2);
   const anchored = evaluate([arm('off-hunk', { parsed: true, offHunk: true }), negative]);
