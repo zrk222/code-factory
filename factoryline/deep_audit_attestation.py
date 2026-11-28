@@ -2288,6 +2288,7 @@ def _build_php_interfile_rules(baseline, profile_path, output):
     Path(output).write_bytes(raw)
 
 
+_OPENGREP_VERSIONS = frozenset({"1.15.0", "2.0.0", "2.1.0"})
 _PHP_INTERFILE_FLAGS = (
     "--enable-interfile",
     "--interfile-depth=3",
@@ -2298,7 +2299,7 @@ _PHP_INTERFILE_FLAGS = (
 )
 
 
-def _semgrep_rule_prefix(tool_version):
+def _semgrep_rule_prefix(tool_version, *, mode=None):
     argv = [
         "/usr/bin/semgrep",
         "scan",
@@ -2311,12 +2312,84 @@ def _semgrep_rule_prefix(tool_version):
         "--no-rewrite-rule-ids",
         "--config",
     ]
-    if tool_version in {"1.15.0", "2.0.0"}:
+    if tool_version in _OPENGREP_VERSIONS:
         argv[0] = "/usr/bin/opengrep"
         argv.remove("--metrics=off")
+    if mode == "pattern-inventory":
+        argv.insert(argv.index("--config"), "--x-ignore-semgrepignore-files")
     if tool_version == "2.0.0":
         argv[-1:-1] = _PHP_INTERFILE_FLAGS
     return argv
+
+
+class _NativeRuleJsonPairs(list):
+    pass
+
+
+def _semgrep_rule_json(raw, tool_version):
+    try:
+        return _deep_audit_io.strict_json(raw)
+    except RuntimeAuditError as exc:
+        if tool_version != "2.1.0" or exc.code != "E_DUPLICATE_FIELD":
+            raise
+
+    import json
+
+    def restore(value, path=()):
+        if isinstance(value, _NativeRuleJsonPairs):
+            items = [(key, restore(item, (*path, key))) for key, item in value]
+            if (
+                len(path) == 4
+                and path[0] == "results"
+                and isinstance(path[1], int)
+                and path[2:] == ("extra", "metavars")
+                and all(
+                    key.startswith("$") and isinstance(item, dict)
+                    for key, item in items
+                )
+            ):
+                # OpenGrep 2.1 can emit multiple ordered bindings for one name.
+                # Preserve every binding. Conflicting proof fields still fail closed.
+                grouped = {}
+                for key, binding in items:
+                    grouped.setdefault(key, []).append(binding)
+                return {
+                    key: group[0] if len(group) == 1 else group
+                    for key, group in grouped.items()
+                }
+            return _deep_audit_io._object(items)
+        if isinstance(value, list):
+            return [restore(item, (*path, index)) for index, item in enumerate(value)]
+        return value
+
+    try:
+        decoded = restore(json.loads(raw, object_pairs_hook=_NativeRuleJsonPairs))
+        return _deep_audit_io.strict_json(_deep_audit_io.canonical_bytes(decoded))
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        if isinstance(exc, RuntimeAuditError):
+            raise
+        raise RuntimeAuditError("E_REPORT_JSON", "invalid native rule JSON") from exc
+
+
+def _semgrep_rule_groups(rules, lane, sources=None):
+    groups = {index: [rule] for index, rule in enumerate(rules)}
+    if sources is None or (lane.get("mode"), lane["tool_version"]) != (
+        "pattern-inventory",
+        "2.1.0",
+    ):
+        return list(groups.items())
+
+    empty = [
+        index
+        for index, rule in enumerate(rules)
+        if not _deep_audit_io._semgrep_rule_sources(rule, sources)
+    ]
+    if len(empty) > 1:
+        first, *rest = empty
+        groups[first] = [rules[index] for index in empty]
+        for index in rest:
+            del groups[index]
+    return list(groups.items())
 
 
 def _semgrep_rule_runs(
@@ -2327,6 +2400,7 @@ def _semgrep_rule_runs(
     rules,
     started,
     *,
+    sources=None,
     execution_context=None,
     cancelled=None,
 ):
@@ -2350,7 +2424,9 @@ def _semgrep_rule_runs(
             )
     observations = []
     deadline = started + lane["timeout_seconds"]
-    for index, rule in enumerate(rules):
+    groups = _semgrep_rule_groups(rules, lane, sources)
+    for index, group in groups:
+        rule = group[0]
         remaining = int(deadline - _deep_audit_io.time.monotonic())
         if remaining < 1:
             raise _deep_audit_io.RuntimeAuditError(
@@ -2358,10 +2434,12 @@ def _semgrep_rule_runs(
             )
         directory = scratch / f"semgrep-rule-{index}"
         directory.mkdir()
-        config = _deep_audit_io.canonical_bytes({"rules": [rule]})
+        config = _deep_audit_io.canonical_bytes({"rules": group})
         config_path, report_path = directory / "rule.json", directory / "report.json"
         config_path.write_bytes(config)
-        argv = _semgrep_rule_prefix(profile.get("tool_version")) + [
+        argv = _semgrep_rule_prefix(
+            profile.get("tool_version"), mode=lane.get("mode")
+        ) + [
             str(config_path),
             "--json-output",
             str(report_path),
@@ -2396,7 +2474,7 @@ def _semgrep_rule_runs(
             raise error
         with _deep_audit_io.local_file(directory, "report.json").open("rb") as stream:
             raw = stream.read(_deep_audit_io.LIMIT + 1)
-        report = _deep_audit_io.strict_json(raw)
+        report = _semgrep_rule_json(raw, profile["tool_version"])
         observations.append(
             {
                 "rule_id": rule["id"],
@@ -2411,55 +2489,76 @@ def _semgrep_rule_runs(
                 "raw_report_base64": base64.b64encode(raw).decode("ascii"),
             }
         )
-    return {"schema": "factory.semgrep-rule-execution.v1", "observations": observations}
+    version = 2 if len(groups) < len(rules) else 1
+    return {
+        "schema": f"factory.semgrep-rule-execution.v{version}",
+        "observations": observations,
+    }
+
+
+def _verify_semgrep_execution_facts(facts, timeout_seconds):
+    from .runtime_audit_common import _validate_runner_facts
+
+    _validate_runner_facts(facts, facts.get("timeout_seconds"))
+    if facts["timeout_seconds"] > timeout_seconds:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "rule exceeds signed budget"
+        )
+    if _deep_audit_io._adapter_command_failed(facts, [0], float("inf")):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "native rule did not complete"
+        )
 
 
 def verify_semgrep_rule_execution(
     evidence, lane, sources, report, *, execution_context=None
 ):
     """Re-derive execution and findings from exact pinned rules plus per-rule native JSON."""
-    from .runtime_audit_common import _validate_runner_facts
-
     from .deep_audit_sarif import _local_execution_context, _local_semgrep_report
 
     execution_context = _local_execution_context(execution_context, lane)
-    rules, observations = _deep_audit_io._semgrep_evidence_inputs(
+    groups, observations = _deep_audit_io._semgrep_evidence_inputs(
         evidence, lane, sources
     )
     findings, dispositions = [], []
-    for index, (rule, observation) in enumerate(zip(rules, observations)):
+    for (index, group), observation in zip(groups, observations):
         _deep_audit_io._semgrep_observation_identity(
-            rule, observation, index, execution_context=execution_context
+            group,
+            observation,
+            index,
+            lane["tool_version"],
+            mode=lane.get("mode"),
+            execution_context=execution_context,
         )
-        facts = observation["execution"]
-        _validate_runner_facts(facts, facts.get("timeout_seconds"))
-        if facts["timeout_seconds"] > lane["timeout_seconds"]:
-            raise _deep_audit_io.RuntimeAuditError(
-                "E_SEMGREP_EXECUTION", "rule exceeds signed budget"
-            )
-        if _deep_audit_io._adapter_command_failed(facts, [0], float("inf")):
-            raise _deep_audit_io.RuntimeAuditError(
-                "E_SEMGREP_EXECUTION", "native rule did not complete"
-            )
+        _verify_semgrep_execution_facts(
+            observation["execution"], lane["timeout_seconds"]
+        )
         native = observation["native_report"]
         if execution_context:
             native = _local_semgrep_report(native, sources, execution_context)
-        expected = _deep_audit_io._semgrep_rule_sources(rule, sources)
+        single_rule = len(group) == 1
+        expected = (
+            _deep_audit_io._semgrep_rule_sources(group[0], sources)
+            if single_rule
+            else set()
+        )
         scanned = _deep_audit_io._semgrep_scanned_sources(native, sources, lane)
-        if scanned != expected:
+        if scanned != expected or (not single_rule and native.get("results") != []):
             raise _deep_audit_io.RuntimeAuditError(
                 "E_SEMGREP_EXECUTION", "native source execution differs"
             )
         findings.extend(
-            _deep_audit_io._semgrep_json_findings(native, rule["id"], sources)
+            _deep_audit_io._semgrep_json_findings(native, group[0]["id"], sources)
         )
-        dispositions.append(
+        not_applicable_sources = sorted(set(sources) - scanned)
+        dispositions.extend(
             {
                 "rule_id": rule["id"],
                 "executed_sources": sorted(scanned),
-                "not_applicable_sources": sorted(set(sources) - scanned),
+                "not_applicable_sources": not_applicable_sources,
                 "native_report_sha256": observation["native_report_sha256"],
             }
+            for rule in group
         )
     if execution_context:
         report = _local_semgrep_report(report, sources, execution_context)
@@ -2468,6 +2567,7 @@ def verify_semgrep_rule_execution(
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "per-rule findings contradict baseline"
         )
+    dispositions.sort(key=lambda row: row["rule_id"])
     return {"state": "VERIFIED", "rules": dispositions, "findings": len(findings)}
 
 
@@ -2477,7 +2577,11 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
     if (
         not isinstance(evidence, dict)
         or set(evidence) != {"schema", "ruleset_base64", "observations"}
-        or evidence["schema"] != "factory.semgrep-rule-execution.v1"
+        or evidence["schema"]
+        not in (
+            "factory.semgrep-rule-execution.v1",
+            "factory.semgrep-rule-execution.v2",
+        )
     ):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "native rule evidence missing"
@@ -2489,19 +2593,27 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
             "E_SEMGREP_RULESET", "invalid native ruleset"
         ) from exc
     rules, _inventory = _deep_audit_io._semgrep_rule_inventory(config, lane)
-    observations = evidence["observations"]
-    if not isinstance(observations, list) or len(observations) != len(rules):
-        raise _deep_audit_io.RuntimeAuditError(
-            "E_SEMGREP_EXECUTION", "rule observation inventory differs"
-        )
     if len(sources) > _deep_audit_io.INVENTORY_LIMIT:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "bounded source inventory required"
         )
-    return rules, observations
+    grouped = evidence["schema"] == "factory.semgrep-rule-execution.v2"
+    groups = _semgrep_rule_groups(rules, lane, sources if grouped else None)
+    observations = evidence["observations"]
+    if (
+        not isinstance(observations, list)
+        or len(observations) != len(groups)
+        or (grouped and len(groups) == len(rules))
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "rule observation inventory differs"
+        )
+    return groups, observations
 
 
-def _semgrep_observation_identity(rule, observation, index, *, execution_context=None):
+def _semgrep_observation_identity(
+    group, observation, index, tool_version, *, mode=None, execution_context=None
+):
     import base64
 
     fields = {
@@ -2520,15 +2632,14 @@ def _semgrep_observation_identity(rule, observation, index, *, execution_context
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "invalid native rule record"
         )
-    if observation["rule_id"] != rule["id"] or observation[
+    config = _deep_audit_io.canonical_bytes({"rules": group})
+    if observation["rule_id"] != group[0]["id"] or observation[
         "rule_config_sha256"
-    ] != _deep_audit_io.digest({"rules": [rule]}):
+    ] != _deep_audit_io.sha256_bytes(config):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_RULESET", "isolated native rule differs"
         )
-    if observation["rule_config_base64"] != base64.b64encode(
-        _deep_audit_io.canonical_bytes({"rules": [rule]})
-    ).decode("ascii"):
+    if observation["rule_config_base64"] != base64.b64encode(config).decode("ascii"):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_RULESET", "native config bytes differ"
         )
@@ -2542,16 +2653,20 @@ def _semgrep_observation_identity(rule, observation, index, *, execution_context
             "E_SEMGREP_EXECUTION", "native report digest differs"
         )
     _deep_audit_io._semgrep_raw_bindings(
-        observation, index, execution_context=execution_context
+        observation, index, tool_version, mode=mode, execution_context=execution_context
     )
 
 
-def _semgrep_raw_bindings(observation, index, *, execution_context=None):
+def _semgrep_raw_bindings(
+    observation, index, tool_version, *, mode=None, execution_context=None
+):
     import base64
     from pathlib import PurePosixPath
 
     argv = observation["argv"]
-    prefix = _semgrep_rule_prefix(observation["native_report"].get("version"))
+    prefix = _semgrep_rule_prefix(
+        observation["native_report"].get("version"), mode=mode
+    )
     if execution_context:
         _local_semgrep_raw_argv(observation, index, execution_context, prefix)
     else:
@@ -2593,7 +2708,7 @@ def _semgrep_raw_bindings(observation, index, *, execution_context=None):
     if (
         len(raw) > _deep_audit_io.LIMIT
         or _deep_audit_io.sha256_bytes(raw) != observation["raw_report_sha256"]
-        or _deep_audit_io.strict_json(raw) != observation["native_report"]
+        or _semgrep_rule_json(raw, tool_version) != observation["native_report"]
     ):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "raw report binding differs"
@@ -2720,7 +2835,7 @@ def _native_profile_coverage(
         "sources": {
             item["path"]: item["sha256"]
             for item in inventory["files"]
-            if item["language"] in lane["languages"]
+            if _lane_source_applies(item, lane)
         },
         "mode": lane["mode"],
         "fallback": False,
@@ -2983,12 +3098,18 @@ def _codeql_verify_retained_source(measurement, required):
         raw["info"]
     ) or invocations[-1]["execution"]["stdout_bytes"] != len(raw["info"]):
         raise ValueError("source metadata stream differs")
+    _deep_audit_io.require_digest(measurement["archive_sha256"], "native archive hash")
+    archive_field = (
+        "archive_projection_sha256"
+        if "archive_projection_sha256" in measurement
+        else "archive_sha256"
+    )
     for role, field in {
         "query": "query_sha256",
         "package": "package_sha256",
         "result": "result_sha256",
         "decoded": "decoded_sha256",
-        "archive": "archive_sha256",
+        "archive": archive_field,
     }.items():
         if _deep_audit_io.sha256_bytes(raw[role]) != measurement[field]:
             raise ValueError("source artifact binding differs")
@@ -3013,7 +3134,7 @@ def _codeql_verify_retained_source(measurement, required):
     )
 
 
-def _codeql_retained_archive(raw, prefix, required):
+def _codeql_retained_archive(raw, prefix, required, *, copy_to=None):
     import io
     import zipfile
 
@@ -3035,7 +3156,7 @@ def _codeql_retained_archive(raw, prefix, required):
                 raise ValueError("source archive budget exceeded")
             names = _deep_audit_io.Counter(item.filename for item in entries)
             archived = {}
-            for path in required:
+            for path in sorted(required):
                 name = prefix + _deep_audit_io.relative_path(path)
                 if names[name] != 1:
                     continue
@@ -3044,6 +3165,12 @@ def _codeql_retained_archive(raw, prefix, required):
                 if len(captured) > _deep_audit_io.LIMIT:
                     raise ValueError("source member budget exceeded")
                 archived[path] = _deep_audit_io.sha256_bytes(captured)
+                if copy_to is not None:
+                    copy_to.writestr(
+                        zipfile.ZipInfo(name),
+                        captured,
+                        compress_type=zipfile.ZIP_DEFLATED,
+                    )
             return archived
     except (zipfile.BadZipFile, OSError, RuntimeError) as error:
         raise ValueError("invalid retained source archive") from error
@@ -3118,7 +3245,7 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
     required = {
         item["path"]: item["sha256"]
         for item in inventory["files"]
-        if item["language"] in lane["languages"]
+        if _lane_source_applies(item, lane)
     }
     archived, archive_sha = _deep_audit_io._codeql_archived_sources(
         source, scratch, required
@@ -3131,6 +3258,24 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
         raise _deep_audit_io.RuntimeAuditError(
             "E_CODEQL_SOURCE", "source archive changed"
         )
+    prefix = source.resolve().as_posix().lstrip("/") + "/"
+    projection = {}
+    if len(archive) > _deep_audit_io.NATIVE_COVERAGE_LIMIT:
+        import io
+        import zipfile
+
+        # Keep the native ZIP's fingerprint and retain only exact candidate members.
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as retained:
+            bindings = _codeql_retained_archive(
+                archive, prefix, required, copy_to=retained
+            )
+        if bindings != archived:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_SOURCE", "projected source archive differs"
+            )
+        archive = buffer.getvalue()
+        projection["archive_projection_sha256"] = _deep_audit_io.sha256_bytes(archive)
     return {
         "schema": "factory.codeql-source-execution.v1",
         "rows": rows,
@@ -3141,7 +3286,8 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
         "decoded_sha256": _deep_audit_io.sha256_bytes(raw),
         "result_sha256": _deep_audit_io.sha256_bytes(binary),
         "native_invocations": invocations,
-        "archive_prefix": source.resolve().as_posix().lstrip("/") + "/",
+        "archive_prefix": prefix,
+        **projection,
         "native_artifacts": {
             "query": _deep_audit_io._codeql_native_blob(query),
             "package": _deep_audit_io._codeql_native_blob(package),
@@ -3153,6 +3299,19 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
     }
 
 
+def _lane_source_applies(item: dict, lane: dict) -> bool:
+    language = item["language"]
+    if language not in lane["languages"]:
+        return False
+    if lane.get("engine") != "codeql" or language != "configuration":
+        return True
+    # In CodeQL, configuration denotes GitHub Actions workflows and metadata.
+    parent, _, name = item["path"].rpartition("/")
+    return name in {"action.yml", "action.yaml"} or (
+        parent == ".github/workflows" and name.endswith((".yml", ".yaml"))
+    )
+
+
 def _codeql_source_accounting(measurement, inventory, lane):
     try:
         rows, archived = measurement["rows"], measurement["archived_sources"]
@@ -3160,7 +3319,7 @@ def _codeql_source_accounting(measurement, inventory, lane):
             raise ValueError("source evidence maps required")
         checks = {}
         for item in inventory["files"]:
-            if item["language"] in lane["languages"]:
+            if _lane_source_applies(item, lane):
                 path = _deep_audit_io.relative_path(item["path"])
                 if path in checks:
                     raise ValueError("duplicate source inventory")
@@ -3235,9 +3394,10 @@ def _codeql_archived_sources(source, scratch, required):
                 raise _deep_audit_io.RuntimeAuditError(
                     "E_CODEQL_SOURCE", "source archive entry budget exceeded"
                 )
+            member_counts = _deep_audit_io.Counter(names)
             for path, seal in required.items():
                 name = prefix + _deep_audit_io.relative_path(path)
-                if names.count(name) != 1:
+                if member_counts[name] != 1:
                     continue
                 candidate = _deep_audit_io.bound_bytes(
                     source, {"path": path, "sha256": seal}

@@ -2472,7 +2472,7 @@ def execute_codeql_native_replay(request, source, scratch, timeout):
     required = {
         item["path"]: item["sha256"]
         for item in inventory["files"]
-        if item["language"] in lane["languages"]
+        if _deep_audit_io._lane_source_applies(item, lane)
     }
     _deep_audit_io.verify_codeql_retained_evidence(coverage, lane, required)
     deadline = _deep_audit_io.time.monotonic() + _deep_audit_io.require_int(
@@ -2584,6 +2584,8 @@ def _codeql_replay_fresh(profile, source, scratch, inventory, lane, deadline):
 
 
 def _codeql_replay_queries(profile, coverage, fresh, source, scratch, deadline):
+    from concurrent.futures import ThreadPoolExecutor
+
     expected = {
         row["rule_id"]: row for row in coverage["codeql_query_execution"]["rules"]
     }
@@ -2593,24 +2595,29 @@ def _codeql_replay_queries(profile, coverage, fresh, source, scratch, deadline):
             "E_CODEQL_REPLAY", "independent query records differ"
         )
     decoded, total = {}, 0
-    for index, rule_id in enumerate(sorted(expected)):
-        old, new = expected[rule_id], actual[rule_id]
-        directory = scratch / f"replay-values-{index}"
-        directory.mkdir()
-        left = _deep_audit_io._codeql_replay_decode(
-            profile, old, source, directory, "worker", deadline
-        )
-        right = _deep_audit_io._codeql_replay_decode(
-            profile, new, source, directory, "fresh", deadline
-        )
-        total += len(_deep_audit_io.canonical_bytes(left)) + len(
-            _deep_audit_io.canonical_bytes(right)
-        )
-        if total > 536_870_912:
-            raise _deep_audit_io.RuntimeAuditError(
-                "E_CODEQL_REPLAY", "decoded replay budget exceeded"
+    decode = _deep_audit_io._codeql_replay_decode
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        for index, rule_id in enumerate(sorted(expected)):
+            old, new = expected[rule_id], actual[rule_id]
+            directory = scratch / f"replay-values-{index}"
+            directory.mkdir()
+            worker = pool.submit(
+                decode, profile, old, source, directory, "worker", deadline
             )
-        decoded[rule_id] = _codeql_replay_query_digest(old, new, left, right, coverage)
+            verifier = pool.submit(
+                decode, profile, new, source, directory, "fresh", deadline
+            )
+            left, right = worker.result(), verifier.result()
+            total += len(_deep_audit_io.canonical_bytes(left)) + len(
+                _deep_audit_io.canonical_bytes(right)
+            )
+            if total > 536_870_912:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_CODEQL_REPLAY", "decoded replay budget exceeded"
+                )
+            decoded[rule_id] = _codeql_replay_query_digest(
+                old, new, left, right, coverage
+            )
     return decoded
 
 
@@ -3903,7 +3910,7 @@ def _semgrep_challenge_result(
 
 
 def _semgrep_challenge_command(profile, *, execution_context=None):
-    from .deep_audit_attestation import _PHP_INTERFILE_FLAGS
+    from .deep_audit_attestation import _OPENGREP_VERSIONS, _PHP_INTERFILE_FLAGS
 
     if profile.get("engine") != "semgrep" or len(profile.get("commands", [])) != 1:
         raise _deep_audit_io.RuntimeAuditError(
@@ -3925,9 +3932,11 @@ def _semgrep_challenge_command(profile, *, execution_context=None):
         "{source}",
     ]
     tool_version = profile.get("tool_version")
-    if tool_version in {"1.15.0", "2.0.0"}:
+    if tool_version in _OPENGREP_VERSIONS:
         expected[0] = "/usr/bin/opengrep"
         expected.remove("--metrics=off")
+    if profile.get("mode") == "pattern-inventory":
+        expected.insert(expected.index("--config"), "--x-ignore-semgrepignore-files")
     if tool_version == "2.0.0":
         config_index = expected.index("--config")
         expected[config_index:config_index] = _PHP_INTERFILE_FLAGS

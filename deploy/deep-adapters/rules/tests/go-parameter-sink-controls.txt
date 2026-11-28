@@ -1,6 +1,7 @@
 package controls
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 	"os/exec"
 	"path/filepath"
+	"text/template"
 
 	"github.com/gin-gonic/gin"
 )
@@ -225,4 +227,43 @@ func renderJsonAttribute(w http.ResponseWriter, req *http.Request) {
 	data, _ := json.Marshal(req.FormValue("label"))
 	// ruleid: go.request-html-injection
 	fmt.Fprintf(w, "<span data-label='%s'></span>", data)
+}
+
+func requestShellAppletControls(req *http.Request) {
+	// source: go.request-command-injection
+	value := req.FormValue("text")
+	// ruleid: go.request-command-injection
+	exec.Command("busybox", "sh", "-c", value)
+	// source: go.request-command-injection
+	other := req.FormValue("other")
+	// ruleid: go.request-command-injection
+	exec.CommandContext(req.Context(), "/usr/bin/toybox", "sh", "-c", other)
+	// ok: go.request-command-injection
+	exec.Command("busybox", "echo", value)
+	// ok: go.request-command-injection
+	exec.Command("busybox", "sh", "-c", "true", value)
+}
+
+func renderDynamicSQLTemplate(content string, out *bytes.Buffer) string {
+  tmpl := template.New("view").Delims("[[", "]]")
+  funcs := restrictedFunctions()
+  // ruleid: go.parameter-sql-text
+  toolkit.SQLTemplateFuncs(&funcs)
+  tmpl = tmpl.Funcs(funcs)
+  entry, err := tmpl.Funcs(funcs).Parse(content)
+  if err != nil { return "" }
+  if err = entry.Execute(out, nil); err != nil { return "" }
+  return "done"
+}
+
+func renderConstantSQLTemplate(content string, out *bytes.Buffer) string {
+  tmpl := template.New("view").Delims("[[", "]]")
+  funcs := restrictedFunctions()
+  // ok: go.parameter-sql-text
+  toolkit.SQLTemplateFuncs(&funcs)
+  tmpl = tmpl.Funcs(funcs)
+  entry, err := tmpl.Funcs(funcs).Parse("title")
+  if err != nil { return "" }
+  if err = entry.Execute(out, nil); err != nil { return "" }
+  return "done"
 }

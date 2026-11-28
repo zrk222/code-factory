@@ -2,7 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-const compiledCodeQLTargets = ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker'];
+const compiledCodeQLTargets = ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker', 'codeql-rust-worker'];
 
 export const sdkTargets = Object.freeze([
   'codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker',

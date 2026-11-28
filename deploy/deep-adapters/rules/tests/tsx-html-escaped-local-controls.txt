@@ -78,3 +78,21 @@ export function spannedCell(cell: { span: number }) {
 
 // ok: javascript.parameter-shell-command
 export const installCommand = (name: string, version: string) => `npm install -D ${name}@${version}`;
+
+const sanitizeElement = function (node) {
+  const name = lowercase(node.nodeName);
+  // ruleid: javascript.dom-innerhtml-from-variable
+  if ((name === 'svg' || name === 'math') && node.querySelectorAll('p, form, br').length !== 0) {
+    discard(node);
+    return true;
+  }
+};
+
+const sanitizeCoveredElement = function (node) {
+  const name = lowercase(node.nodeName);
+  // ok: javascript.dom-innerhtml-from-variable
+  if ((name === 'svg' || name === 'math') && node.querySelectorAll('p, form, br, table').length !== 0) {
+    discard(node);
+    return true;
+  }
+};

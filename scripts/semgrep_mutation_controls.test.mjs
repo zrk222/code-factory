@@ -125,8 +125,9 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const all = Object.keys(fixedReviewedFindingCounts);
   const manifest = Object.entries(fixedReviewedFindingCounts).flatMap(([rule, count]) =>
     Array.from({ length: count }, (_, index) => ({ rule,
-      ...((rules.includes(rule) && index < (['opt.factory.rules.go.request-sql-injection',
-        'opt.factory.rules.ruby.request-sql-injection'].includes(rule) ? 4 : 3)) ? { source_line: index + 2 } : {}),
+      ...((rules.includes(rule) && index < ({ 'opt.factory.rules.go.request-command-injection': 5,
+        'opt.factory.rules.java.request-sql-injection': 7, 'opt.factory.rules.go.request-sql-injection': 4,
+        'opt.factory.rules.ruby.request-sql-injection': 4 }[rule] ?? 3)) ? { source_line: index + 2 } : {}),
     })));
   assert.doesNotThrow(() => verifyFlowControlMatrix(manifest, safe, all));
   assert.doesNotThrow(() => verifyFindingCountMatrix(manifest, all));
@@ -138,7 +139,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 379);
+  assert.equal(balancedReplacement.length, 407);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
@@ -147,20 +148,20 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
 test('fixed TSX qualification rejects omitted, substituted and wrong-language controls', () => {
   const manifest = javascriptControlManifest();
   assert.doesNotThrow(() => verifyJavascriptControlMatrix(manifest));
-  assert.equal(manifest.filter(item => item.path.endsWith('.js')).length, 10);
-  assert.equal(manifest.filter(item => item.path === 'semgrep-pattern-limited.ts').length, 30);
+  assert.equal(manifest.filter(item => item.path.endsWith('.js')).length, 12);
+  assert.equal(manifest.filter(item => item.path === 'semgrep-pattern-limited.ts').length, 32);
   assert.deepEqual(manifest.filter(item => item.path.startsWith('typescript-shell-')).map(({ path, line }) =>
     [path, line]), [['typescript-shell-wrapper.ts', 7], ['typescript-shell-binding.ts', 5],
     ['typescript-shell-sanitizer.ts', 6], ['typescript-shell-sanitizer.ts', 11]]);
-  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 60);
+  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 65);
   assert.deepEqual(manifest.filter(item => item.path === 'typescript-sql-identifier.ts').map(item => item.line),
     [42, 47, 49, 55, 60, 71, 81, 88]);
   assert.equal(manifest.find(item => item.path === 'typescript-html-escaped-local.ts').line, 10);
-  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 15);
+  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 20);
   assert.deepEqual(manifest.filter(item => item.path === 'semgrep-pattern-limited.tsx').slice(-2).map(item =>
-    [item.source_line, item.line]), [[159, 162], [163, 165]]);
-  assert.deepEqual(manifest.filter(item => item.path.endsWith('.js')).slice(-3).map(item =>
-    [item.source_line, item.line]), [[106, 106], [110, 112], [116, 118]]);
+    [item.source_line, item.line]), [[199, 202], [203, 205]]);
+  assert.deepEqual(manifest.filter(item => item.path.endsWith('.js')).slice(-5).map(item =>
+    [item.source_line, item.line]), [[106, 106], [110, 112], [116, 118], [160, 164], [172, 175]]);
   assert.throws(() => verifyJavascriptControlMatrix(manifest.filter(item => !item.path.endsWith('.tsx'))));
   assert.throws(() => verifyJavascriptControlMatrix(manifest.map(item => ({ ...item,
     path: item.path.replace('.tsx', '.ts') }))));
@@ -171,13 +172,14 @@ test('reviewed TSX endpoints bind actual JSX, Unicode, imported aliases and rebo
   const source = readFileSync(new URL('../deploy/deep-adapters/rules/tests/javascript-controls.js', import.meta.url), 'utf8') + tsxQualificationSuffix;
   const lines = source.split(/\r?\n/);
   const manifest = javascriptControlManifest();
+  const rendererSources = new Map([[160, /tokens\[index\]\.children/], [172, /items\[index\]\.content/]]);
   for (const expected of manifest.filter(item => item.path === 'semgrep-pattern-limited.tsx')) {
-    assert.match(lines[expected.source_line - 1], /req\.(query|params|body)/);
+    assert.match(lines[expected.source_line - 1], rendererSources.get(expected.source_line) ?? /req\.(query|params|body)/);
     assert.match(lines[expected.line - 2], /ruleid: javascript\.request-/);
   }
   assert.match(source, /return <section title="é漢字">\{value\}<\/section>/);
-  assert.match(lines[161], /processAlias\.exec\(alias\)/);
-  assert.match(lines[164], /fileAlias\.readFileSync\(path\)/);
+  assert.match(lines[201], /processAlias\.exec\(alias\)/);
+  assert.match(lines[204], /fileAlias\.readFileSync\(path\)/);
   assert.match(source, /safe = "echo fixed"/);
   assert.match(source, /function shadowed\(processAlias, req\)/);
   const reportSource = readFileSync(new URL('../deploy/deep-adapters/rules/tests/report-cli-markup-tsx.txt', import.meta.url), 'utf8');

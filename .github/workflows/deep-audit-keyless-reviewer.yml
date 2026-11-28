@@ -14,18 +14,18 @@ on:
 permissions: {}
 
 jobs:
-  prepare:
+  assemble:
     if: github.repository == 'zrk222/code-factory'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions: {}
+    timeout-minutes: 45
+    permissions:
+      contents: read
     outputs:
-      artifact_name: ${{ steps.build.outputs.artifact_name }}
-      runtime_sha256: ${{ steps.build.outputs.runtime_sha256 }}
-      challenge_summary_sha256: ${{ steps.build.outputs.challenge_summary_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Build the pinned offline reviewer runtime
         id: build
+        working-directory: ${{ runner.temp }}
         env:
           # Register the digest verified from the retained native bundles, outside the review packet.
           REVIEW_CHALLENGE_SUMMARY_SHA256: ${{ vars.CODE_FACTORY_NATIVE_REVIEW_CHALLENGE_SHA256 }}
@@ -43,55 +43,20 @@ jobs:
           env -i PATH=/usr/bin:/bin "$runtime" --version
           digest=$(sha256sum "$runtime")
           printf 'runtime_sha256=%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
-          printf 'artifact_name=keyless-review-runtime-%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: ${{ steps.build.outputs.artifact_name }}
-          path: llama/build/bin/llama-server
-          if-no-files-found: error
-
-  analyze:
-    if: github.repository == 'zrk222/code-factory'
-    needs: prepare
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        family: [configuration, dependencies, fuzz, runtime, secrets, static]
-    env:
-      REVIEW_FAMILY: ${{ matrix.family }}
-      REVIEW_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}
-      REVIEW_CHALLENGE_SUMMARY_SHA256: ${{ needs.prepare.outputs.challenge_summary_sha256 }}
-    permissions:
-      contents: read
-    steps:
-      - &checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - &python_setup
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.11'
-      - name: Bind runtime to the current workflow attempt
-        env:
-          RUNTIME_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
-        run: |
-          if [ "$RUNTIME_ARTIFACT" != "keyless-review-runtime-$GITHUB_RUN_ATTEMPT" ]; then
-            echo 'Use a full workflow attempt to bind the reviewer runtime.' >&2
-            exit 1
-          fi
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: ${{ needs.prepare.outputs.artifact_name }}
-          path: reviewer-runtime
       - name: Verify the reviewer runtime and model
+        env:
+          REVIEW_RUNTIME_SHA256: ${{ steps.build.outputs.runtime_sha256 }}
         run: |
-          runtime="$PWD/reviewer-runtime/llama-server"
+          runtime="$RUNNER_TEMP/llama/build/bin/llama-server"
           printf '%s  %s\n' "$REVIEW_RUNTIME_SHA256" "$runtime" | sha256sum -c -
           chmod 0755 "$runtime"
-          (cd reviewer-runtime && env -i PATH=/usr/bin:/bin "$runtime" --version)
+          (cd "$RUNNER_TEMP" && env -i PATH=/usr/bin:/bin "$runtime" --version)
           model_url='https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/13fb94bfda8c8cf22497dc57b78f391a9acb426a/qwen2.5-coder-7b-instruct-q4_k_m.gguf'
           attempt=1
           until curl --fail --silent --show-error --location --connect-timeout 20 --max-time 180 \
@@ -101,8 +66,7 @@ jobs:
             sleep 3
           done
           printf '%s  %s\n' '509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c' review.gguf | sha256sum -c -
-      - &stage_packet
-        name: Stage the exact synthetic read set and audit evidence
+      - name: Stage the exact synthetic read set and audit evidence
         env:
           REVIEW_PACKET: ${{ inputs.review_packet }}
         run: |
@@ -181,14 +145,13 @@ jobs:
               model_input["challenge_receipts"] = packet["challenge_receipts"]
           Path("review-model-input.json").write_text(json.dumps(model_input, ensure_ascii=False))
           PY
-      - &review_operation
-        name: Run the read-only specialty inference
+      - name: Run the read-only specialty inference
+        env:
+          REVIEW_RUNTIME_SHA256: ${{ steps.build.outputs.runtime_sha256 }}
+          REVIEW_CHALLENGE_SUMMARY_SHA256: ${{ steps.build.outputs.challenge_summary_sha256 }}
         run: |
-          if [ -n "${REVIEW_FAMILY:-}" ]; then
-            env -i PATH=/usr/bin:/bin "$PWD/reviewer-runtime/llama-server" -m review.gguf --host 127.0.0.1 --port 18080 -c 24576 -np 1 -t 4 > model.log 2>&1 &
-            model_pid=$!
-            trap 'kill "$model_pid" 2>/dev/null || true; wait "$model_pid" 2>/dev/null || true' EXIT
-          fi
+          set -euo pipefail
+          run_review() {
           python - <<'PY'
           """Run the scoped synthetic review and hash-bind the individual inferences."""
 
@@ -899,32 +862,23 @@ jobs:
           if __name__ == "__main__":
               main()
           PY
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: keyless-review-family-${{ github.run_attempt }}-${{ matrix.family }}
-          path: review-family.json
-          if-no-files-found: error
-
-  assemble:
-    needs: [prepare, analyze]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
-    env:
-      REVIEW_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}
-      REVIEW_CHALLENGE_SUMMARY_SHA256: ${{ needs.prepare.outputs.challenge_summary_sha256 }}
-    permissions:
-      contents: read
-    steps:
-      - *checkout
-      - *python_setup
-      - *stage_packet
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          path: family-outputs
-          pattern: keyless-review-family-${{ github.run_attempt }}-*
-      - *review_operation
+          }
+          mkdir family-outputs
+          for family in configuration dependencies fuzz runtime secrets static; do
+            (
+              env -i PATH=/usr/bin:/bin "$RUNNER_TEMP/llama/build/bin/llama-server" -m review.gguf \
+                --host 127.0.0.1 --port 18080 -c 24576 -np 1 -t 4 > "$RUNNER_TEMP/review-$family.log" 2>&1 &
+              model_pid=$!
+              trap 'kill "$model_pid" 2>/dev/null || true; wait "$model_pid" 2>/dev/null || true' EXIT
+              export REVIEW_FAMILY="$family"
+              run_review
+            )
+            output="family-outputs/keyless-review-family-$GITHUB_RUN_ATTEMPT-$family"
+            mkdir "$output"
+            mv review-family.json "$output/"
+          done
+          unset REVIEW_FAMILY
+          run_review
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         id: upload
         with:

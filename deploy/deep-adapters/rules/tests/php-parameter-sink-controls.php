@@ -201,3 +201,27 @@ function readTrimmedRecordIds($database, array $userIds) {
     // ruleid: php.parameter-sql-text
     return $database->query($query);
 }
+
+class UnquotedNumericFieldReview {
+ public $active;
+ public $other;
+ function save($role) {
+ $this->active = $this->active ? $this->active : 0;
+ $sql = "UPDATE ".DATABASE_PREFIX."report SET";
+ // ruleid: php.parameter-sql-text
+ $sql .= ", active = ".$this->active;
+ $value = $this->driver->query($sql);
+ }
+}
+
+class UnquotedNumericFieldCast {
+ public $active;
+ public $other;
+ function save($role) {
+ $this->active = $this->active ? $this->active : 0;
+ $sql = "UPDATE ".DATABASE_PREFIX."report SET";
+ // ok: php.parameter-sql-text
+ $sql .= ", active = ".(int) $this->active;
+ $value = $this->driver->query($sql);
+ }
+}
