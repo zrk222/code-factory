@@ -296,6 +296,10 @@ code --install-extension factoryline-vscode-1.3.7.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
+`FactoryLine: Scan Current File` and the opt-in `factoryline.scanOnSave` setting run
+`factory scan --static-only --json` on a temporary copy of one saved Python file in a
+trusted workspace and show its findings as diagnostics. The scan sees that file alone,
+so cross-file context is not applied; it grants no write or execute authority.
 Product Missions create only supervised, approval-required local packets and do
 not grant execute, merge, deploy, publish, connector, credential, or messaging authority.
 Requirement CodeLens navigation reads bounded local text artifacts only; it does

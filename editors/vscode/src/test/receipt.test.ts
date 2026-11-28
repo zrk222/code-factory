@@ -7,6 +7,7 @@ import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
 import { meterHtml, savingsHtml } from "../meter";
 import { createUnapprovedRequirementProofDraft, findRequirementEvidence, isRequirementId, MAX_TEST_DECLARATIONS_PER_DOCUMENT, MAX_TEST_PROOF_MANIFEST_BYTES, readTestProofManifest, requirementIds, requirementProofManifestPath, testDeclarations, testProofId } from "../requirement";
+import { scanCompleted, scanDiagnosticSpecs, singleFileScanArgs } from "../scan";
 import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "../star_prompt";
 
 const receipt = {
@@ -198,6 +199,8 @@ const fakeVscode = {
     onDidChangeWorkspaceFolders: () => disposable,
     onDidOpenTextDocument: (handler: (document: any) => void) => { workspaceEvents.set("open", handler); return disposable; },
     onDidCloseTextDocument: (handler: (document: any) => void) => { workspaceEvents.set("close", handler); return disposable; },
+    onDidSaveTextDocument: (handler: (document: any) => void) => { workspaceEvents.set("save", handler); return disposable; },
+    getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }),
     onDidGrantWorkspaceTrust: (handler: () => void) => { workspaceEvents.set("trust", handler); return disposable; },
     textDocuments: [],
     get isTrusted() { return workspaceTrusted; },
@@ -283,6 +286,8 @@ void (async () => {
     assert.ok(registeredCommands.has("factoryline.assemble"));
     assert.ok(registeredCommands.has("factoryline.openRequirementEvidence"));
     assert.ok(registeredCommands.has("factoryline.draftTestProof"));
+    assert.ok(registeredCommands.has("factoryline.scanCurrentFile"));
+    assert.ok(workspaceEvents.get("save"), "scan-on-save must subscribe to document saves");
     assert.ok(context.subscriptions.length >= 18);
     const openEvent = workspaceEvents.get("open");
     const changeEvent = workspaceEvents.get("change");
@@ -317,3 +322,24 @@ void (async () => {
     fsPromises.realpath = originalRealpath;
   }
 })();
+
+test("single-file scan findings map to editor ranges as the scanner reports them", () => {
+  // Measured: `    return yaml.load(open(p))` reports line 4, column 11, end_column 29.
+  const report = JSON.stringify({ static_security: { findings: [
+    { code: "SECURITY_UNSAFE_YAML", message: "YAML is loaded without an explicit reviewed Loader.", severity: "HIGH", path: "loader.py", line: 4, column: 11, end_line: 4, end_column: 29 },
+    { code: "OTHER", message: "elsewhere", severity: "HIGH", path: "other.py", line: 3 },
+    { code: "BAD", message: "no line", severity: "LOW", path: "loader.py" },
+  ] } });
+  const specs = scanDiagnosticSpecs(report, "/work/pkg/loader.py");
+  assert.deepEqual(specs, [{ startLine: 3, startColumn: 11, endLine: 3, endColumn: 29,
+    message: "YAML is loaded without an explicit reviewed Loader. (single-file scan; cross-file context not applied)", code: "SECURITY_UNSAFE_YAML", level: "warning" }]);
+  assert.equal(scanDiagnosticSpecs("not json", "loader.py"), null);
+  assert.equal(scanDiagnosticSpecs("{\"partial\": true}", "loader.py"), null);
+  assert.deepEqual(scanDiagnosticSpecs(JSON.stringify({ static_security: { findings: [] } }), "loader.py"), []);
+  assert.deepEqual(singleFileScanArgs("/tmp/x"), ["scan", "--root", "/tmp/x", "--static-only", "--json"]);
+  assert.equal(scanCompleted(null), true);
+  assert.equal(scanCompleted({ code: 2 }), true);
+  assert.equal(scanCompleted({ code: 2, killed: true, signal: "SIGTERM" }), false);
+  assert.equal(scanCompleted({ code: 1 }), false);
+  assert.equal(scanCompleted({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }), false);
+});

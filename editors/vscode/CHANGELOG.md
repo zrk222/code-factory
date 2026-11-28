@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `FactoryLine: Scan Current File` and opt-in `factoryline.scanOnSave`: single-file static scan findings as editor diagnostics.
+
 ## 1.3.7 - 2026-11-23
 
 - Pair with Code Factory core 0.50.1 for the Stripe credential and MD5 detector fixes.

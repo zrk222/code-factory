@@ -9,6 +9,7 @@ import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
 import { createUnapprovedRequirementProofDraft, findRequirementEvidence, MAX_TEST_DECLARATIONS_PER_DOCUMENT, MAX_TEST_PROOF_DOCUMENT_BYTES, MAX_TEST_PROOF_DOCUMENT_CHARS, readTestProofManifest, requirementIds, testDeclarations, testProofId } from "./requirement";
 import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "./star_prompt";
 import { registerEvidence } from "./evidence";
+import { registerScanOnSave } from "./scan_on_save";
 import { runCommand } from "@factoryline/proof-client";
 
 const output = vscode.window.createOutputChannel("FactoryLine");
@@ -487,6 +488,7 @@ async function openFactoryStudio(view: StudioView = "studio"): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): void {
   registerEvidence(context);
+  registerScanOnSave(context);
   vscode.workspace.textDocuments.forEach(document => refreshTestProofDiagnostics(document));
   context.subscriptions.push(
     output,
