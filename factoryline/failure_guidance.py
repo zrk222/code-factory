@@ -349,68 +349,84 @@ def explain_failure(
 
 
 _CI_PREFIX = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ?|\x1b\[[0-9;]*[A-Za-z]")
+# (kind, pattern, fold): fold=False keeps digits that identify the failure
+# (test node ids, rule codes); only hashes and UUIDs are folded there.
 _CI_KEYS = (
-    ("pytest", re.compile(r"^FAILED (\S+)")),
-    ("assertion", re.compile(r"^E\s+(\w*(?:Error|Exception)\b.*)")),
-    ("exception", re.compile(r"^(\w+(?:Error|Exception): .*)$")),
-    ("node-test", re.compile(r"^not ok \d+ - (.+)$")),
-    ("format", re.compile(r"^Would reformat: (\S+)")),
-    ("lint", re.compile(r"^(\S+\.\w+:\d+:\d+: [A-Z]+\d+)")),
-    ("assert", re.compile(r"^(AssertionError: .*)$")),
+    ("pytest", re.compile(r"^FAILED (\S+)"), False),
+    ("assertion", re.compile(r"^E\s+(\w*(?:Error|Exception)\b.*)"), True),
+    ("exception", re.compile(r"^(\w+(?:Error|Exception): .*)$"), True),
+    ("node-test", re.compile(r"^not ok \d+ - (.+)$"), False),
+    ("format", re.compile(r"^Would reformat: (\S+)"), False),
+    ("lint", re.compile(r"^(\S+\.\w+):\d+:\d+: ([A-Z]+\d+)"), False),
 )
-_CI_VOLATILE = (
+_CI_IDS = (
     (re.compile(r"\b[0-9a-f]{8}-[0-9a-f-]{27}\b"), "U"),
-    (re.compile(r"\b[0-9a-f]{7,64}\b"), "H"),
-    (re.compile(r"\d+(?:\.\d+)*"), "N"),
+    (re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,64}\b"), "H"),
     (re.compile(r"\\"), "/"),
 )
+# Counts, sizes, durations and line numbers vary run to run; short integers
+# such as HTTP statuses or version suffixes stay.
+_CI_NUMBERS = re.compile(r"\b\d+\.\d+(?:\.\d+)*\b|\b\d{4,}\b")
 _CI_JOB_NOISE = re.compile(
     r"\((?:[\w.-]+, )*[\w.-]+\)|\b(?:windows|ubuntu|macos)(?:-latest)?\b|python \d[\d.]*|shard \d+/\d+",
     re.IGNORECASE,
 )
+_CI_EXIT = re.compile(r"^##\[error\]Process completed with exit code")
 
 
-def _ci_normal(text: str) -> str:
-    for pattern, replacement in _CI_VOLATILE:
+def _ci_normal(text: str, fold: bool = True) -> str:
+    for pattern, replacement in _CI_IDS:
         text = pattern.sub(replacement, text)
+    if fold:
+        text = _CI_NUMBERS.sub("N", text)
     return " ".join(text.split())[:240]
 
 
-def ci_failure_signature(
-    log: str, workflow: str, job: str, step: str
-) -> dict[str, Any]:
-    """Normalise one failed CI job into a content-only signature; volatile ids, numbers and paths are folded."""
-    lines = [_CI_PREFIX.sub("", line).strip() for line in log.splitlines()]
-    end = next(
-        (i for i, line in enumerate(lines) if line.startswith("##[error]")), len(lines)
-    )
+def _ci_section(lines: list[str]) -> list[str]:
+    """The failing step's output: from its group header to the step's exit error."""
+    errors = [i for i, line in enumerate(lines) if line.startswith("##[error]")]
+    exits = [i for i in errors if _CI_EXIT.match(lines[i])]
+    end = (exits or errors or [len(lines)])[0]
     start = max(
         (i for i in range(end) if lines[i].startswith("##[endgroup]")), default=0
     )
-    lines = lines[start:end]
+    return lines[start:end]
+
+
+def _ci_keys(lines: list[str]) -> tuple[set[str], str | None]:
     keys, kind = set(), None
     for line in lines:
-        for name, pattern in _CI_KEYS:
+        for name, pattern, fold in _CI_KEYS:
             if match := pattern.match(line):
-                keys.add(_ci_normal(match.group(1)))
+                keys.add(_ci_normal(" ".join(match.groups()), fold))
                 kind = kind or name
                 break
     if not keys:
         tail = [line for line in lines if line and not line.startswith("##[")]
         keys = {_ci_normal(line) for line in tail[-3:]}
-        kind = "tail"
+        kind = "tail" if keys else None
+    return keys, kind
+
+
+def ci_failure_signature(
+    log: str, workflow: str, job: str, step: str
+) -> dict[str, Any]:
+    """Normalise one failed CI job into a content-only signature; volatile ids and counts are folded."""
+    lines = [_CI_PREFIX.sub("", line).strip() for line in log.splitlines()]
+    keys, kind = _ci_keys(_ci_section(lines))
     identity = {
         "workflow": workflow,
         "job": " ".join(_CI_JOB_NOISE.sub("", job).split()),
-        "step": _ci_normal(step),
+        "step": _ci_normal(" ".join(_CI_JOB_NOISE.sub("", step).split())),
     }
-    keys = sorted(keys)[:12]
+    ordered = sorted(keys)
     return {
         "schema": "factory.ci-failure-signature.v1",
         **identity,
         "kind": kind,
-        "keys": keys,
-        "signature_sha256": _ci_sha({**identity, "keys": keys}),
+        "keys": ordered[:12],
+        "key_count": len(ordered),
+        "signature_sha256": _ci_sha({**identity, "keys": ordered}),
         "family_sha256": _ci_sha({**identity, "kind": kind}),
     }
 
@@ -419,36 +435,95 @@ def _ci_sha(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def _hex64(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
 def _verified_fix_receipt(receipt: Any) -> bool:
+    """An executed, passing fix-workflow receipt with its reproduction and repair evidence bound.
+
+    The receipt is self-hashed, not signed: this proves completeness and
+    internal consistency, so recalled repairs remain leads for a human.
+    """
     if (
         not isinstance(receipt, dict)
         or receipt.get("schema") != "factory.fix-workflow.v1"
     ):
         return False
-    core = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     from .fix_workflow import _sha
 
+    core = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    reproduction = receipt.get("reproduction") or {}
+    repair = receipt.get("repair") or {}
     return (
-        receipt.get("mode") == "execute"
-        and receipt.get("state") == "PASS"
+        receipt.get("marker") == "FIX_WORKFLOW_RECEIPT"
+        and (receipt.get("mode"), receipt.get("state")) == ("execute", "PASS")
+        and reproduction.get("observed") is True
+        and _hex64(reproduction.get("receipt_sha256"))
+        and _hex64(receipt.get("contract_sha256"))
+        and _hex64(repair.get("candidate_receipt_sha256"))
         and receipt.get("receipt_sha256") == _sha(core)
     )
 
 
+_CI_INDEX_MAX_BYTES = 16 * 1024 * 1024
+
+
+def _ci_index(index: Path) -> tuple[list[dict[str, Any]], bool]:
+    """Read the hash-chained index; any edited, reordered or foreign line breaks it."""
+    if not index.is_file():
+        return [], True
+    if index.stat().st_size > _CI_INDEX_MAX_BYTES:
+        return [], False
+    entries, previous = [], ""
+    for line in index.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            return entries, False
+        core = {key: value for key, value in entry.items() if key != "entry_sha256"}
+        if entry.get("previous_sha256") != previous or entry.get(
+            "entry_sha256"
+        ) != _ci_sha(core):
+            return entries, False
+        entries.append(entry)
+        previous = entry["entry_sha256"]
+    return entries, True
+
+
 def remember_ci_repair(
-    index: Path, signature: dict[str, Any], receipt: Any
+    index: Path,
+    signature: dict[str, Any],
+    receipt: Any,
+    receipt_path: str | None = None,
 ) -> dict[str, Any]:
     """Append a failure signature with its executed, passing fix receipt; anything else is refused."""
     if not _verified_fix_receipt(receipt):
         raise ValueError(
-            "fix receipt is not an executed, passing, self-consistent fix-workflow receipt"
+            "fix receipt is not an executed, passing fix-workflow receipt with bound reproduction and repair evidence"
         )
-    entry = {
+    if not signature.get("kind"):
+        raise ValueError("an empty failure signature cannot be remembered")
+    entries, intact = _ci_index(index)
+    if not intact:
+        raise ValueError(
+            "the failure index is not an intact hash chain; refusing to extend it"
+        )
+    for entry in entries:
+        if (entry["signature_sha256"], entry["fix_receipt_sha256"]) == (
+            signature["signature_sha256"],
+            receipt["receipt_sha256"],
+        ):
+            return entry
+    core = {
         "signature_sha256": signature["signature_sha256"],
         "family_sha256": signature["family_sha256"],
         "fix_receipt_sha256": receipt["receipt_sha256"],
         "fix_id": receipt.get("fix_id"),
+        "fix_receipt_path": receipt_path,
+        "previous_sha256": entries[-1]["entry_sha256"] if entries else "",
     }
+    entry = {**core, "entry_sha256": _ci_sha(core)}
     index.parent.mkdir(parents=True, exist_ok=True)
     with index.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -456,30 +531,22 @@ def remember_ci_repair(
 
 
 def triage_ci_failure(index: Path, signature: dict[str, Any]) -> dict[str, Any]:
-    """Recall earlier verified repairs for this signature; the result is a lead for a human, never an action."""
-    entries = []
-    if index.is_file():
-        for line in index.read_text(encoding="utf-8").splitlines():
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(entry, dict):
-                entries.append(entry)
+    """Recall earlier recorded repairs for this signature; the result is a lead for a human, never an action."""
+    entries, intact = _ci_index(index)
     exact = [
-        e for e in entries if e.get("signature_sha256") == signature["signature_sha256"]
+        e for e in entries if e["signature_sha256"] == signature["signature_sha256"]
     ]
-    family = [
-        e for e in entries if e.get("family_sha256") == signature["family_sha256"]
-    ]
+    family = [e for e in entries if e["family_sha256"] == signature["family_sha256"]]
+    known = bool(exact) and intact and bool(signature.get("kind"))
     return {
         "schema": "factory.ci-failure-triage.v1",
         "signature": signature,
-        "status": "KNOWN_FAILURE" if exact else "REQUIRES_HUMAN_ATTENTION",
-        "verified_repairs": exact,
+        "status": "KNOWN_FAILURE" if known else "REQUIRES_HUMAN_ATTENTION",
+        "index_intact": intact,
+        "recorded_repairs": exact if known else [],
         "similar_repairs": [e for e in family if e not in exact][:5],
         "authority": "none",
         "next_action": "Re-run the recalled fix workflow against this failure before applying anything."
-        if exact
+        if known
         else "Diagnose the failure; record the executed, passing fix receipt so the next recurrence is recalled.",
     }

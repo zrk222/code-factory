@@ -340,7 +340,7 @@ def _dispatch(args: Any) -> Any:
 
 
 def _ci_failure_result(args: Any) -> dict[str, Any]:
-    """Sign a failed job log; remember a verified repair or recall earlier ones."""
+    """Sign a failed job log; remember an executed passing repair or recall earlier ones."""
     from .failure_guidance import ci_failure_signature, remember_ci_repair
     from .failure_guidance import triage_ci_failure
 
@@ -348,7 +348,9 @@ def _ci_failure_result(args: Any) -> dict[str, Any]:
     signature = ci_failure_signature(log, args.workflow, args.job, args.step)
     if args.remember:
         receipt = json.loads(Path(args.remember).read_text(encoding="utf-8"))
-        return remember_ci_repair(Path(args.index), signature, receipt)
+        return remember_ci_repair(
+            Path(args.index), signature, receipt, receipt_path=args.remember
+        )
     return triage_ci_failure(Path(args.index), signature)
 
 
