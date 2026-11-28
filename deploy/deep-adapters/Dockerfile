@@ -154,14 +154,19 @@ RUN /opt/rust/bin/rustc --version | grep -F 'rustc 1.97.0 ' \
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="rust"
 
 FROM go-sdk AS osv-build
-ADD --checksum=sha256:1ce45371bd4b6480ac512156c2ea70d563753eba62283d160360bfe3cf94a7ab https://github.com/google/osv-scanner/archive/a14aa98ab8408547083d4411091c5fbaf5b47d8e.tar.gz /tmp/osv-scanner.tar.gz
+# Pin the uncompressed Git objects so archive repacking cannot change the source check.
+RUN git init -q /src \
+    && git -C /src -c fetch.fsckObjects=true fetch --no-tags --depth=1 https://github.com/google/osv-scanner.git a14aa98ab8408547083d4411091c5fbaf5b47d8e \
+    && test "$(git -C /src rev-parse FETCH_HEAD)" = a14aa98ab8408547083d4411091c5fbaf5b47d8e \
+    && git -C /src rev-list --objects --no-object-names FETCH_HEAD | LC_ALL=C sort | git -C /src cat-file --batch > /tmp/osv-source.objects \
+    && echo '69a676bf6b3fcb531052fbb85b233a2d6dbbdfb205703701c4142582dc8f96da  /tmp/osv-source.objects' | sha256sum -c - \
+    && rm /tmp/osv-source.objects && git -C /src checkout -q --detach FETCH_HEAD
 COPY deploy/deep-adapters/osv-lookup-ledger.patch /tmp/osv-lookup-ledger.patch
 COPY deploy/deep-adapters/osv-extractor-inventory.go /tmp/osv-extractor-inventory.go
 COPY deploy/deep-adapters/profiles/osv.json /tmp/osv-profile.json
-RUN mkdir -p /src && tar -xzf /tmp/osv-scanner.tar.gz --strip-components=1 -C /src && rm /tmp/osv-scanner.tar.gz
 RUN mkdir -p /src/cmd/factory-inventory && cp /tmp/osv-extractor-inventory.go /src/cmd/factory-inventory/main.go
 WORKDIR /src
-RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build echo '4486eff021ec7c86106a0571b76fe6fff42aaba32565d3cff945bbbca36d3652  /tmp/osv-lookup-ledger.patch' | sha256sum -c - && git init -q && git apply --check /tmp/osv-lookup-ledger.patch && git apply /tmp/osv-lookup-ledger.patch \
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build echo '4486eff021ec7c86106a0571b76fe6fff42aaba32565d3cff945bbbca36d3652  /tmp/osv-lookup-ledger.patch' | sha256sum -c - && git apply --check /tmp/osv-lookup-ledger.patch && git apply /tmp/osv-lookup-ledger.patch \
     && gofmt -w internal/factorylookup/ledger.go internal/clients/clientimpl/localmatcher/localmatcher.go internal/clients/clientimpl/localmatcher/zip.go pkg/osvscanner/scan.go pkg/osvscanner/osvscanner.go \
     && GOTOOLCHAIN=local CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w' -o /osv-scanner ./cmd/osv-scanner && /osv-scanner --version | grep -F 2.2.0
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build echo '56eb42e1dbdee321433a9625c8c0a82ee55b47614fab477a714c192866026c6c  /tmp/osv-extractor-inventory.go' | sha256sum -c - \
