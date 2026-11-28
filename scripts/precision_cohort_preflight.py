@@ -395,14 +395,8 @@ def arm_g_packet_item(alert, repository, tier, workdir):
     return item, key
 
 
-def arm_g_packet(args):
-    import yaml
-
-    lock, lock_sha256 = arm_g_lock(args.repo)
-    score, score_sha256 = arm_g_json(args.score)
-    if score_sha256 != args.score_sha256:
-        raise ValueError("Arm G score digest mismatch")
-    rules_sha256 = lock["repo_files"][ARM_G_RULES]
+def arm_g_score_repositories(score, lock, rules_sha256):
+    """Validate the score contract and index repositories by advisory."""
     if (
         score.get("schema") != "factory.recall-result.v1"
         or score.get("ruleset_sha256") != rules_sha256
@@ -412,6 +406,38 @@ def arm_g_packet(args):
         or score.get("scope") != "ecosystem"
     ):
         raise ValueError("Arm G score receipt differs from the locked scan")
+    repositories = {case["ghsa"]: case["repository"] for case in score["cases"]}
+    if len(repositories) != len(score["cases"]):
+        raise ValueError("duplicate Arm G score case")
+    return repositories
+
+
+def arm_g_packet_rows(args, alerts, repositories, tier, rules_sha256):
+    """Create a deterministically ordered, blinded packet population."""
+    items, key = [], {}
+    for alert in alerts:
+        if alert["rules_sha256"] != rules_sha256:
+            raise ValueError("review export uses different rules")
+        item, entry = arm_g_packet_item(
+            alert, repositories[alert["case"]], tier, args.workdir
+        )
+        if item["item"] in key:
+            raise ValueError("duplicate Arm G alert identity")
+        items.append(item)
+        key[item["item"]] = entry
+    items.sort(key=lambda item: item["item"])
+    random.Random(args.seed).shuffle(items)
+    return items, key
+
+
+def arm_g_packet(args):
+    import yaml
+
+    lock, lock_sha256 = arm_g_lock(args.repo)
+    score, score_sha256 = arm_g_json(args.score)
+    if score_sha256 != args.score_sha256:
+        raise ValueError("Arm G score digest mismatch")
+    rules_sha256 = lock["repo_files"][ARM_G_RULES]
     rules = yaml.safe_load((args.repo / ARM_G_RULES).read_bytes())["rules"]
     tier = {
         rule["id"]: "lead"
@@ -419,9 +445,7 @@ def arm_g_packet(args):
         else "finding"
         for rule in rules
     }
-    repositories = {case["ghsa"]: case["repository"] for case in score["cases"]}
-    if len(repositories) != len(score["cases"]):
-        raise ValueError("duplicate Arm G score case")
+    repositories = arm_g_score_repositories(score, lock, rules_sha256)
     with tempfile.TemporaryDirectory(prefix="arm-g-", dir=args.run.parent) as temporary:
         staging = Path(temporary)
         export = staging / "alerts.json"
@@ -444,19 +468,7 @@ def arm_g_packet(args):
             text=True,
         )
         alerts, alerts_sha256 = arm_g_json(export)
-        items, key = [], {}
-        for alert in alerts:
-            if alert["rules_sha256"] != rules_sha256:
-                raise ValueError("review export uses different rules")
-            item, entry = arm_g_packet_item(
-                alert, repositories[alert["case"]], tier, args.workdir
-            )
-            if item["item"] in key:
-                raise ValueError("duplicate Arm G alert identity")
-            items.append(item)
-            key[item["item"]] = entry
-        items.sort(key=lambda item: item["item"])
-        random.Random(args.seed).shuffle(items)
+        items, key = arm_g_packet_rows(args, alerts, repositories, tier, rules_sha256)
         packet = {
             "schema": "factory.label-packet.v2",
             "cohort": args.run.name,
@@ -537,6 +549,23 @@ def arm_g_disagreements(run, packet, packet_sha256, items):
     )
 
 
+def arm_g_verified_vote(row, item, lines):
+    """Credit a REPORT only when its three citations match the shown input."""
+    if row["decision"] != "REPORT":
+        return False
+    try:
+        source, entry, sink = (
+            int(row[key]) for key in ("source_line", "entry_line", "sink_line")
+        )
+    except (TypeError, ValueError, KeyError):
+        return False
+    return (
+        row.get("source_kind") in ARM_G_SOURCE_KINDS
+        and sink == item["line"]
+        and {source, entry} <= lines
+    )
+
+
 def arm_g_votes(run, model, items, packet_sha256):
     lines = {
         item: {
@@ -560,35 +589,14 @@ def arm_g_votes(run, model, items, packet_sha256):
         for item, row in arm_g_index(rows).items():
             if item not in items or row["decision"] not in {"REPORT", "SUPPRESS"}:
                 raise ValueError("invalid Arm G triage item or decision")
-            if row["decision"] != "REPORT":
-                continue
-            try:
-                source, entry, sink = (
-                    int(row[key]) for key in ("source_line", "entry_line", "sink_line")
-                )
-            except (TypeError, ValueError, KeyError):
-                continue
-            if (
-                row.get("source_kind") in ARM_G_SOURCE_KINDS
-                and sink == items[item]["line"]
-                and {source, entry} <= lines[item]
-            ):
-                votes[item] += 1
+            votes[item] += arm_g_verified_vote(row, items[item], lines[item])
     return votes
 
 
-def arm_g_endpoint(args, packet, packet_sha256, items):
-    key_document, key_sha256 = arm_g_json(args.run / "key.json")
-    score, score_sha256 = arm_g_json(args.score)
-    if (
-        key_sha256 != args.key_sha256
-        or key_document["packet_sha256"] != packet_sha256
-        or key_document["score_sha256"] != score_sha256
-        or key_document["key"].keys() != items.keys()
-    ):
-        raise ValueError("Arm G score, packet and sealed key bindings differ")
-    expected, opus, fable = arm_g_disagreements(args.run, packet, packet_sha256, items)
-    observed, adjudication_sha256 = arm_g_json(args.run / "adjudication-packet.json")
+def arm_g_final_verdicts(run, packet, packet_sha256, items):
+    """Bind both reviews and any adjudications before resolving disagreements."""
+    expected, opus, fable = arm_g_disagreements(run, packet, packet_sha256, items)
+    observed, adjudication_sha256 = arm_g_json(run / "adjudication-packet.json")
     if observed != expected:
         raise ValueError(
             "Arm G adjudication packet differs from the current reviewer inputs"
@@ -596,14 +604,14 @@ def arm_g_endpoint(args, packet, packet_sha256, items):
     disagreements = arm_g_index(observed["disagreements"])
     ao = (
         arm_g_reviews(
-            args.run / "adjudication-opus.json", adjudication_sha256, disagreements
+            run / "adjudication-opus.json", adjudication_sha256, disagreements
         )
         if disagreements
         else {}
     )
     af = (
         arm_g_reviews(
-            args.run / "adjudication-fable.json", adjudication_sha256, disagreements
+            run / "adjudication-fable.json", adjudication_sha256, disagreements
         )
         if disagreements
         else {}
@@ -617,6 +625,20 @@ def arm_g_endpoint(args, packet, packet_sha256, items):
             if ao[item]["verdict"] == af[item]["verdict"]
             else "UNCLEAR"
         )
+    return final, lo, lf
+
+
+def arm_g_endpoint(args, packet, packet_sha256, items):
+    key_document, key_sha256 = arm_g_json(args.run / "key.json")
+    score, score_sha256 = arm_g_json(args.score)
+    if (
+        key_sha256 != args.key_sha256
+        or key_document["packet_sha256"] != packet_sha256
+        or key_document["score_sha256"] != score_sha256
+        or key_document["key"].keys() != items.keys()
+    ):
+        raise ValueError("Arm G score, packet and sealed key bindings differ")
+    final, lo, lf = arm_g_final_verdicts(args.run, packet, packet_sha256, items)
     haiku = arm_g_votes(args.run, "H", items, packet_sha256)
     stage2, stage2_sha256 = arm_g_json(args.run / "stage2.json")
     if stage2 != {
@@ -699,101 +721,124 @@ def arm_g_main(argv):
         return 2
 
 
-def arm_g_metrics(items, key, final, lo, lf, H, S, scored):
+def arm_g_read_out(ids, final, unclear_fp=False):
+    """Count adjudicated findings for one pre-registered population."""
+    tp = sum(final[item] == "TP" for item in ids)
+    fp = sum(
+        final[item] == "FP" or (unclear_fp and final[item] == "UNCLEAR") for item in ids
+    )
+    return tp, fp, tp / (tp + fp) if tp + fp else None
+
+
+def arm_g_case_counts(ids, key, final):
+    by = defaultdict(list)
+    for item in ids:
+        if final[item] != "UNCLEAR":
+            by[key[item]["case"]].append(final[item] == "TP")
+    return sum(sum(votes) > len(votes) / 2 for votes in by.values()), len(by)
+
+
+def arm_g_bounds(tp, total):
     from scipy.stats import beta
 
-    G = {i for i in items if H[i] >= 2 and S[i] == 3}
+    if not total:
+        return None, None
+    lower = float(beta.ppf(0.05, tp, total - tp + 1)) if tp else 0.0
+    upper = float(beta.ppf(0.95, tp + 1, total - tp)) if tp < total else 1.0
+    return lower, upper
 
-    def lb(k, n):
-        return float(beta.ppf(0.05, k, n - k + 1)) if k else 0.0
 
-    def ub(k, n):
-        return float(beta.ppf(0.95, k + 1, n - k)) if k < n else 1.0
+def arm_g_threshold(cut, bound, population, cases, robust):
+    total, precision, lower = population
+    case_count, case_true, case_lower = cases
+    point = total >= 5 and precision >= cut
+    confirmed = (
+        point
+        and robust
+        and lower > bound
+        and case_true / case_count >= cut
+        and case_lower > bound
+    )
+    strong = total >= 5 and lower >= cut and robust
+    return point, confirmed, strong
 
-    def read_out(ids, unclear_fp=False):
-        tp = sum(final[i] == "TP" for i in ids)
-        fp = sum(
-            final[i] == "FP" or (unclear_fp and final[i] == "UNCLEAR") for i in ids
-        )
-        return tp, fp, (tp / (tp + fp) if tp + fp else None)
 
-    def verdict(ids):
-        tp, fp, p = read_out(ids)
-        n = tp + fp
-        by = defaultdict(list)
-        for i in ids:
-            if final[i] != "UNCLEAR":
-                by[key[i]["case"]].append(final[i] == "TP")
-        ctp = sum(sum(v) > len(v) / 2 for v in by.values())
-        cn = len(by)  # one outcome per case; ties are FP
-        repo_tp = Counter(items[i]["repository"] for i in ids if final[i] == "TP")
-        top = repo_tp.most_common(1)[0][0] if repo_tp else None
-        drop = read_out([i for i in ids if items[i]["repository"] != top])[2]
-        ufp = read_out(ids, True)[2]
-        robust = (
-            cn >= 5
-            and drop is not None
-            and drop >= 0.49
-            and ufp is not None
-            and ufp >= 0.49
-        )
+def arm_g_robustness(ids, items, final, case_count):
+    repo_tp = Counter(items[item]["repository"] for item in ids if final[item] == "TP")
+    top = repo_tp.most_common(1)[0][0] if repo_tp else None
+    drop = arm_g_read_out(
+        [item for item in ids if items[item]["repository"] != top], final
+    )[2]
+    unclear_as_fp = arm_g_read_out(ids, final, True)[2]
+    robust = (
+        case_count >= 5
+        and drop is not None
+        and drop >= 0.49
+        and unclear_as_fp is not None
+        and unclear_as_fp >= 0.49
+    )
+    return top, drop, unclear_as_fp, robust
 
-        def level(cut, bound):
-            return (
-                n >= 5
-                and p >= cut
-                and lb(tp, n) > bound
-                and ctp / cn >= cut
-                and lb(ctp, cn) > bound
-                and robust
-            )
 
-        return {
-            "findings": len(ids),
-            "decided": n,
-            "TP": tp,
-            "FP": fp,
-            "UNCLEAR": len(ids) - n,
-            "precision": p,
-            "cp_lb95_one_sided": lb(tp, n) if n else None,
-            "cp_ub95_one_sided": ub(tp, n) if n else None,
-            "case_level": {
-                "cases": cn,
-                "tp_cases": ctp,
-                "cp_lb95": lb(ctp, cn) if cn else None,
-            },
-            "drop_top_tp_repository": {
-                "repository_dropped": bool(top),
-                "precision": drop,
-            },
-            "unclear_as_fp": ufp,
-            "six_x_point": bool(n >= 5 and p >= 0.49),
-            "eight_x_point": bool(n >= 5 and p >= 0.656),
-            "six_x_confirmed": level(0.49, 0.246),
-            "eight_x_confirmed": level(0.656, 0.328),
-            "six_x_strong": bool(n >= 5 and lb(tp, n) >= 0.49 and robust),
-            "eight_x_strong": bool(n >= 5 and lb(tp, n) >= 0.656 and robust),
-            "not_met": bool(n >= 5 and ub(tp, n) < 0.49),
-            "inconclusive_small_n": n < 5,
-        }
+def arm_g_verdict(ids, items, key, final):
+    tp, fp, precision = arm_g_read_out(ids, final)
+    total = tp + fp
+    case_true, case_count = arm_g_case_counts(ids, key, final)
+    top, drop, unclear_as_fp, robust = arm_g_robustness(ids, items, final, case_count)
+    lower, upper = arm_g_bounds(tp, total)
+    case_lower, _ = arm_g_bounds(case_true, case_count)
+    population = (total, precision, lower)
+    cases = (case_count, case_true, case_lower)
+    six = arm_g_threshold(0.49, 0.246, population, cases, robust)
+    eight = arm_g_threshold(0.656, 0.328, population, cases, robust)
+    return {
+        "findings": len(ids),
+        "decided": total,
+        "TP": tp,
+        "FP": fp,
+        "UNCLEAR": len(ids) - total,
+        "precision": precision,
+        "cp_lb95_one_sided": lower,
+        "cp_ub95_one_sided": upper,
+        "case_level": {
+            "cases": case_count,
+            "tp_cases": case_true,
+            "cp_lb95": case_lower,
+        },
+        "drop_top_tp_repository": {"repository_dropped": bool(top), "precision": drop},
+        "unclear_as_fp": unclear_as_fp,
+        "six_x_point": six[0],
+        "eight_x_point": eight[0],
+        "six_x_confirmed": six[1],
+        "eight_x_confirmed": eight[1],
+        "six_x_strong": six[2],
+        "eight_x_strong": eight[2],
+        "not_met": total >= 5 and upper < 0.49,
+        "inconclusive_small_n": total < 5,
+    }
 
+
+def arm_g_metrics(items, key, final, lo, lf, H, S, scored):
+    G = {item for item in items if H[item] >= 2 and S[item] == 3}
     hit = {key[i]["case"] for i in items if key[i]["on_fix_hunk"]}
     kept = {key[i]["case"] for i in G if key[i]["on_fix_hunk"]}
     return {
-        "arm_G": verdict(G),
+        "arm_G": arm_g_verdict(G, items, key, final),
         "recall": {
             "scored_cases": scored,
             "hit_cases_all_alerts": len(hit),
             "hit_cases_kept_as_findings": len(kept),
         },
         "secondary": {
-            "arm_F_haiku_3of3": verdict({i for i in items if H[i] == 3}),
-            "haiku_3of3_sonnet_2of3": verdict(
-                {i for i in items if H[i] == 3 and S[i] >= 2}
+            "arm_F_haiku_3of3": arm_g_verdict(
+                {i for i in items if H[i] == 3}, items, key, final
             ),
-            "overall_precision_all_alerts": read_out(list(items))[2],
+            "haiku_3of3_sonnet_2of3": arm_g_verdict(
+                {i for i in items if H[i] == 3 and S[i] >= 2}, items, key, final
+            ),
+            "overall_precision_all_alerts": arm_g_read_out(list(items), final)[2],
             "tiers": {
-                t: read_out([i for i in items if key[i]["tier"] == t])[2]
+                t: arm_g_read_out([i for i in items if key[i]["tier"] == t], final)[2]
                 for t in ("finding", "lead")
             },
         },
