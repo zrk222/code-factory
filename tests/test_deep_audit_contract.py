@@ -60,7 +60,9 @@ def test_keyless_review_decodes_lossless_bounded_input():
 
 
 @pytest.mark.parametrize("modified", [False, True])
-def test_keyless_coordinator_seals_exact_eight_lane_plan(tmp_path, monkeypatch, modified):
+def test_keyless_coordinator_seals_exact_eight_lane_plan(
+    tmp_path, monkeypatch, modified
+):
     import yaml
 
     repo = Path(__file__).resolve().parents[1]
@@ -69,7 +71,8 @@ def test_keyless_coordinator_seals_exact_eight_lane_plan(tmp_path, monkeypatch, 
     step = next(
         item
         for item in flow["jobs"]["authorize"]["steps"]
-        if item.get("name") == "Bind only the approved candidate to exact role workflows"
+        if item.get("name")
+        == "Bind only the approved candidate to exact role workflows"
     )
     source = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     command = compile(source, str(workflow), "exec")
@@ -91,15 +94,21 @@ def test_keyless_coordinator_seals_exact_eight_lane_plan(tmp_path, monkeypatch, 
 
     exec(command, {})
     manifest_bytes = (root / "manifest.json").read_bytes()
-    manifest = load_execution_manifest(root / "manifest.json", sha256_bytes(manifest_bytes))
+    manifest = load_execution_manifest(
+        root / "manifest.json", sha256_bytes(manifest_bytes)
+    )
     assert manifest == json.loads(manifest_bytes)
     payload = json.loads((root / "authorization-payload.json").read_bytes())
     assert len(manifest["lanes"]) == 8 and len(manifest["obligations"]) == 10
     assert len({lane["family"] for lane in manifest["lanes"]}) == 6
     assert manifest["lanes"] == json.loads(raw_plan)["lanes"]
-    assert payload["adapter_images"] == {lane["id"]: lane["image"] for lane in manifest["lanes"]}
-    assert payload["manifest_sha256"] == payload["manifest_content_sha256"] == sha256_bytes(
-        manifest_bytes
+    assert payload["adapter_images"] == {
+        lane["id"]: lane["image"] for lane in manifest["lanes"]
+    }
+    assert (
+        payload["manifest_sha256"]
+        == payload["manifest_content_sha256"]
+        == sha256_bytes(manifest_bytes)
     )
     assert payload["candidate_sha256"] == manifest["candidate_sha256"]
     assert payload["authority"] == "none"
@@ -6458,7 +6467,8 @@ def test_native_ram_binding_preserves_literal_report_path(codeql):
 
 
 @pytest.mark.parametrize(
-    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go", "rust"]
+    "language",
+    ["python", "javascript", "ruby", "actions", "java", "csharp", "go", "rust"],
 )
 def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     profile = json.loads(
