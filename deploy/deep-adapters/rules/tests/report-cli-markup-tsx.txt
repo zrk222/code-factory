@@ -33,3 +33,75 @@ function openStaticDestination() {
   // ok: javascript.dom-innerhtml-from-variable
   window.open('https://example.invalid/', '_blank');
 }
+
+function linkMarkup(label: string) {
+  const raw = label.toString();
+  // ruleid: javascript.dom-innerhtml-from-variable
+  return raw.replace(/label/g, (match) => {
+    const element = document.createElement('a');
+    element.textContent = match;
+    return element.outerHTML;
+  });
+}
+
+function escapedLinkMarkup(label: string) {
+  const raw = label.toString();
+  const codec = document.createElement('div');
+  codec.textContent = raw;
+  const encoded = codec.innerHTML;
+  // ok: javascript.dom-innerhtml-from-variable
+  return encoded.replace(/label/g, (match) => {
+    const element = document.createElement('a');
+    element.textContent = match;
+    return element.outerHTML;
+  });
+}
+
+function formattedBody(rows: { label: string }[]) {
+  let html = '';
+  let formatted;
+  for (let i = 0; i < rows.length; i++) {
+    formatted = formatLabel(rows[i].label);
+    // ruleid: javascript.dom-innerhtml-from-variable
+    html += '<span>' + formatted + '</span>';
+  }
+  return html;
+}
+function escapedFormattedBody(rows: { label: string }[]) {
+  let html = '';
+  let formatted;
+  for (let i = 0; i < rows.length; i++) {
+    formatted = formatLabel(rows[i].label);
+    formatted = escapeHtml(formatted);
+    // ok: javascript.dom-innerhtml-from-variable
+    html += '<span>' + formatted + '</span>';
+  }
+  return html;
+}
+
+function liveMarkup(node) {
+  // ruleid: javascript.dom-innerhtml-from-variable
+  const element = document.createElement("div");
+  const markup = node.attr("caption");
+  if (markup) {
+    element.innerHTML = decodeURIComponent(markup);
+  } else {
+    element.textContent = "";
+  }
+  const safe = sanitizeHtml(element.outerHTML);
+  return safe;
+}
+
+function localInertDocument(node) {
+  const document = new DOMParser().parseFromString("", "text/html");
+  // ok: javascript.dom-innerhtml-from-variable
+  const element = document.createElement("div");
+  const markup = node.attr("caption");
+  if (markup) {
+    element.innerHTML = decodeURIComponent(markup);
+  } else {
+    element.textContent = "";
+  }
+  const safe = sanitizeHtml(element.outerHTML);
+  return safe;
+}

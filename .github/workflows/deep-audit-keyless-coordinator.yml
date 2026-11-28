@@ -46,9 +46,12 @@ jobs:
           def pin(data):
               return sha256(data).hexdigest()
 
-          plan = json.loads(Path("scripts/deep-audit-keyless-plan.json").read_bytes())
+          plan_bytes = Path("scripts/deep-audit-keyless-plan.json").read_bytes()
+          if pin(plan_bytes) != "da218c970d86dfbc828bb3e85b94c63ac5be184ed6f87464e8b0d3d8b551b85a":
+              raise ValueError("Qualification plan does not match the approved SHA-256")
+          plan = json.loads(plan_bytes)
           assert plan["candidate_sha256"] == "b0f44e6fb579fe5cb9fb44599b0f6a56fd56c61b5a26da01ae2793845b6bd6cc"
-          assert len(plan["lanes"]) == 7 and len(plan["obligations"]) == 9
+          assert len(plan["lanes"]) == 8 and len(plan["obligations"]) == 10
           assert len({lane["family"] for lane in plan["lanes"]}) == 6
           workflows = {
               "implementer": "signed-receipts.yml",

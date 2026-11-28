@@ -5052,7 +5052,14 @@ def _run_native_profile(
             ledger_json = invocations[0].pop("native_rule_ledger_json", None)
         semgrep_execution = (
             _deep_audit_io._semgrep_rule_runs(
-                profile, lane, source, scratch, semgrep_rules, started, **options
+                profile,
+                lane,
+                source,
+                scratch,
+                semgrep_rules,
+                started,
+                sources={item["path"]: item["sha256"] for item in inventory["files"]},
+                **options,
             )
             if semgrep_rules is not None
             else None

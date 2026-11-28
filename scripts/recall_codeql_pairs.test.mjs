@@ -11,12 +11,14 @@ import { scoreCodeqlPairs } from './recall_codeql_pairs.mjs';
 const nativeFixtures = {
   Go: ['sample.go', 'go/diagnostics/successfully-extracted-files'],
   Maven: ['Sample.java', 'java/diagnostics/successfully-extracted-files'],
+  NuGet: ['Sample.cs', 'cs/diagnostics/successfully-extracted-files'],
   npm: ['sample.js', 'factory/js/diagnostics/parsed-source-files'],
   PyPI: ['sample.py', 'py/diagnostics/successfully-extracted-files'],
   RubyGems: ['sample.rb', 'rb/diagnostics/successfully-extracted-files'],
+  'crates.io': ['sample.rs', 'rust/diagnostics/successfully-extracted-files'],
 };
 
-function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI') {
+function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI', trailingSource = '') {
   const root = mkdtempSync(join(tmpdir(), 'cf-codeql-pair-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (path, bytes) => {
@@ -30,7 +32,7 @@ function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI') {
   const manifest = json('manifest.json', { cases: [row], cases_sha256: caseDigest([row]) });
   const diff = write('diff.patch', `diff --git a/${sample} b/${sample}\n--- a/${sample}\n+++ b/${sample}\n@@ -1 +1 @@\n-VALUE = 1\n+VALUE = 2\n`);
   const changes = write('changes.z', `M\0${sample}\0`);
-  const source = { old: 'VALUE = 1\n', fixed: 'VALUE = 2\n' };
+  const source = { old: 'VALUE = 1\n' + trailingSource, fixed: 'VALUE = 2\n' + trailingSource };
   const revisions = { old: 'a'.repeat(40), fixed: row.fix };
   const source_packets = Object.fromEntries(Object.entries(source).map(([side, bytes]) => [
     side, [{ path: sample, bytes: bytes.length, sha256: sha256(bytes) }],
@@ -86,11 +88,48 @@ test('JavaScript needs parsed content evidence in addition to archive membership
 });
 
 test('each registered native lane accepts its own exact extraction diagnostic', t => {
-  for (const ecosystem of ['Go', 'Maven', 'RubyGems']) {
+  for (const ecosystem of ['Go', 'Maven', 'NuGet', 'RubyGems', 'crates.io']) {
     const { value, run } = stagedPair(t, 'src', ecosystem);
     const [scored] = run(value).cases;
     assert.equal(scored.native_coverage.old.complete, true, ecosystem);
     assert.equal(scored.native_coverage.fixed.complete, true, ecosystem);
+  }
+});
+
+test('C# and Rust extraction errors without file locations block complete coverage', t => {
+  for (const ecosystem of ['NuGet', 'crates.io']) {
+    const [uri, success] = nativeFixtures[ecosystem];
+    const { value, capture, run } = stagedPair(t, 'src', ecosystem);
+    const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [
+      { descriptor: { id: success }, locations: [{ physicalLocation: { artifactLocation: { uri } } }] },
+      { descriptor: { id: success.replace('successfully-extracted-files', 'extraction-errors') }, level: 'warning' },
+    ] }]);
+    const [scored] = run({ ...value, cases: [{ ...value.cases[0], fixed }] }).cases;
+    assert.deepEqual(scored.native_coverage.fixed.extracted, [uri], ecosystem);
+    assert.equal(scored.native_coverage.fixed.unlocated_extraction_errors, 1, ecosystem);
+    assert.equal(scored.native_coverage.fixed.complete, false, ecosystem);
+  }
+});
+
+test('Rust semantic extraction warnings block coverage even when both sides report extracted files', t => {
+  for (const ecosystem of ['crates.io', 'PyPI']) {
+    const [uri, extractionId] = nativeFixtures[ecosystem];
+    const { value, capture, run } = stagedPair(t, 'src', ecosystem);
+    const file = uri => [{ physicalLocation: { artifactLocation: { uri, uriBaseId: '%SRCROOT%' } } }];
+    for (const warningPath of [uri, 'unrelated.rs', null]) {
+      const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [
+        { descriptor: { id: extractionId }, level: 'none', locations: file(uri) },
+        { descriptor: { id: 'rust/diagnostics/extraction-warnings' },
+          message: { text: 'Extraction warning with message semantic analyzer unavailable (no manifest found)' },
+          ...(warningPath && { locations: file(warningPath) }) },
+      ] }]);
+      const [scored] = run({ ...value, cases: [{ ...value.cases[0], fixed }] }).cases;
+      const coverage = scored.native_coverage.fixed;
+      assert.deepEqual(coverage.extracted, [uri]);
+      assert.equal(coverage.complete, ecosystem !== 'crates.io' || warningPath === 'unrelated.rs');
+      assert.deepEqual(coverage.parse_failed, ecosystem === 'crates.io' && warningPath === uri ? [uri] : []);
+      assert.equal(coverage.unlocated_extraction_errors, ecosystem === 'crates.io' && !warningPath ? 1 : undefined);
+    }
   }
 });
 
@@ -234,6 +273,7 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
   assert.equal(receipt.strict_hunk_hits, 0);
   assert.equal(receipt.changed_file_hits, 0);
   assert.equal(receipt.cross_file_trace_hits, 1);
+  assert.deepEqual(receipt.cases[0].anchored_trace_matches, receipt.cases[0].cross_file_trace_matches);
   assert.deepEqual(receipt.cases[0].cross_file_trace_matches, [{
     rule: pair.query_id, sink: { path: 'helper.py', line: 1 }, anchor: { path: 'sample.py', line: 1 },
     source_paths: ['helper.py', 'sample.py'], fixed_sink_residual: false,
@@ -241,7 +281,9 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
   assert.equal(score(finding([anchor, sink]), [finding()]).cases[0].cross_file_trace_matches[0].fixed_sink_residual, true);
   for (const trace of [finding([anchor], [sink]), finding([sink, anchor]),
     finding([position('sample.py', 2), sink]), finding([anchor, position('missing.py'), sink])]) {
-    assert.equal(score(trace).cross_file_trace_hits, 0);
+    const invalid = score(trace);
+    assert.equal(invalid.cross_file_trace_hits, 0);
+    assert.equal(Object.hasOwn(invalid.cases[0], 'anchored_trace_matches'), false);
   }
 });
 
@@ -311,6 +353,17 @@ test('native and pattern hits join only on identical evidence and are counted on
   assert.equal(fileMatch.observed_union_hunk_hits, 0);
   assert.equal(fileMatch.observed_union_file_hits, 1);
   assert.equal(fileMatch.eligible_native_additions, 0);
+  assert.equal(fileMatch.cases[0].disposition, 'native_miss');
+  const incompleteFixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [] }]);
+  const unfinishedFileOnly = { ...fileOnly, cases: [{ ...fileOnly.cases[0], fixed: incompleteFixed }] };
+  const unresolvedFileOnly = joined(base, unfinishedFileOnly);
+  assert.equal(unresolvedFileOnly.cases[0].disposition, 'native_extraction_unresolved');
+  assert.equal(unresolvedFileOnly.native_extraction_complete_pairs, 0);
+  assert.equal(unresolvedFileOnly.eligible_native_additions, 0);
+  assert.equal(unresolvedFileOnly.combined_hunk_hits, 0);
+  assert.equal(joined({ ...base, fix_side_residual: [['test/rule', 'sample.py', 1]] },
+    { ...value, cases: [{ ...pair, fixed: incompleteFixed }] }).cases[0].disposition, 'fixed_side_residual');
+  capture('fixed');
   assert.equal(joined({ ...base, file_hit: true }, fileOnly).observed_union_file_hits, 1);
 
   const result = nativeReport.runs[0].results[0];
@@ -345,6 +398,7 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   };
   const linked = reuse(alias);
   const wrongFamily = reuse(unobserved);
+  const noWorker = reuse(unsupported);
   const wrongSource = reuse(divergent, { ...binding.source_packets,
     old: [{ ...binding.source_packets.old[0], sha256: 'f'.repeat(64) }] });
   const cases = [row, unobserved, unsupported, alias, divergent];
@@ -352,8 +406,7 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   const previous = JSON.parse(readFileSync(join(root, value.reference.path), 'utf8'));
   const reference = json('registered-reference.json', { ...previous, candidate: { registered: 5, hunk_hits: 0 },
     manifest_sha256: manifest.sha256, manifest_cases_sha256: caseDigest(cases),
-    cases: [...previous.cases, { advisory: unsupported.ghsa, after: 'miss' },
-      ...[wrongFamily, linked, wrongSource].map(item => item.observation)] });
+    cases: [...previous.cases, ...[noWorker, wrongFamily, linked, wrongSource].map(item => item.observation)] });
   const extra = { id: 'test/other-family',
     source: write('extra.ql', '/**\n * @id test/other-family\n * @tags external/cwe/cwe-079\n */\n') };
   const queries = [{ id: pair.query_id, source: pair.query }, extra];
@@ -447,6 +500,28 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
   assert.deepEqual(combined.unscored_advisories, [unobserved.ghsa, unsupported.ghsa, divergent.ghsa]);
   assert.deepEqual(combined.cases.map(row => row.native_bundle_sha256), [registered.sha256, supplemental.sha256]);
   assert.equal(combined.bundles[0].plan_sha256, plan.sha256);
+  const supplied = new Map([[row.ghsa, binding], ...[noWorker, wrongFamily, linked, wrongSource].map(item =>
+    [item.observation.advisory, JSON.parse(readFileSync(join(root, item.row.prepared.path), 'utf8'))])]);
+  const pattern = json('routing-pattern.json', {
+    schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: manifest.sha256,
+    manifest_cases_sha256: caseDigest(cases), ruleset_sha256: 'c'.repeat(64), profile_sha256: 'd'.repeat(64),
+    engine: { executable_sha256: 'e'.repeat(64) }, summary: { cases: 5, hunk_hits: 0, file_hits: 0 },
+    cases: cases.map(entry => {
+      const input = supplied.get(entry.ghsa);
+      return { ...input, ...entry, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false,
+        hunk_findings: [], fix_side_residual: [], file_coverage: { fixed: input.source_packets.fixed.map(packet =>
+          ({ ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' })) } };
+    }),
+  });
+  const routed = run({ ...cohort, schema: 'factory.recall-codeql-cohort.v2' }, { ...pattern, path: join(root, pattern.path) });
+  assert.equal(routed.pattern_join.combined_hunk_hits, 2);
+  assert.equal(routed.pattern_join.observed_union_hunk_hits, 2);
+  assert.deepEqual(routed.pattern_join.follow_up.map(({ advisory, next, plan_sha256s }) => [advisory, next, plan_sha256s]), [
+    [unobserved.ghsa, 'native_family_unmapped', []],
+    [unsupported.ghsa, 'no_registered_native_plan', []],
+    [divergent.ghsa, 'capture_registered_pair', [plan.sha256]],
+  ]);
+  assert.equal(routed.pattern_join.follow_up.at(-1).input_sha256, wrongSource.observation.input_sha256);
   assert.throws(() => run({ ...cohort, bundles: [registered, { ...supplemental, sha256: 'a'.repeat(64) }] }),
     /Artifact fingerprint differs/);
   assert.throws(() => run({ ...cohort, bundles: [registered, json('other-cohort.json', value)] }),
@@ -459,4 +534,72 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
     /Source archive hash differs for GHSA-5555-6666-7777\/fixed/);
   const overlap = json('registered-overlap.json', { ...bundle, cases: [...bundle.cases, linked.row] });
   assert.throws(() => run({ ...cohort, bundles: [overlap, supplemental] }), /Duplicate CodeQL advisory across/);
+});
+
+test('native detector arms retain their own extraction and count one shared case', t => {
+  const { root, row, value, binding, json, write, run } = stagedPair(t, 'src', 'PyPI', 'KEEP = 3\n');
+  const single = value.cases[0];
+  const read = pin => JSON.parse(readFileSync(join(root, pin.path), 'utf8'));
+  const arm = (name, { hit, parsed, offHunk = false }) => {
+    const id = 'test/' + name;
+    const query = write(name + '.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
+    const capture = side => {
+      const prior = single[side];
+      const report = read(prior.sarif), scan = report.runs[0];
+      scan.tool.driver.rules[0].id = id;
+      if (side === 'old' && offHunk) {
+        const position = line => ({ physicalLocation: {
+          artifactLocation: { uri: 'sample.py' }, region: { startLine: line },
+        } });
+        scan.results = [{ ruleId: id, locations: [position(2)], codeFlows: [{
+          threadFlows: [{ locations: [1, 2].map(line => ({ location: position(line) })) }],
+        }] }];
+      } else if (side === 'old' && hit) scan.results[0].ruleId = id;
+      else scan.results = [];
+      if (side === 'fixed' && !parsed) scan.invocations[0].toolExecutionNotifications = [];
+      const sarif = json(name + '-' + side + '.sarif', report);
+      const observation = json(name + '-' + side + '.json', { ...read(prior.observation),
+        query: id, query_sha256: query.sha256, native_sha256: sarif.sha256, reported_alerts: scan.results.length });
+      return { ...prior, sarif, observation };
+    };
+    return json(name + '-bundle.json', { ...value, cases: [{ ...single, query, query_id: id,
+      old: capture('old'), fixed: capture('fixed') }] });
+  };
+  const patternCase = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false,
+    file_hit: false, hunk_findings: [], fix_side_residual: [],
+    file_coverage: { fixed: binding.source_packets.fixed.map(packet => ({
+      ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths',
+    })) } };
+  const pattern = json('pattern-score.json', {
+    schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: value.manifest.sha256,
+    manifest_cases_sha256: caseDigest([row]), ruleset_sha256: 'c'.repeat(64), profile_sha256: 'd'.repeat(64),
+    engine: { executable_sha256: 'e'.repeat(64) }, summary: { cases: 1, hunk_hits: 0, file_hits: 0 },
+    cases: [patternCase],
+  });
+  const evaluate = bundles => run({ schema: 'factory.recall-codeql-cohort.v2', bundles },
+    { ...pattern, path: join(root, pattern.path) });
+  const incomplete = arm('incomplete', { hit: true, parsed: false });
+  const negative = arm('negative', { hit: false, parsed: true });
+  const complete = arm('complete', { hit: true, parsed: true });
+  const twoSignals = evaluate([incomplete, negative]);
+  assert.equal(twoSignals.scored_pairs, 1);
+  assert.equal(twoSignals.scored_arm_pairs, 2);
+  assert.equal(twoSignals.pattern_join.eligible_native_additions, 0);
+  assert.equal(twoSignals.pattern_join.follow_up[0].next, 'resolve_native_extraction');
+  assert.equal(evaluate([negative]).pattern_join.follow_up[0].next, 'completed_native_search');
+  const twoHits = evaluate([incomplete, complete]);
+  assert.equal(twoHits.strict_hunk_hits, 1);
+  assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
+  assert.equal(twoHits.cases[0].arms.length, 2);
+  const anchored = evaluate([arm('off-hunk', { parsed: true, offHunk: true }), negative]);
+  assert.equal(anchored.strict_hunk_hits, 0);
+  assert.equal(anchored.cross_file_trace_hits, 0);
+  assert.equal(anchored.pattern_join.eligible_native_additions, 0);
+  assert.equal(anchored.pattern_join.follow_up[0].next, 'review_bound_path');
+  assert.deepEqual(anchored.cases[0].anchored_trace_matches, [{
+    rule: 'test/off-hunk', sink: { path: 'sample.py', line: 2 }, anchor: { path: 'sample.py', line: 1 },
+    source_paths: ['sample.py'], fixed_sink_residual: false,
+  }]);
+  const sameQuery = json('same-query.json', { ...read(complete), label: 'duplicate-query-attempt' });
+  assert.throws(() => evaluate([complete, sameQuery]), /overlapping query IDs/);
 });

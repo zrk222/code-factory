@@ -60,6 +60,8 @@ export function assertStructuralParity(first, repeat) {
           delete notification.timeUtc;
           if (['cli/file-coverage-baseline', 'cli/platform'].includes(notification.descriptor?.id)) {
             delete notification.properties?.attributes?.durationMilliseconds;
+          } else if (notification.descriptor?.id === 'rust/extractor/telemetry') {
+            delete notification.properties?.attributes?.durations;
           }
         }
       }
@@ -94,6 +96,7 @@ function main([image, output, target]) {
     'codeql-java-worker': 'java',
     'codeql-csharp-worker': 'csharp',
     'codeql-go-worker': 'go',
+    'codeql-rust-worker': 'rust',
   }[target];
   if (!image || !output || !language) throw new Error('Specify image, output, and a compiled CodeQL target');
   const fixtures = {
@@ -103,6 +106,12 @@ function main([image, output, target]) {
       'nested/go.mod': 'module example.test/native\n\ngo 1.24.0\n',
       'nested/compute.go': 'package native\n\nfunc Add(x, y int) int { return x + y }\n',
       'nested/compute_test.go': 'package native\n\nimport "testing"\n\nfunc TestCompileOnly(*testing.T) { panic("not an execution test") }\n',
+    },
+    rust: {
+      'Cargo.toml': '[package]\nname = "native_control"\nversion = "0.0.1"\nedition = "2021"\n',
+      'Cargo.lock': 'version = 4\n\n[[package]]\nname = "native_control"\nversion = "0.0.1"\n',
+      'src/lib.rs': 'pub mod arithmetic;\n',
+      'src/arithmetic.rs': 'pub fn add(left: i32, right: i32) -> i32 { left.wrapping_add(right) }\n',
     },
   }[language];
   const hash = value => createHash('sha256').update(value).digest('hex');
@@ -135,7 +144,8 @@ function main([image, output, target]) {
     const files = Object.entries(fixtures).map(([path, content]) => {
       mkdirSync(dirname(join(source, path)), { recursive: true });
       writeFileSync(join(source, path), content);
-      return { path, sha256: hash(content), language: path.endsWith('go.mod') ? 'dependency' : language };
+      const isDependency = /(?:^|\/)(?:go\.mod|Cargo\.(?:toml|lock))$/.test(path);
+      return { path, sha256: hash(content), language: isDependency ? 'dependency' : language };
     });
     const candidate = hash(JSON.stringify(files));
     const lane = { id: 'codeql-structural-control', family: 'static', languages: [language],

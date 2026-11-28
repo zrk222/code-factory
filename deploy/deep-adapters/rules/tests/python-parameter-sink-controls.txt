@@ -133,3 +133,82 @@ def use_query_builder(conn, table, user):
     conn.execute(select(table).where(table.c.user == user))
     # ok: python.parameter-sql-text
     conn.execute(insert(table).values(user=user))
+
+import chevron
+
+def inspect_command_context_Review(values):
+    looked_up = {}
+    for key, value in values.items():
+        # ruleid: python.parameter-shell-command
+        if isinstance(value, str):
+            looked_up[key] = clean_text(value)
+        else:
+            looked_up[key] = value
+    return looked_up
+
+class BoundTemplateActionReview:
+    def run(self, commands, args=None):
+        for template in commands:
+            if template_ready:
+                safe_values = inspect_command_context_Review(args)
+                rendered = chevron.render(template, safe_values)
+            else:
+                rendered = template
+            try:
+                result = secure_popen(rendered)
+            except OSError as error:
+                report_error(error)
+            else:
+                collect_result(result)
+
+import chevron
+
+def inspect_command_context_Safe(values):
+    looked_up = {}
+    for key, value in values.items():
+        # ok: python.parameter-shell-command
+        if isinstance(value, str):
+            looked_up[key] = clean_text(value)
+        else:
+            looked_up[key] = clean_descendants(value)
+    return looked_up
+
+class BoundTemplateActionSafe:
+    def run(self, commands, args=None):
+        for template in commands:
+            if template_ready:
+                safe_values = inspect_command_context_Safe(args)
+                rendered = chevron.render(template, safe_values)
+            else:
+                rendered = template
+            try:
+                result = secure_popen(rendered)
+            except OSError as error:
+                report_error(error)
+            else:
+                collect_result(result)
+
+import re
+class BoundJsonBuilderReview(object):
+    def choose(self,key: str, op: str,value: str) -> tuple[str,list]:
+        "Build a query condition."
+        if op == "equals":
+            if isinstance(value,str):
+                # ruleid: python.parameter-sql-text
+                return (f"json_extract(value, '$.{key}') = '" + escape_value(value) + "'", [])
+        return "",[]
+
+import re
+def verify_json_binding_Guarded(key: str) -> None:
+    if not re.match(r"^[a-zA-Z0-9_.-]+$",key):
+        raise ValueError("invalid filter name")
+
+class BoundJsonBuilderGuarded(object):
+    def choose(self,key: str, op: str,value: str) -> tuple[str,list]:
+        "Build a query condition."
+        verify_json_binding_Guarded(key)
+        if op == "equals":
+            if isinstance(value,str):
+                # ok: python.parameter-sql-text
+                return (f"json_extract(value, '$.{key}') = '" + escape_value(value) + "'", [])
+        return "",[]

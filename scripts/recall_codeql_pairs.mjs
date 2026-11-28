@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { caseDigest, familiesFor, outcomeOf, parseHunks, reviewCapturePath, sarifFindings, scopeExtensions,
+import { anchoredTraceMatches, caseDigest, sarifTraceThreads, familiesFor, outcomeOf, parseHunks, reviewCapturePath, sarifFindings, scopeExtensions,
   scoreCase, sha256, validateRecallManifest } from './recall_harness.mjs';
 import { completeFixedCoverage, sarifPath } from './recall_coverage.mjs';
 import { inputFingerprint } from './verify_registered_recall.mjs';
@@ -18,15 +18,19 @@ import { inputFingerprint } from './verify_registered_recall.mjs';
 const FORMAT = 'factory.recall-codeql-pairs.v1';
 const PLAN_BUNDLE = 'factory.recall-codeql-pairs.v2';
 const COHORT_BUNDLE = 'factory.recall-codeql-cohort.v1';
+const ARM_COHORT = 'factory.recall-codeql-cohort.v2';
 const extractionDiagnostics = new Map([
   ['Go', 'go/diagnostics/successfully-extracted-files'],
   ['Maven', 'java/diagnostics/successfully-extracted-files'],
+  ['NuGet', 'cs/diagnostics/successfully-extracted-files'],
   ['npm', 'factory/js/diagnostics/parsed-source-files'],
   ['PyPI', 'py/diagnostics/successfully-extracted-files'],
   ['RubyGems', 'rb/diagnostics/successfully-extracted-files'],
+  ['crates.io', 'rust/diagnostics/successfully-extracted-files'],
 ]);
 const digest = /^[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
+const extractionErrors = new Set(['cs/diagnostics/extraction-errors', 'rust/diagnostics/extraction-errors']);
 const relativeEntry = path => typeof path === 'string' && !path.includes('\\')
   && path.split('/').every(part => part && part !== '.' && part !== '..');
 const json = bytes => JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
@@ -171,17 +175,6 @@ function nativeArtifactPath(location, run, packetPaths, roots) {
   return indexed;
 }
 
-function traceFlows(results, resolvePath) {
-  return results.map(result => (result.codeFlows ?? []).map(flow =>
-    (flow.threadFlows ?? []).map(thread => (thread.locations ?? []).map(step => {
-      const location = step.location?.physicalLocation;
-      if (!location?.artifactLocation) return { state: 'nonphysical' };
-      const path = resolvePath(location.artifactLocation);
-      const line = location.region?.startLine;
-      return Number.isSafeInteger(line) && line > 0 ? { path, line } : { path, state: 'invalid_line' };
-    }))));
-}
-
 function captureFingerprints(capture, revision, policy, packets, findings, flows) {
   const locations = findings.map(({ rule, path, line, span, trace }) =>
     ({ rule, path, line, span: span ?? null, trace: trace ?? [] }));
@@ -198,26 +191,34 @@ function captureFingerprints(capture, revision, policy, packets, findings, flows
 function nativeExtractionCoverage(invocations, packetPaths, resolvePath, extractionId) {
   const extracted = new Set();
   const parseFailed = new Set();
+  let unlocatedErrors = 0;
   for (const invocation of invocations) {
     for (const note of invocation.toolExecutionNotifications ?? []) {
       const id = note.descriptor?.id ?? '';
+      // Rust can report extracted syntax even when semantic analysis failed.
+      const extractionError = extractionErrors.has(id)
+        || (extractionId === extractionDiagnostics.get('crates.io') && id === 'rust/diagnostics/extraction-warnings');
       const paths = id === extractionId ? extracted
-        : /(?:parse|syntax)[_-]?(?:error|failure)/i.test(id) ? parseFailed : null;
+        : extractionError || /(?:parse|syntax)[_-]?(?:error|failure)/i.test(id) ? parseFailed : null;
       if (!paths) continue;
+      let located = false;
       for (const entry of note.locations ?? []) {
         const location = entry.physicalLocation?.artifactLocation;
         if (!location) continue;
         // A whole-repo extraction can also report files outside the bound packets.
         let path;
         try { path = resolvePath(location); } catch { continue; }
+        located = true;
         if (packetPaths.has(path)) paths.add(path);
       }
+      if (extractionError && !located) unlocatedErrors++;
     }
   }
   const expected = [...packetPaths].sort();
   const missing = expected.filter(path => !extracted.has(path));
   return { expected, extracted: [...extracted].sort(), parse_failed: [...parseFailed].sort(),
-    missing, complete: !missing.length && !parseFailed.size };
+    ...(unlocatedErrors ? { unlocated_extraction_errors: unlocatedErrors } : {}),
+    missing, complete: !missing.length && !parseFailed.size && !unlocatedErrors };
 }
 
 function nativeCapture(root, capture, side, input, engineVersion, policy, extractionId) {
@@ -270,7 +271,7 @@ function nativeCapture(root, capture, side, input, engineVersion, policy, extrac
   requireProof(findings.length === run.results.length
     && findings.every(finding => finding.path && Number.isSafeInteger(finding.line) && finding.line > 0),
     'Native alert location is missing for ' + side);
-  const flows = traceFlows(run.results, resolvePath);
+  const flows = run.results.map(result => sarifTraceThreads(result, resolvePath));
   const references = [...new Set([...findings.map(row => row.path),
     ...flows.flat(3).map(step => step.path).filter(Boolean)])].sort();
   return { findings, flows, coverage,
@@ -281,7 +282,7 @@ function nativeCapture(root, capture, side, input, engineVersion, policy, extrac
 }
 
 function nativeDisposition(native, pattern, outcome, extractionComplete) {
-  if (!native.hunk_hit) return 'native_miss';
+  if (!native.hunk_hit) return extractionComplete ? 'native_miss' : 'native_extraction_unresolved';
   if (outcome === 'hit') return 'overlap';
   if (outcome !== 'miss') return 'pattern_unresolved';
   if (native.fixed_hunk_residuals || pattern.fix_side_residual.length) return 'fixed_side_residual';
@@ -306,7 +307,35 @@ function verifiedPatternOutcome(row) {
   return outcome;
 }
 
-function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, observations) {
+function pendingEvidence(pattern, outcomes, referenceCases, dispositions, observations, plans) {
+  const native = new Map(dispositions.map(row => [row.advisory, row]));
+  const anchored = new Set(observations.filter(row => row.anchored_trace_matches?.length).map(row => row.advisory));
+  return [...pattern].flatMap(([advisory, row]) => {
+    const outcome = outcomes.get(advisory), result = native.get(advisory);
+    if (outcome === 'hit' || result?.disposition === 'eligible') return [];
+    const registered = plans.filter(plan => !plan.unsupported_advisories.includes(advisory));
+    const families = familiesFor(row.cwes);
+    const compatible = registered.filter(plan => !plan.uncovered_advisory_families.some(
+      gap => gap.advisory === advisory && families.every(family => gap.families.includes(family))));
+    const arms = result?.arm_dispositions.filter(arm => arm.families.some(family => families.includes(family))) ?? [];
+    const attempted = new Set(arms.map(arm => arm.plan_sha256));
+    const readyPlans = [...new Set(compatible.map(plan => plan.plan_sha256))]
+      .filter(plan => !attempted.has(plan)).sort();
+    let next;
+    if (outcome !== 'miss') next = 'resolve_pattern_coverage';
+    else if (result?.disposition === 'fixed_side_residual') next = 'review_fixed_side_path';
+    else if (arms.some(arm => !arm.extraction_complete)) next = 'resolve_native_extraction';
+    else if (result?.pattern_file_hit || result?.native_file_hit || result?.native_hunk_hit || anchored.has(advisory)) {
+      next = 'review_bound_path';
+    } else if (readyPlans.length) next = 'capture_registered_pair';
+    else if (arms.length) next = 'completed_native_search';
+    else next = registered.length ? 'native_family_unmapped' : 'no_registered_native_plan';
+    return [{ advisory, input_sha256: referenceCases.get(advisory).input_sha256,
+      pattern_outcome: outcome, next, plan_sha256s: next === 'capture_registered_pair' ? readyPlans : [] }];
+  });
+}
+
+function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, observations, plans) {
   requireProof(typeof pin.path === 'string' && digest.test(pin.sha256), 'Pattern score path and SHA-256 are required');
   const bytes = readFileSync(pin.path);
   requireProof(sha256(bytes) === pin.sha256, 'Pattern score digest mismatch');
@@ -336,10 +365,19 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     'Pattern hit count differs');
   const dispositions = observations.map(native => {
     const row = pattern.get(native.advisory), outcome = outcomes.get(native.advisory);
-    const extractionComplete = native.native_coverage.old.complete && native.native_coverage.fixed.complete;
+    const evidence = (native.arms ?? [native]).map(arm => {
+      const extraction_complete = arm.native_coverage.old.complete && arm.native_coverage.fixed.complete;
+      return { arm, extraction_complete, disposition: nativeDisposition(arm, row, outcome, extraction_complete) };
+    });
+    const selected = evidence.find(item => item.disposition === 'eligible')
+      ?? evidence.find(item => item.arm.hunk_hit) ?? evidence[0];
+    const disposition = selected.disposition === 'eligible' && native.fixed_hunk_residuals
+      ? 'fixed_side_residual' : selected.disposition;
     return { advisory: native.advisory, input_sha256: native.input_sha256, pattern_outcome: outcome,
       pattern_file_hit: searchedFileHit(row, outcome), native_hunk_hit: native.hunk_hit, native_file_hit: native.file_hit,
-      native_extraction_complete: extractionComplete, disposition: nativeDisposition(native, row, outcome, extractionComplete) };
+      native_extraction_complete: selected.extraction_complete, disposition,
+      ...(native.arms ? { arm_dispositions: evidence.map(({ arm, extraction_complete, disposition }) =>
+        ({ ...arm.detector_arm, native_bundle_sha256: arm.native_bundle_sha256, extraction_complete, disposition })) } : {}) };
   });
   const additions = dispositions.filter(row => row.disposition === 'eligible').length;
   const newHunkHits = dispositions.filter(row => row.native_hunk_hit && row.pattern_outcome !== 'hit').length;
@@ -349,7 +387,8 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     verified_pattern_cases: pattern.size, verified_native_pairs: dispositions.length,
     native_extraction_complete_pairs: dispositions.filter(row => row.native_extraction_complete).length,
     observed_union_hunk_hits: hunkHits + newHunkHits, observed_union_file_hits: fileHits + newFileHits,
-    eligible_native_additions: additions, combined_hunk_hits: hunkHits + additions, cases: dispositions };
+    eligible_native_additions: additions, combined_hunk_hits: hunkHits + additions, cases: dispositions,
+    ...(plans ? { follow_up: pendingEvidence(pattern, outcomes, referenceCases, dispositions, observations, plans) } : {}) };
 }
 
 function readPairRegistry(root, bundle) {
@@ -367,29 +406,6 @@ function readPairRegistry(root, bundle) {
     && reference.candidate.hunk_hits === reference.cases.filter(row => row.after === 'hit').length,
     'Reference case inventory or hit count differs');
   return { manifest, manifestDigest, reference, cases, referenceCases };
-}
-
-function crossFileTraceMatches(old, fixed, hunks, families, rules) {
-  const sinkKey = ({ rule, path }) => JSON.stringify([rule, path]);
-  const fixedSinks = new Set(fixed.findings.map(sinkKey));
-  const matches = [];
-  for (const [index, finding] of old.findings.entries()) {
-    const { rule, path, line } = finding;
-    if (Object.hasOwn(hunks, path) || !rules[rule]?.some(family => families.includes(family))) continue;
-    for (const thread of old.flows[index].flat()) {
-      const steps = thread.filter(step => step.state !== 'nonphysical');
-      const sink = steps.at(-1);
-      if (sink?.path !== path || sink.line !== line || steps.some(step => step.state)) continue;
-      const anchor = steps.slice(0, -1).find(step => Object.hasOwn(hunks, step.path)
-        && hunks[step.path].old.includes(step.line));
-      if (anchor) {
-        matches.push({ rule, sink: { path, line }, anchor,
-          source_paths: [...new Set(steps.map(step => step.path))].sort(),
-          fixed_sink_residual: fixedSinks.has(sinkKey(finding)) });
-      }
-    }
-  }
-  return matches;
 }
 
 function verifiedPairInput(row, { root, cases, referenceCases }) {
@@ -429,14 +445,24 @@ function scorePreparedPair(row, context) {
   const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(registered.ecosystem), editedLines);
   const rules = Object.fromEntries(policy.queries.map(query => [query.id, query.families]));
   const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings, rules });
+  const anchored = anchoredTraceMatches({ oldFindings: old.findings, newFindings: fixed.findings,
+    flows: old.flows, hunks, families, rules });
   return { advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
-    ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }), hunk_hit: score.hunk_hit,
+    ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }),
+    detector_arm: { engine: 'codeql', ecosystem: registered.ecosystem,
+      ...(policy.planSha256 ? { plan_sha256: policy.planSha256 } : {}),
+      source_extensions: scopeExtensions(registered.ecosystem),
+      query_ids: policy.queries.map(query => query.id).sort(),
+      families: [...new Set(policy.queries.flatMap(query => query.families))].sort() },
+    hunk_hit: score.hunk_hit,
     file_hit: score.file_hit,
     trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
     hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
     ...(score.hunk_spans ? { hunk_spans: score.hunk_spans } : {}),
     ...(score.fix_side_residual_spans ? { fix_side_residual_spans: score.fix_side_residual_spans } : {}),
-    cross_file_trace_matches: crossFileTraceMatches(old, fixed, hunks, families, rules),
+    ...(anchored.length ? { anchored_trace_matches: anchored } : {}),
+    cross_file_trace_matches: anchored.filter(match => !Object.hasOwn(hunks, match.sink.path))
+      .map(match => ({ ...match, sink: { path: match.sink.path, line: match.sink.line } })),
     deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
     native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
     native_coverage: { old: old.coverage, fixed: fixed.coverage },
@@ -481,9 +507,12 @@ function bindTraceSources(observations, bindings) {
       Object.assign(row.fingerprints[side], { trace_sources_sha256: caseDigest(sources), trace_source_states: states });
     }
     const oldSources = new Map(bindings[row.advisory + '/old'].map(source => [source.path, source.state]));
-    row.cross_file_trace_matches = row.cross_file_trace_matches.filter(match =>
-      oldSources.get(match.anchor.path) === 'packet_verified' && match.source_paths.every(path =>
-        ['packet_verified', 'archive_verified'].includes(oldSources.get(path))));
+    const verifiedTrace = match => oldSources.get(match.anchor.path) === 'packet_verified'
+      && match.source_paths.every(path => ['packet_verified', 'archive_verified'].includes(oldSources.get(path)));
+    const anchors = row.anchored_trace_matches?.filter(verifiedTrace);
+    if (anchors?.length) row.anchored_trace_matches = anchors;
+    else delete row.anchored_trace_matches;
+    row.cross_file_trace_matches = row.cross_file_trace_matches.filter(verifiedTrace);
   }
 }
 
@@ -532,10 +561,12 @@ function verifyPairBundles(lanes) {
   return prepared.map((lane, index) => lane.complete(bindings[index]));
 }
 
-function summarizeVerifiedPairs(bundle, registry, observations, patternPin) {
+function summarizeVerifiedPairs(bundle, registry, observations, patternPin, plans) {
   const { manifestDigest, reference, cases, referenceCases } = registry;
-  const patternJoin = patternPin && joinPatternScore(patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations);
-  const reused = observations.filter(row => Object.hasOwn(row, 'capture_reused_from')).length;
+  const patternJoin = patternPin && joinPatternScore(
+    patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations, plans);
+  const reused = observations.filter(row => (row.arms ?? [row])
+    .every(arm => Object.hasOwn(arm, 'capture_reused_from'))).length;
   return { ...(patternJoin ? { pattern_join: patternJoin } : {}),
     reference_sha256: bundle.reference.sha256, registered_cases: cases.size, reference_hunk_hits: reference.candidate.hunk_hits,
     scored_pairs: observations.length, captured_pairs: observations.length - reused, reused_capture_pairs: reused,
@@ -545,6 +576,23 @@ function summarizeVerifiedPairs(bundle, registry, observations, patternPin) {
     strict_hits_on_reference_misses: observations.filter(row => row.reference === 'miss' && row.hunk_hit).length,
     deleted_line_hits: observations.filter(row => row.deleted_line_hit).length,
     fixed_hunk_residuals: observations.reduce((sum, row) => sum + row.fixed_hunk_residuals, 0), cases: observations };
+}
+
+function mergeVerifiedArms(observations) {
+  return [...Map.groupBy(observations, row => row.advisory)].map(([advisory, arms]) => {
+    const { input_sha256, reference } = arms[0];
+    const queries = arms.flatMap(arm => arm.detector_arm.query_ids);
+    requireProof(arms.every(arm => arm.input_sha256 === input_sha256 && arm.reference === reference)
+      && queries.length === new Set(queries).size, 'Detector arms have different cases or overlapping query IDs');
+    const hit = field => arms.some(arm => arm[field]);
+    const anchors = arms.flatMap(arm => arm.anchored_trace_matches ?? []);
+    return { advisory, input_sha256, reference, arms, hunk_hit: hit('hunk_hit'),
+      ...(anchors.length ? { anchored_trace_matches: anchors } : {}),
+      file_hit: hit('file_hit'), trace_hit: hit('trace_hit'), deleted_line_hit: hit('deleted_line_hit'),
+      matched_hunk_families: [...new Set(arms.flatMap(arm => arm.matched_hunk_families))].sort(),
+      cross_file_trace_matches: arms.flatMap(arm => arm.cross_file_trace_matches),
+      fixed_hunk_residuals: arms.reduce((sum, arm) => sum + arm.fixed_hunk_residuals, 0) };
+  });
 }
 
 function scoreCohortBundle(root, bytes, bundle, patternPin) {
@@ -560,24 +608,28 @@ function scoreCohortBundle(root, bytes, bundle, patternPin) {
   'Cohort bundles use different registry, reference or engine pins');
 
   const verified = verifyPairBundles(lanes);
-  const observations = verified.flatMap(({ observations }, index) =>
+  const captures = verified.flatMap(({ observations }, index) =>
     observations.map(row => ({ ...row, native_bundle_sha256: lanes[index].pin.sha256 })));
+  const grouped = bundle.schema === ARM_COHORT;
+  const observations = grouped ? mergeVerifiedArms(captures) : captures;
   const covered = new Set(observations.map(row => row.advisory));
   requireProof(covered.size === observations.length, 'Duplicate CodeQL advisory across cohort bundles');
   const { registry } = verified[0];
-  return { schema: 'factory.recall-codeql-cohort-score.v1', scope: 'verified paired native cohort',
+  return { schema: grouped ? 'factory.recall-codeql-cohort-score.v2' : 'factory.recall-codeql-cohort-score.v1',
+    scope: 'verified paired native cohort', ...(grouped ? { scored_arm_pairs: captures.length } : {}),
     input_sha256: sha256(bytes), manifest_sha256: first.manifest.sha256, engine_version: first.engine_version,
     bundles: verified.map((lane, index) => ({ ...lanes[index].pin, scope: lane.scope,
       scored_pairs: lane.observations.length, ...lane.coverage })),
     unscored_advisories: [...registry.cases.keys()].filter(id => !covered.has(id)),
-    ...summarizeVerifiedPairs(first, registry, observations, patternPin) };
+    ...summarizeVerifiedPairs(first, registry, observations, patternPin, grouped
+      ? verified.map(lane => lane.coverage).filter(coverage => coverage.plan_sha256) : undefined) };
 }
 
 export function scoreCodeqlPairs(bundlePath, patternPin = null) {
   const bytes = readFileSync(bundlePath);
   const root = realpathSync(dirname(bundlePath));
   const bundle = json(bytes);
-  if (bundle.schema === COHORT_BUNDLE) return scoreCohortBundle(root, bytes, bundle, patternPin);
+  if ([COHORT_BUNDLE, ARM_COHORT].includes(bundle.schema)) return scoreCohortBundle(root, bytes, bundle, patternPin);
   const [{ registry, observations, scope, coverage }] = verifyPairBundles([{ root, input: bundle }]);
   return { schema: 'factory.recall-codeql-pair-score.v1', scope, input_sha256: sha256(bytes), ...coverage,
     ...summarizeVerifiedPairs(bundle, registry, observations, patternPin) };

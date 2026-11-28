@@ -315,7 +315,7 @@ try {
     'deploy/deep-adapters/rules/tests/tsx-shell-wrapper-controls.txt', 'deploy/deep-adapters/rules/tests/tsx-shell-binding-controls.txt',
     'deploy/deep-adapters/rules/tests/tsx-shell-helper-controls.txt',
     'deploy/deep-adapters/rules/tests/tsx-html-output-controls.txt', 'deploy/deep-adapters/rules/tests/tsx-html-escaped-local-controls.txt',
-    'deploy/deep-adapters/rules/tests/java-flow-controls.txt',
+    'deploy/deep-adapters/rules/tests/java-flow-controls.txt', 'deploy/deep-adapters/rules/tests/go-parameter-sink-controls.txt',
     'deploy/deep-adapters/rules/tests/csharp-sql-library-controls.txt',
     'deploy/deep-adapters/rules/tests/rust-controls.txt',
     'deploy/deep-adapters/rules/tests/swift-trust-controls.txt',
@@ -381,7 +381,8 @@ try {
     '--entrypoint', profile.commands[0].argv[0], id, ...argv.map(value => value === '{source}' ? '/src' : value)]);
   const sarif = JSON.parse(native);
   const driver = sarif.runs?.[0]?.tool?.driver;
-  if (sarif.runs?.length !== 1 || driver?.name !== 'Opengrep OSS' ||
+  const expectedDriver = { '1.15.0': 'Opengrep OSS', '2.1.0': 'Opengrep' }[receipt.tool_version];
+  if (!expectedDriver || sarif.runs?.length !== 1 || driver?.name !== expectedDriver ||
       driver.semanticVersion !== receipt.tool_version) throw new Error('Native report driver/version differs from pinned OpenGrep');
   receipt.native_driver = driver.name;
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
@@ -435,7 +436,7 @@ raw=json.loads(sys.stdin.read())
 report=_native_sarif_paths(_native_sarif_metadata(raw, profile, [{"executionSuccessful": True}]), hashes)
 path=root/'native-control.sarif'
 path.write_text(json.dumps(report), encoding='utf-8')
-analyzer={"id":"semgrep-surface", "driver":"Opengrep OSS", "version":profile["tool_version"]}
+analyzer={"id":"semgrep-surface", "driver":sys.argv[4], "version":profile["tool_version"]}
 normalized=normalize_sarif(root, {"path":path.name,"sha256":sha256_bytes(path.read_bytes())}, analyzer, hashes)
 binding={"path":path.name,"sha256":sha256_bytes(path.read_bytes())}
 for bad in ({**hashes, next(iter(hashes)): "0"*64}, {key:value for key,value in hashes.items() if not key.endswith('.go')}, {key:value for key,value in hashes.items() if not key.endswith('.tsx')}):
@@ -451,7 +452,7 @@ for finding in normalized["findings"]:
   for step in flow:
    assert step["source_sha256"] == hashes[step["path"]]
 print(json.dumps(normalized))
-`, temp, JSON.stringify(profile), JSON.stringify(sourceHashes)],
+`, temp, JSON.stringify(profile), JSON.stringify(sourceHashes), expectedDriver],
     { input: native, encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
   if (roundtrip.error || roundtrip.status !== 0) throw new Error(`Native normalization failed: ${roundtrip.error?.message ?? roundtrip.stderr}`);
   const normalized = JSON.parse(roundtrip.stdout);
@@ -498,21 +499,26 @@ with tempfile.TemporaryDirectory(prefix='factory-native-') as scratch:
   if (receipt.native_rule_ids.length !== expectedRules.length) throw new Error('Native profile omitted rules');
   receipt.detector_mutations = [];
   const mutationStarted = performance.now();
-  const mutationArgs = argv.filter(value => value !== '{source}');
+  const mutationArgs = [...argv.filter(value => value !== '{source}'), '--jobs=1'];
   const batch = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
     '--entrypoint', '/usr/local/bin/python', id, '-I', '-c', `
+from concurrent.futures import ThreadPoolExecutor
 import base64, gzip, json, os, resource, subprocess, sys, tempfile
 engine, common, rules = json.loads(sys.argv[1])
 limit = 16 * 1024 * 1024
 resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
-for rule in rules:
+def scan(rule):
     with tempfile.TemporaryDirectory(prefix='mutation-') as home, tempfile.TemporaryFile() as raw:
         env = {**os.environ, 'HOME': home, 'SEMGREP_SETTINGS_FILE': home + '/settings.yml'}
         argv = [engine, *common, '--exclude-rule', rule, '/src']
         subprocess.run(argv, env=env, stdout=raw, check=True, timeout=120)
         raw.seek(0)
         encoded = base64.b64encode(gzip.compress(raw.read(), mtime=0)).decode('ascii')
-        print(json.dumps([rule, encoded]), flush=True)
+        return json.dumps([rule, encoded])
+
+with ThreadPoolExecutor(max_workers=2) as executor:
+    for report in executor.map(scan, rules):
+        print(report, flush=True)
 `, JSON.stringify([profile.commands[0].argv[0], mutationArgs, receipt.native_rule_ids])], 12 * 60 * 1000);
   for (const { ruleId, raw } of mutationReports(batch, receipt.native_rule_ids)) {
     const mutationArgv = [...mutationArgs, '--exclude-rule', ruleId, '/src'];

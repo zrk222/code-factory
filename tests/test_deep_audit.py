@@ -1108,6 +1108,39 @@ def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path, shard):
             _semgrep_disable_rule(baseline, "unknown-detector")
 
 
+def test_inventory_scanner_binds_scope_to_signed_mode():
+    from factoryline.deep_audit_attestation import _semgrep_rule_prefix
+    from factoryline.deep_audit_contract import _validate_lane_mode
+    from factoryline.deep_audit_io import _semgrep_challenge_command
+
+    profiles = Path("deploy/deep-adapters/profiles")
+    legacy = json.loads((profiles / "semgrep-pattern-limited.json").read_text())
+    inventory = json.loads((profiles / "semgrep-pattern-inventory.json").read_text())
+    flag = "--x-ignore-semgrepignore-files"
+    assert flag not in _semgrep_challenge_command(legacy)["argv"]
+    assert flag in _semgrep_challenge_command(inventory)["argv"]
+    assert flag not in _semgrep_rule_prefix("2.1.0", mode=legacy["mode"])
+    assert flag in _semgrep_rule_prefix("2.1.0", mode=inventory["mode"])
+    lane = {
+        "engine": "semgrep",
+        "family": "static",
+        "mode": inventory["mode"],
+        "tool_version": "2.1.0",
+        "argv": [
+            "/opt/factory/bin/audit-adapter",
+            "semgrep",
+            "--mode",
+            inventory["mode"],
+        ],
+    }
+    _validate_lane_mode(lane)
+    with pytest.raises(RuntimeAuditError, match="E_ANALYSIS_MODE"):
+        _validate_lane_mode(dict(lane, tool_version="1.15.0"))
+    inventory["commands"][0]["argv"].remove(flag)
+    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_PROFILE"):
+        _semgrep_challenge_command(inventory)
+
+
 @pytest.mark.parametrize(
     "option", ["--disable-nosem", "--no-git-ignore", "--dataflow-traces"]
 )
@@ -1123,6 +1156,51 @@ def test_semgrep_challenge_rejects_weakened_profile(option):
     profile["commands"][0]["argv"].remove(option)
     with pytest.raises(RuntimeAuditError, match="E_SEMGREP_PROFILE"):
         _semgrep_challenge_command(profile)
+
+
+@pytest.mark.parametrize(
+    ("driver", "version", "wrong_version"),
+    [("Opengrep OSS", "1.15.0", "2.1.0"), ("Opengrep", "2.1.0", "1.15.0")],
+)
+def test_native_opengrep_pins_driver_identity(driver, version, wrong_version):
+    from factoryline.deep_audit_sarif import _native_sarif_metadata, _sarif_analyzer
+
+    report = {"runs": [{"tool": {"driver": {"name": driver, "rules": []}}}]}
+    profile = {"tool_version": version}
+    bound = _native_sarif_metadata(report, profile, [])
+    _, identity = _sarif_analyzer(
+        bound["runs"][0], {"engine": "semgrep", "tool_version": version}
+    )
+    assert identity == {"driver": driver, "version": version}
+    assert "version" not in report["runs"][0]["tool"]["driver"]
+
+    wrong = {"runs": [{"tool": {"driver": {"name": driver, "version": wrong_version}}}]}
+    with pytest.raises(RuntimeAuditError, match="E_TOOLCHAIN_DRIFT"):
+        _native_sarif_metadata(wrong, profile, [])
+    with pytest.raises(RuntimeAuditError, match="E_ANALYZER_MISMATCH"):
+        _sarif_analyzer(
+            wrong["runs"][0], {"engine": "semgrep", "tool_version": wrong_version}
+        )
+
+
+def test_native_opengrep_preserves_multiple_bindings_without_relaxing_proof_json():
+    from factoryline.deep_audit_attestation import _semgrep_rule_json
+
+    raw = (
+        b'{"results":[{"extra":{"metavars":{'
+        b'"$VALUE":{"start":1},"$VALUE":{"start":2},"$OTHER":{"start":3}'
+        b"}}}]}"
+    )
+    decoded = _semgrep_rule_json(raw, "2.1.0")
+    assert decoded["results"][0]["extra"]["metavars"] == {
+        "$VALUE": [{"start": 1}, {"start": 2}],
+        "$OTHER": {"start": 3},
+    }
+    with pytest.raises(RuntimeAuditError, match="E_DUPLICATE_FIELD"):
+        _semgrep_rule_json(raw, "1.15.0")
+    wrong = raw.replace(b'"metavars"', b'"bindings"')
+    with pytest.raises(RuntimeAuditError, match="E_DUPLICATE_FIELD"):
+        _semgrep_rule_json(wrong, "2.1.0")
 
 
 def test_php_interfile_profile_keeps_bounded_flags_in_challenge_and_rule_execution():
@@ -2617,7 +2695,9 @@ def semgrep_execution_evidence(
             }
         )
         argv = [
-            "/usr/bin/opengrep" if version == "1.15.0" else "/usr/bin/semgrep",
+            "/usr/bin/opengrep"
+            if version in {"1.15.0", "2.1.0"}
+            else "/usr/bin/semgrep",
             "scan",
             "--json",
             "--strict",
@@ -2632,7 +2712,7 @@ def semgrep_execution_evidence(
             f"/tmp/factory-native-test/semgrep-rule-{index}/report.json",
             "/src",
         ]
-        if version == "1.15.0":
+        if version in {"1.15.0", "2.1.0"}:
             argv.remove("--metrics=off")
         observations[-1].update(argv=argv, argv_sha256=digest(argv))
     evidence = {
@@ -2641,6 +2721,61 @@ def semgrep_execution_evidence(
         "observations": observations,
     }
     return evidence, lane, sources, {"runs": [{"results": []}]}
+
+
+@pytest.mark.parametrize("fault", [None, "target", "finding", "source-drift", "legacy"])
+def test_semgrep_grouped_reports_prove_zero_targets(fault):
+    import base64
+    from factoryline.deep_audit_io import canonical_bytes, verify_semgrep_rule_execution
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence(version="2.1.0")
+    rules = json.loads(base64.b64decode(evidence["ruleset_base64"]))["rules"]
+    extra = dict(rules[0], id="ruby-rule", languages=["ruby"])
+    sources.pop("app.js")
+    lane.update(
+        mode="pattern-inventory",
+        rule_ids=["js-rule", "py-rule", "ruby-rule"],
+        ruleset_sha256=digest({"rules": [*rules, extra]}),
+    )
+    evidence.update(
+        schema="factory.semgrep-rule-execution.v2",
+        ruleset_base64=base64.b64encode(
+            canonical_bytes({"rules": [*rules, extra]})
+        ).decode(),
+    )
+    empty = evidence["observations"][0]
+    native = empty["native_report"]
+    native["paths"]["scanned"] = ["/src/app.py"] if fault == "target" else []
+    if fault == "finding":
+        native["results"] = [{"check_id": "js-rule", "path": "/src/app.py"}]
+    config = {"rules": [rules[0], extra]}
+    empty.update(
+        rule_config_sha256=digest(config),
+        rule_config_base64=base64.b64encode(canonical_bytes(config)).decode(),
+        native_report_sha256=digest(native),
+        raw_report_sha256=digest(native),
+        raw_report_base64=base64.b64encode(canonical_bytes(native)).decode(),
+    )
+    for row in evidence["observations"]:
+        argv = row["argv"]
+        argv.insert(argv.index("--config"), "--x-ignore-semgrepignore-files")
+        row["argv_sha256"] = digest(argv)
+    if fault == "legacy":
+        lane["mode"] = "pattern-limited"
+    if fault == "source-drift":
+        sources["app.js"] = "b" * 64
+    if fault:
+        with pytest.raises(RuntimeAuditError, match="E_SEMGREP_EXECUTION"):
+            verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+    else:
+        checked = verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+        assert {
+            row["rule_id"]: row["executed_sources"] for row in checked["rules"]
+        } == {
+            "js-rule": [],
+            "py-rule": ["app.py"],
+            "ruby-rule": [],
+        }
 
 
 def test_semgrep_native_source_budget_rejects_before_tool_execution(tmp_path):
@@ -3788,7 +3923,7 @@ def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
         ("swift", "app.swift"),
     ],
 )
-@pytest.mark.parametrize("version", ["1.141.0", "1.15.0"])
+@pytest.mark.parametrize("version", ["1.141.0", "1.15.0", "2.1.0"])
 def test_semgrep_native_rules_account_for_applicable_and_other_languages(
     language, source, version
 ):
@@ -3857,7 +3992,7 @@ def test_semgrep_native_rules_account_for_applicable_and_other_languages(
         ("swift", "app.swift"),
     ],
 )
-@pytest.mark.parametrize("version", ["1.141.0", "1.15.0"])
+@pytest.mark.parametrize("version", ["1.141.0", "1.15.0", "2.1.0"])
 def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(
     invalid, language, source, version
 ):
@@ -3896,6 +4031,23 @@ def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(
     observed["native_report_sha256"] = digest(native)
     with pytest.raises(RuntimeAuditError):
         verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+
+
+@pytest.mark.parametrize(
+    ("facts", "message"),
+    [
+        ({"timeout_seconds": 31}, "rule exceeds signed budget"),
+        ({"exit_code": 1}, "native rule did not complete"),
+    ],
+)
+def test_semgrep_rule_execution_verifies_signed_runner_facts(facts, message):
+    from factoryline.deep_audit_io import verify_semgrep_rule_execution
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    evidence["observations"][0]["execution"].update(facts)
+    with pytest.raises(RuntimeAuditError, match=message) as rejected:
+        verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+    assert rejected.value.code == "E_SEMGREP_EXECUTION"
 
 
 def test_runtime_mutation_report_requires_a_passing_sentinel(tmp_path):
@@ -5913,6 +6065,12 @@ def test_codeql_result_path_maps_exact_versioned_inventory_path():
         _codeql_result_path("codeql/actions-queries/0.6.36/Security/A.ql")
         == "results/codeql/actions-queries/Security/A.bqrs"
     )
+    assert (
+        _codeql_result_path(
+            "codeql/rust-queries/0.1.43/queries/security/CWE-319/UseOfHttp.ql"
+        )
+        == "results/codeql/rust-queries/queries/security/CWE-319/UseOfHttp.bqrs"
+    )
 
 
 @pytest.mark.parametrize(
@@ -6239,6 +6397,62 @@ def test_codeql_source_accounting_marks_missing_or_degraded_source_rows(
     )
 
 
+def test_codeql_actions_accounting_selects_workflows_and_action_metadata():
+    from factoryline.deep_audit_io import _codeql_source_accounting, source_language
+    from factoryline.deep_audit_sarif import _required_sources
+
+    workflow_paths = (
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yaml",
+        "action.yml",
+        "tools/release/action.yaml",
+    )
+    other_paths = (
+        "settings.json",
+        "pyproject.toml",
+        "config/deploy.yml",
+        ".github/workflows/nested/ci.yaml",
+        ".github/workflows/settings.json",
+    )
+    source_sha = "a" * 64
+    inventory = {
+        "files": [
+            {"path": path, "sha256": source_sha, "language": source_language(path, b"")}
+            for path in (*workflow_paths, *other_paths)
+        ]
+    }
+    lane = {"engine": "codeql", "languages": ["configuration"]}
+    required = {path: source_sha for path in workflow_paths}
+    measurement = {
+        "rows": {
+            path: {"syntax_nodes": 1, "parse_errors": 0} for path in workflow_paths
+        },
+        "archived_sources": required,
+    }
+    assert _required_sources(inventory, lane) == required
+    assert _required_sources(inventory, {**lane, "engine": "trivy"}) == {
+        path: source_sha for path in (*workflow_paths, *other_paths)
+    }
+    accounting = _codeql_source_accounting(measurement, inventory, lane)
+    assert accounting["state"] == "COMPLETE"
+    assert accounting["required_paths"] == sorted(workflow_paths)
+    assert accounting["measured_paths"] == sorted(workflow_paths)
+
+    del measurement["rows"]["action.yml"]
+    accounting = _codeql_source_accounting(measurement, inventory, lane)
+    assert accounting["state"] == "INCOMPLETE"
+    assert accounting["missing_paths"] == ["action.yml"]
+
+    no_actions = {
+        "files": [row for row in inventory["files"] if row["path"] in other_paths]
+    }
+    accounting = _codeql_source_accounting(
+        {"rows": {}, "archived_sources": {}}, no_actions, lane
+    )
+    assert accounting["state"] == "INCOMPLETE"
+    assert accounting["required_paths"] == []
+
+
 def test_codeql_source_accounting_empty_required_set_is_incomplete():
     from factoryline.deep_audit_io import _codeql_source_accounting
 
@@ -6406,6 +6620,7 @@ def test_codeql_archived_sources_bounds_archive_read(tmp_path, monkeypatch):
         ("java", "java", "CompilationUnit"),
         ("csharp", "csharp", "ExtractorError"),
         ("go", "go", "FactoryGoDiagnostic"),
+        ("rust", "rust", 'e.getTag() = "parse_error"'),
     ],
 )
 def test_codeql_source_query_maps_supported_languages(
@@ -6463,14 +6678,17 @@ def test_offline_go_replacement_stays_inside_source(tmp_path, monkeypatch, vendo
         helper(module, source)
 
 
+@pytest.mark.parametrize("project_archive", [False, True])
 def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, project_archive
 ):
+    import io
     import zipfile
 
     from factoryline.deep_audit_io import (
         _codeql_blob_bytes,
         _codeql_source_measurement,
+        _codeql_verify_retained_source,
         _native_source_accounting,
     )
 
@@ -6486,6 +6704,8 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     with zipfile.ZipFile(database / "src.zip", "w") as zipped:
         archived_path = source.resolve().as_posix().lstrip("/") + "/src/a.js"
         zipped.writestr(archived_path, candidate.read_bytes())
+        if project_archive:
+            zipped.writestr("toolchain/library.rs", b"x" * (8 * 1024 * 1024))
 
     profile = _codeql_test_profile(tmp_path / "security.qls")
     inventory = {
@@ -6558,7 +6778,19 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     )
     assert _codeql_blob_bytes(blobs["result"]) == bqrs
     assert _codeql_blob_bytes(blobs["decoded"]) == decoded
-    assert _codeql_blob_bytes(blobs["archive"]) == (database / "src.zip").read_bytes()
+    native_archive = (database / "src.zip").read_bytes()
+    retained_archive = _codeql_blob_bytes(blobs["archive"])
+    assert measurement["archive_sha256"] == sha256_bytes(native_archive)
+    if project_archive:
+        assert measurement["archive_projection_sha256"] == sha256_bytes(
+            retained_archive
+        )
+        with zipfile.ZipFile(io.BytesIO(retained_archive)) as zipped:
+            assert zipped.namelist() == [archived_path]
+            assert zipped.read(archived_path) == candidate.read_bytes()
+    else:
+        assert "archive_projection_sha256" not in measurement
+        assert retained_archive == native_archive
     assert (
         _codeql_blob_bytes(blobs["info"])
         == (evidence_dir / "step-2" / "stdout.log").read_bytes()
@@ -6567,6 +6799,12 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
         {"codeql_source_execution": measurement}, {}, inventory, lane
     )
     assert result["state"] == "COMPLETE"
+    required = {"src/a.js": source_sha}
+    assert _codeql_verify_retained_source(measurement, required)["state"] == "COMPLETE"
+    if project_archive:
+        tampered = {**measurement, "archive_projection_sha256": "0" * 64}
+        with pytest.raises(ValueError, match="source artifact binding differs"):
+            _codeql_verify_retained_source(tampered, required)
 
     info_rows[0] = 2
     scratch_mismatch = tmp_path / "scratch-mismatch"
@@ -7988,11 +8226,14 @@ def test_codeql_replay_decode_rejects_native_metadata_mismatch(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize(
-    "drift", ["finding", "entity-id", "entity-label", "entity-url"]
+    "drift", [None, "finding", "entity-id", "entity-label", "entity-url"]
 )
-def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
+def test_codeql_replay_query_orchestration_compares_parallel_decodes(
     tmp_path, monkeypatch, drift
 ):
+    from threading import Barrier
+
+    from factoryline import deep_audit_io
     from factoryline.deep_audit_io import (
         _codeql_native_blob,
         _codeql_replay_queries,
@@ -8010,11 +8251,15 @@ def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
         entity["id"] = "entity-2"
     elif drift == "entity-label":
         entity["label"] = "different source"
-    else:
+    elif drift == "entity-url":
         entity["url"]["startLine"] = 8
     fresh_decoded = json.dumps(fresh_value).encode()
 
+    decoding = Barrier(2, timeout=5)
+
     def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        if argv[1:3] == ["bqrs", "decode"]:
+            decoding.wait()
         if argv[1:3] == ["bqrs", "info"]:
             stdout = info
         elif Path(argv[-1]).name == "worker.bqrs":
@@ -8030,15 +8275,24 @@ def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
     scratch = tmp_path / "replay-values"
     scratch.mkdir()
     monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
-    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
-        _codeql_replay_queries(
-            {"version_argv": ["/opt/codeql/codeql/codeql"]},
-            {"codeql_query_execution": {"rules": [record]}},
-            {"execution": {"rules": [fresh_record]}},
-            source,
-            scratch,
-            time.monotonic() + 30,
+    arguments = (
+        {"version_argv": ["/opt/codeql/codeql/codeql"]},
+        {"codeql_query_execution": {"rules": [record]}},
+        {"execution": {"rules": [fresh_record]}},
+        source,
+        scratch,
+        time.monotonic() + 30,
+    )
+    if drift is None:
+        values = deep_audit_io._codeql_replay_values(
+            json.loads(worker_decoded), record["result_sets"]
         )
+        assert _codeql_replay_queries(*arguments) == {
+            record["rule_id"]: deep_audit_io.digest(values)
+        }
+    else:
+        with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+            _codeql_replay_queries(*arguments)
 
 
 @pytest.fixture

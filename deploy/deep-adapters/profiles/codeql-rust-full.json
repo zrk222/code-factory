@@ -1,0 +1,23 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "codeql",
+  "mode": "interprocedural-full",
+  "tool_version": "2.27.1",
+  "ruleset_sha256": "1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717",
+  "commands": [
+    {
+      "argv": ["/opt/factory/bin/codeql-rust", "database", "create", "{scratch}/codeql-db", "--language=rust", "--source-root={source}", "--build-mode=none", "--threads=2", "--ram={ram_mib}"],
+      "accepted_exit_codes": [0]
+    },
+    {
+      "argv": ["/opt/factory/bin/codeql-rust", "database", "analyze", "{scratch}/codeql-db", "/opt/codeql/codeql/qlpacks/codeql/rust-queries/0.1.43/codeql-suites/rust-security-extended.qls", "--threads=2", "--ram={ram_mib}", "--format=sarif-latest", "--output={report}"],
+      "accepted_exit_codes": [0]
+    },
+    {
+      "argv": ["/usr/local/bin/python", "-I", "-c", "import sys,json,hashlib; from pathlib import Path; p=Path(sys.argv[1]); b=p.open(\"rb\").read(1048577); assert len(b)<=1048576; r=json.loads(b); r.setdefault(\"properties\",{})[\"factory_native_raw_sha256\"]=hashlib.sha256(b).hexdigest(); r[\"properties\"][\"factory_source_root_basis\"]=\"Fixed CodeQL database create --source-root=/src invocation\"; [(run.setdefault(\"originalUriBaseIds\",{}).setdefault(\"%SRCROOT%\",{\"uri\":\"file:///src/\"})) for run in r[\"runs\"]]; assert all(not e.get(\"rules\") for run in r[\"runs\"] for e in run[\"tool\"].get(\"extensions\",[])); [(run.setdefault(\"properties\",{}).update(factory_native_pack_metadata=run[\"tool\"].pop(\"extensions\",[]))) for run in r[\"runs\"]]; p.write_text(json.dumps(r))", "{report}"],
+      "accepted_exit_codes": [0]
+    }
+  ],
+  "version_argv": ["/opt/factory/bin/codeql-rust", "version", "--format=terse"],
+  "report_format": "sarif"
+}

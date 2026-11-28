@@ -20,6 +20,9 @@ test('compiled fixture parity ignores known timing fields and detects native evi
           invocations: [{ executionSuccessful: true, toolExecutionNotifications: [{
             descriptor: { id: 'cli/file-coverage-baseline' }, timeUtc: 'first',
             properties: { attributes: { durationMilliseconds: 20 } },
+          }, {
+            descriptor: { id: 'rust/extractor/telemetry' },
+            properties: { attributes: { durations: { loadManifest: { ms: 7 } }, numberOfFiles: 2 } },
           }] }],
           properties: { metricResults: [{ ruleId: 'count', value: 2 }, { ruleId: 'types', value: 1 }] },
           results: [{ ruleId: 'fixture-control', locations: [{ physicalLocation: { region: { startLine: 2 } } }] }],
@@ -44,9 +47,14 @@ test('compiled fixture parity ignores known timing fields and detects native evi
   const notification = repeat.sarif.runs[0].invocations[0].toolExecutionNotifications[0];
   notification.timeUtc = 'second';
   notification.properties.attributes.durationMilliseconds = 12;
+  const telemetry = repeat.sarif.runs[0].invocations[0].toolExecutionNotifications[1].properties.attributes;
+  telemetry.durations.loadManifest.ms = 11;
   repeat.sarif.runs[0].properties.metricResults.reverse();
   repeat.sarif.runs[0].properties.metricResults[0] = { value: 1, ruleId: 'types' };
   assertStructuralParity(first, repeat);
+  telemetry.numberOfFiles = 3;
+  assert.throws(() => assertStructuralParity(first, repeat), /changed on repeat \(report\)/);
+  telemetry.numberOfFiles = 2;
   notification.descriptor.id = 'unexpected-diagnostic';
   assert.throws(() => assertStructuralParity(first, repeat), /changed on repeat \(report\)/);
   notification.descriptor.id = 'cli/file-coverage-baseline';

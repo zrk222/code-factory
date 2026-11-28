@@ -2,8 +2,8 @@
   "schema": "factory.native-profile.v1",
   "engine": "semgrep",
   "mode": "pattern-limited",
-  "tool_version": "1.15.0",
-  "ruleset_sha256": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd",
+  "tool_version": "2.1.0",
+  "ruleset_sha256": "fea9099f2c5cc994292bfc36dbdaf5ff0f814d47ffd2183813757a0882c1704b",
   "commands": [
     {
       "argv": [

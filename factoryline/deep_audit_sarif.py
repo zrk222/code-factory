@@ -368,16 +368,17 @@ def _sarif_analyzer(run, lane):
     require_str(analyzer["version"], "version")
     names = {
         "codeql": {"codeql"},
-        "semgrep": {"semgrep", "semgrep oss", "opengrep oss"},
+        "semgrep": {"semgrep", "semgrep oss", "opengrep", "opengrep oss"},
         "gitleaks": {"gitleaks"},
         "trivy": {"trivy"},
     }
+    opengrep_versions = {"opengrep": "2.1.0", "opengrep oss": "1.15.0"}
+    name = analyzer["driver"].lower()
     if (
-        analyzer["driver"].lower() not in names[lane["engine"]]
+        name not in names[lane["engine"]]
         or analyzer["version"] != lane["tool_version"]
         or (
-            analyzer["driver"].lower() == "opengrep oss"
-            and analyzer["version"] != "1.15.0"
+            name in opengrep_versions and analyzer["version"] != opengrep_versions[name]
         )
     ):
         raise RuntimeAuditError(
@@ -1215,7 +1216,7 @@ def _required_sources(inventory, lane):
     return {
         item["path"]: item["sha256"]
         for item in inventory["files"]
-        if item["language"] in lane["languages"]
+        if _deep_audit_io._lane_source_applies(item, lane)
     }
 
 
@@ -2996,7 +2997,12 @@ def _sarif_evidence(result, rule, sources):
 
 
 def _usable_native_fingerprint(analyzer: dict, native: dict) -> bool:
-    semgrep = analyzer["driver"].lower() in {"semgrep", "semgrep oss", "opengrep oss"}
+    semgrep = analyzer["driver"].lower() in {
+        "semgrep",
+        "semgrep oss",
+        "opengrep",
+        "opengrep oss",
+    }
     return any(
         value.strip()
         and not (
@@ -4602,6 +4608,7 @@ def _codeql_result_path(query_path):
             "java-queries",
             "csharp-queries",
             "go-queries",
+            "rust-queries",
         }
         or _deep_audit_io.re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", parts[2]) is None
         or not parts[-1].endswith(".ql")
@@ -4702,6 +4709,16 @@ _COMPILED_CODEQL_SOURCE_QUERIES = {
         "}\n",
         "count(GoFile n | n = f)",
         "count(FactoryGoDiagnostic e | e.getFile() = f or not exists(e.getFile()))",
+    ),
+    "rust": (
+        "rs",
+        "import codeql.rust.Diagnostics\n",
+        "count(AstNode n | n.getLocation().getFile() = f)",
+        # Recovered syntax errors and syntax-only fallback can be warnings.
+        "count(Diagnostic e | (e instanceof ExtractionError or "
+        'e.getTag() = "parse_error" or e.getTag() = "semantics") and '
+        "(e.getLocation().getFile() = f or "
+        "not exists(e.getLocation().getFile())))",
     ),
 }
 

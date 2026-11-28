@@ -8,6 +8,7 @@ import pytest
 from factoryline.deep_audit_contract import (
     PLAN_SCHEMA,
     PLAN_TYPE,
+    load_execution_manifest,
     verify_deep_audit_plan,
 )
 from factoryline.deep_audit_io import digest
@@ -34,7 +35,7 @@ def test_keyless_review_decodes_lossless_bounded_input():
     flow = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     script = next(
         step["run"]
-        for step in flow["jobs"]["analyze"]["steps"]
+        for step in flow["jobs"]["assemble"]["steps"]
         if "def decode_review_packet" in step.get("run", "")
     )
     source = script.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
@@ -56,6 +57,61 @@ def test_keyless_review_decodes_lossless_bounded_input():
     for compress in (gzip.compress, lzma.compress):
         with pytest.raises(ValueError, match="exceeds the decoded size limit"):
             decode(b64encode(compress(b"a" * 4_194_305)))
+
+
+@pytest.mark.parametrize("modified", [False, True])
+def test_keyless_coordinator_seals_exact_eight_lane_plan(
+    tmp_path, monkeypatch, modified
+):
+    import yaml
+
+    repo = Path(__file__).resolve().parents[1]
+    workflow = repo / ".github/workflows/deep-audit-keyless-coordinator.yml"
+    flow = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    step = next(
+        item
+        for item in flow["jobs"]["authorize"]["steps"]
+        if item.get("name")
+        == "Bind only the approved candidate to exact role workflows"
+    )
+    source = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    command = compile(source, str(workflow), "exec")
+    plan_path = Path("scripts/deep-audit-keyless-plan.json")
+    raw_plan = (repo / plan_path).read_bytes()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "zrk222/code-factory")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    plan_path.parent.mkdir()
+    plan_path.write_bytes(raw_plan + b" " if modified else raw_plan)
+
+    root = Path("control")
+    if modified:
+        with pytest.raises(ValueError, match="approved SHA-256"):
+            exec(command, {})
+        assert not root.exists()
+        return
+
+    exec(command, {})
+    manifest_bytes = (root / "manifest.json").read_bytes()
+    manifest = load_execution_manifest(
+        root / "manifest.json", sha256_bytes(manifest_bytes)
+    )
+    assert manifest == json.loads(manifest_bytes)
+    payload = json.loads((root / "authorization-payload.json").read_bytes())
+    assert len(manifest["lanes"]) == 8 and len(manifest["obligations"]) == 10
+    assert len({lane["family"] for lane in manifest["lanes"]}) == 6
+    assert manifest["lanes"] == json.loads(raw_plan)["lanes"]
+    assert payload["adapter_images"] == {
+        lane["id"]: lane["image"] for lane in manifest["lanes"]
+    }
+    assert (
+        payload["manifest_sha256"]
+        == payload["manifest_content_sha256"]
+        == sha256_bytes(manifest_bytes)
+    )
+    assert payload["candidate_sha256"] == manifest["candidate_sha256"]
+    assert payload["authority"] == "none"
 
 
 def test_keyless_artifact_download_follows_producing_job_on_rerun():
@@ -112,6 +168,71 @@ def test_keyless_artifact_download_follows_producing_job_on_rerun():
     )
 
 
+@pytest.mark.parametrize("failed", ["", "runtime"])
+def test_keyless_review_loop_isolates_families_and_stops_on_failure(tmp_path, failed):
+    import os
+    import shutil
+    import subprocess
+
+    import yaml
+
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/deep-audit-keyless-reviewer.yml"
+    )
+    jobs = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)[
+        "jobs"
+    ]
+    step = next(
+        s
+        for s in jobs["assemble"]["steps"]
+        if s.get("name") == "Run the read-only specialty inference"
+    )
+    server = tmp_path / "llama/build/bin/llama-server"
+    server.parent.mkdir(parents=True)
+    server.write_text("#!/bin/sh\nexec sleep 5\n", encoding="ascii", newline="\n")
+    server.chmod(0o755)
+    bash = (
+        Path(shutil.which("git")).resolve().parents[1] / "bin/bash.exe"
+        if os.name == "nt"
+        else "bash"
+    )
+    harness = r"""export RUNNER_TEMP="$PWD" GITHUB_RUN_ATTEMPT=3
+trap 'while read -r pid family; do if kill -0 "$pid" 2>/dev/null; then echo "$family" >> survivors; fi; done < calls' EXIT
+python() {
+  cat >/dev/null
+  if [[ -z ${REVIEW_FAMILY:-} ]]; then touch assembled; return; fi
+  kill -0 "$model_pid"
+  printf '%s %s\n' "$model_pid" "$REVIEW_FAMILY" >> calls
+  if [[ "$REVIEW_FAMILY" == "$FAILED_FAMILY" ]]; then return 17; fi
+  echo "$REVIEW_FAMILY" > review-family.json
+}
+"""
+    result = subprocess.run(
+        [bash],
+        input=(harness + step["run"]).encode(),
+        cwd=tmp_path,
+        env={**os.environ, "FAILED_FAMILY": failed},
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == (17 if failed else 0), result.stderr
+    calls = [line.split() for line in (tmp_path / "calls").read_text().splitlines()]
+    families = ["configuration", "dependencies", "fuzz", "runtime", "secrets", "static"]
+    assert [name for _, name in calls] == (families[:4] if failed else families)
+    assert len({pid for pid, _ in calls}) == len(calls)
+    assert not (tmp_path / "survivors").exists()
+    for name in families[:3] if failed else families:
+        part = (
+            tmp_path
+            / "family-outputs"
+            / f"keyless-review-family-3-{name}"
+            / "review-family.json"
+        )
+        assert part.read_text().strip() == name
+    assert (tmp_path / "assembled").exists() == (not failed)
+
+
 def _keyless_review_fixture():
     from types import ModuleType
 
@@ -122,7 +243,7 @@ def _keyless_review_fixture():
     flow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     step = next(
         item
-        for item in flow["jobs"]["analyze"]["steps"]
+        for item in flow["jobs"]["assemble"]["steps"]
         if item.get("name") == "Run the read-only specialty inference"
     )
     source = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
@@ -131,45 +252,45 @@ def _keyless_review_fixture():
     plan_path = repo / "scripts/deep-audit-keyless-plan.json"
     plan = json.loads(plan_path.read_bytes())
     jobs = flow["jobs"]
-    families = set(jobs["analyze"]["strategy"]["matrix"]["family"])
-    assert families == {lane["family"] for lane in plan["lanes"]}
-    assert jobs["prepare"]["permissions"] == {}
-    assert jobs["prepare"]["if"] == jobs["analyze"]["if"]
-    assert jobs["prepare"]["runs-on"] == jobs["analyze"]["runs-on"] == "ubuntu-24.04"
-    assert jobs["analyze"]["needs"] == "prepare"
-    assert jobs["assemble"]["needs"] == ["prepare", "analyze"]
+    assert set(jobs) == {"assemble", "sign"}
+    compute = jobs["assemble"]
+    assert compute["permissions"] == {"contents": "read"}
+    assert compute["runs-on"] == "ubuntu-24.04"
+    assert compute["if"] == "github.repository == 'zrk222/code-factory'"
+    assert "needs" not in compute and "strategy" not in compute
     assert jobs["sign"]["needs"] == "assemble"
-    assert "id-token" not in jobs["assemble"]["permissions"]
-    build, upload = jobs["prepare"]["steps"]
+    assert jobs["sign"]["permissions"] == {"id-token": "write"}
+    build = compute["steps"][0]
     pin = "REVIEW_CHALLENGE_SUMMARY_SHA256"
     assert (
         build["env"][pin] == "${{ vars.CODE_FACTORY_NATIVE_REVIEW_CHALLENGE_SHA256 }}"
     )
-    assert jobs["prepare"]["outputs"]["challenge_summary_sha256"] == (
-        "${{ steps.build.outputs.challenge_summary_sha256 }}"
-    )
-    assert (
-        jobs["analyze"]["env"][pin]
-        == jobs["assemble"]["env"][pin]
-        == ("${{ needs.prepare.outputs.challenge_summary_sha256 }}")
-    )
+    assert build["working-directory"] == "${{ runner.temp }}"
     assert "review_packet" not in build["run"] and "cmake --build" in build["run"]
-    assert "keyless-review-runtime-%s" in build["run"]
-    assert upload["with"]["path"] == "llama/build/bin/llama-server"
-    download = next(
-        item
-        for item in jobs["analyze"]["steps"]
-        if item.get("uses", "").startswith("actions/download-artifact@")
+    assert step["env"][pin] == "${{ steps.build.outputs.challenge_summary_sha256 }}"
+    assert (
+        step["env"]["REVIEW_RUNTIME_SHA256"]
+        == "${{ steps.build.outputs.runtime_sha256 }}"
     )
-    assert download["with"] == {
-        "name": "${{ needs.prepare.outputs.artifact_name }}",
-        "path": "reviewer-runtime",
-    }
-    verify_artifacts = next(
-        item["run"]
-        for item in jobs["analyze"]["steps"]
+    family_loop = next(
+        line for line in step["run"].splitlines() if line.startswith("for family in ")
+    )
+    roster = family_loop.removeprefix("for family in ").removesuffix("; do").split()
+    families = {lane["family"] for lane in plan["lanes"]}
+    assert len(roster) == len(families) and set(roster) == families
+    assert not any(
+        "download-artifact" in item.get("uses", "") for item in compute["steps"]
+    )
+    verify_step = next(
+        item
+        for item in compute["steps"]
         if item.get("name") == "Verify the reviewer runtime and model"
     )
+    assert (
+        verify_step["env"]["REVIEW_RUNTIME_SHA256"]
+        == step["env"]["REVIEW_RUNTIME_SHA256"]
+    )
+    verify_artifacts = verify_step["run"]
     assert (
         "--max-time 180" in verify_artifacts and "--continue-at -" in verify_artifacts
     )
@@ -315,7 +436,7 @@ def test_keyless_review_requires_the_independently_registered_control_summary(
             for obligation in row["obligations"]
             for control in obligation["controls"]
         )
-        == 27
+        == 30
     )
 
     packet["binding"]["run_id"] = "wrong-run"
@@ -6411,7 +6532,8 @@ def test_native_ram_binding_preserves_literal_report_path(codeql):
 
 
 @pytest.mark.parametrize(
-    "language", ["python", "javascript", "ruby", "actions", "java", "csharp", "go"]
+    "language",
+    ["python", "javascript", "ruby", "actions", "java", "csharp", "go", "rust"],
 )
 def test_shipped_codeql_profiles_bind_ram_to_lane(language):
     profile = json.loads(
