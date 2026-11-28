@@ -330,14 +330,20 @@ export function verifyFindingCountMatrix(manifest, ruleIds) {
 
 export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
   verifyFindingCountMatrix(manifest, ruleIds);
-  for (const language of ['go', 'java', 'csharp', 'ruby']) {
-    for (const family of ['command', 'sql']) {
+  const tracedCounts = new Map();
+  for (const { rule, source_line: sourceLine } of manifest) {
+    if (Number.isInteger(sourceLine)) tracedCounts.set(rule, (tracedCounts.get(rule) ?? 0) + 1);
+  }
+  const requiredCounts = {
+    go: { command: 5, sql: 4 },
+    java: { command: 3, sql: 7 },
+    csharp: { command: 3, sql: 3 },
+    ruby: { command: 3, sql: 4 },
+  };
+  for (const [language, families] of Object.entries(requiredCounts)) {
+    for (const [family, required] of Object.entries(families)) {
       const rule = `opt.factory.rules.${language}.request-${family}-injection`;
-      const required = language === 'go' && family === 'command' ? 5
-        : language === 'java' && family === 'sql' ? 7
-          : family === 'sql' && ['go', 'ruby'].includes(language) ? 4 : 3;
-      if (!ruleIds.includes(rule) || manifest.filter(item => item.rule === rule &&
-          Number.isInteger(item.source_line)).length !== required || !(safeCounts[rule] >= 3)) {
+      if (tracedCounts.get(rule) !== required || !(safeCounts[rule] >= 3)) {
         throw new Error('Missing direct, alias, framework, safe or provider-mismatch flow control');
       }
     }

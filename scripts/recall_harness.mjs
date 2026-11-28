@@ -302,6 +302,16 @@ export function sarifTraceThreads(result, resolvePath) {
     })));
 }
 
+function verifiedTraceSteps(thread, path, line) {
+  const steps = thread.filter(step => step.state !== 'nonphysical');
+  const sink = steps.at(-1);
+  if (steps.length < 2 || sink?.path !== path || sink.line !== line
+    || steps.some(step => step.state || !step.path || !Number.isSafeInteger(step.line) || step.line < 1)) {
+    return null;
+  }
+  return steps;
+}
+
 // Match a complete, source-bound flow to a changed line while keeping its actual endpoint.
 export function anchoredTraceMatches({ oldFindings, newFindings, hunks, families, rules, flows }) {
   const wanted = new Set(families);
@@ -312,10 +322,8 @@ export function anchoredTraceMatches({ oldFindings, newFindings, hunks, families
     const { rule, path, line, span } = finding;
     if (hunks[path]?.old?.includes(line) || !rules[rule]?.some(family => wanted.has(family))) continue;
     for (const thread of (flows?.[index] ?? finding.threads ?? []).flat()) {
-      const steps = thread.filter(step => step.state !== 'nonphysical');
-      const sink = steps.at(-1);
-      if (steps.length < 2 || sink?.path !== path || sink.line !== line
-        || steps.some(step => step.state || !step.path || !Number.isSafeInteger(step.line) || step.line < 1)) continue;
+      const steps = verifiedTraceSteps(thread, path, line);
+      if (!steps) continue;
       const anchor = steps.slice(0, -1).find(step => hunks[step.path]?.old?.includes(step.line));
       if (!anchor) continue;
       const match = {
