@@ -254,11 +254,23 @@ def deep_audit_lineage(root: Path, status: dict) -> dict:
         return {**base, "state": "INCOMPLETE"}
 
 
+def _flow_point(item: dict, kind: str, fallback: dict) -> str:
+    steps = [step for flow in item.get("flows") or [] for step in flow]
+    marked = [step for step in steps if kind in step.get("kinds", [])]
+    point = (marked or steps or [fallback])[0 if kind == "source" else -1]
+    return f"{point['path']}:{point.get('start_line', '?')}"
+
+
 def _chain(item: dict, receipt: dict, relative: str) -> dict:
+    """One finding as source -> sink: taint origin, then rule and sink location."""
     location = item["locations"][0]
+    tier = " (lead)" if item.get("report_tier") == "lead" else ""
+    sink = _flow_point(item, "sink", location) if item.get("flows") else None
     return {
         "finding_id": item["finding_id"],
-        "source": location["path"],
+        "source": _flow_point(item, "source", location),
+        "finding": f"{item.get('rule_id', item['finding_id'])}{tier} -> "
+        + (sink or f"{location['path']}:{location.get('start_line', '?')}"),
         "source_sha256": location["source_sha256"],
         "obligation": item.get("obligation_id", "unmapped"),
         "trace_sha256": item["trace_sha256"],

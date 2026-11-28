@@ -448,6 +448,9 @@ def test_graph_has_six_non_authorizing_stages(tmp_path):
     }
     assert all(n["status"] == "unassessed" for n in nodes)
     assert result["deep_audit"]["authority"] == "none"
+    labels = {n["kind"]: n["label"] for n in nodes}
+    assert labels["deep_audit_source"] == "app.py:1"
+    assert labels["deep_audit_finding"].startswith("leak -> app.py:")
 
 
 def test_projection_bound_and_stale_observation(tmp_path):
@@ -630,3 +633,30 @@ def test_imported_symbol_mismatch_does_not_create_contract_edge(tmp_path):
 
     assert not contexts[tmp_path / "base.py"].get("implementation_contract_lines")
     assert edges == []
+
+
+def test_chain_labels_taint_source_and_sink_and_marks_leads():
+    from factoryline.deep_audit_loop import _chain
+
+    step = {"source_sha256": "a" * 64, "start_line": 1}
+    item = {
+        "finding_id": "f",
+        "rule_id": "py.sql",
+        "report_tier": "lead",
+        "trace_sha256": "b" * 64,
+        "locations": [{"path": "db.py", "start_line": 9, "source_sha256": "c" * 64}],
+        "flows": [
+            [
+                {**step, "path": "web.py", "start_line": 3, "kinds": ["source"]},
+                {**step, "path": "svc.py", "start_line": 5, "kinds": []},
+                {**step, "path": "db.py", "start_line": 9, "kinds": ["sink"]},
+            ]
+        ],
+    }
+    chain = _chain(item, {"decision": "REVIEW"}, "r.json")
+    assert chain["source"] == "web.py:3"
+    assert chain["finding"] == "py.sql (lead) -> db.py:9"
+    plain = _chain(
+        {**item, "flows": [], "report_tier": "finding"}, {"decision": "X"}, "r"
+    )
+    assert (plain["source"], plain["finding"]) == ("db.py:9", "py.sql -> db.py:9")
