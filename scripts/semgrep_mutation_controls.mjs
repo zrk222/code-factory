@@ -169,7 +169,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
   'opt.factory.rules.go.parameter-shell-command': 4,
   'opt.factory.rules.go.parameter-sql-text': 10,
-  'opt.factory.rules.go.request-command-injection': 6,
+  'opt.factory.rules.go.request-command-injection': 5,
   'opt.factory.rules.go.request-html-injection': 6,
   'opt.factory.rules.go.request-path-traversal': 1,
   'opt.factory.rules.go.request-sql-injection': 6,
@@ -197,7 +197,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.parameter-shell-command': 1,
   'opt.factory.rules.php.parameter-sql-text': 15,
   'opt.factory.rules.php.request-command-injection': 13,
-  'opt.factory.rules.php.request-file-inclusion': 3,
+  'opt.factory.rules.php.request-file-inclusion': 5,
   'opt.factory.rules.php.request-html-injection': 4,
   'opt.factory.rules.php.request-path-traversal': 13,
   'opt.factory.rules.php.request-sql-injection': 19,
@@ -308,7 +308,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 415;
+const REVIEWED_FINDINGS = 416;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -335,7 +335,7 @@ export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
     if (Number.isInteger(sourceLine)) tracedCounts.set(rule, (tracedCounts.get(rule) ?? 0) + 1);
   }
   const requiredCounts = {
-    go: { command: 6, sql: 4 },
+    go: { command: 5, sql: 4 },
     java: { command: 3, sql: 7 },
     csharp: { command: 3, sql: 3 },
     ruby: { command: 3, sql: 4 },

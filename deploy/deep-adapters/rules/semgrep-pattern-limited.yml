@@ -1323,7 +1323,13 @@ rules:
       - pattern: (int) $VALUE
       - pattern: (integer) $VALUE
       - pattern: intval(...)
+      # A check method on a parameter that is never reassigned; sanitizers drop
+      # every label, so request data must not pass through it.
       - patterns:
+          - pattern-inside: function $SF(..., $VALUE, ...) { ... }
+          - pattern-not-inside: |
+              $VALUE = $ANY;
+              ...
           - pattern: $OBJ->$CHECK($VALUE)
           - metavariable-regex: {metavariable: $CHECK, regex: '^(?i:assert|validate|ensure)\w*$'}
           - focus-metavariable: $VALUE
@@ -1692,12 +1698,6 @@ rules:
               - pattern: "$CTX.QueryParam(...)"
               - pattern: "$CTX.FormValue(...)"
         exact: true
-      - patterns:
-          - pattern-either:
-              - pattern: yaml.Unmarshal($DATA, $OUT)
-              - pattern: yaml.NewDecoder(...).Decode($OUT)
-          - focus-metavariable: $OUT
-        by-side-effect: only
     pattern-sanitizers:
       - pattern-either:
           - pattern: strconv.Atoi(...)

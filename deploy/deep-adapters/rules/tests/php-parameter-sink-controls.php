@@ -246,4 +246,20 @@ class LocaleLoaderControls
         // ok: php.request-file-inclusion
         return include $name;
     }
+
+    public function requestThroughCheck()
+    {
+        $template = $_GET['template'];
+        $this->ensureSession($template);
+        // ruleid: php.request-file-inclusion
+        include $template;
+    }
+
+    public function reassignedParameter($locale)
+    {
+        $locale = $_GET['locale'];
+        $this->assertValidLocale($locale);
+        // ruleid: php.request-file-inclusion
+        include $locale;
+    }
 }
