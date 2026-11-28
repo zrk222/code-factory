@@ -7,6 +7,7 @@ import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
 import { meterHtml, savingsHtml } from "../meter";
 import { createUnapprovedRequirementProofDraft, findRequirementEvidence, isRequirementId, MAX_TEST_DECLARATIONS_PER_DOCUMENT, MAX_TEST_PROOF_MANIFEST_BYTES, readTestProofManifest, requirementIds, requirementProofManifestPath, testDeclarations, testProofId } from "../requirement";
+import { scanDiagnosticSpecs, singleFileScanArgs } from "../scan";
 import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "../star_prompt";
 
 const receipt = {
@@ -317,3 +318,17 @@ void (async () => {
     fsPromises.realpath = originalRealpath;
   }
 })();
+
+test("single-file scan findings map to zero-based editor diagnostics", () => {
+  const report = JSON.stringify({ static_security: { findings: [
+    { code: "SECURITY_UNSAFE_YAML", message: "YAML is loaded without an explicit reviewed Loader.", severity: "HIGH", path: "loader.py", line: 164, column: 19, end_line: 164, end_column: 58 },
+    { code: "OTHER", message: "elsewhere", severity: "HIGH", path: "other.py", line: 3 },
+    { code: "BAD", message: "no line", severity: "LOW", path: "loader.py" },
+  ] } });
+  const specs = scanDiagnosticSpecs(report, "/work/pkg/loader.py");
+  assert.equal(specs.length, 1);
+  assert.deepEqual(specs[0], { startLine: 163, startColumn: 18, endLine: 163, endColumn: 57,
+    message: "YAML is loaded without an explicit reviewed Loader. (single-file scan; cross-file context not applied)", code: "SECURITY_UNSAFE_YAML", level: "warning" });
+  assert.deepEqual(scanDiagnosticSpecs("not json", "loader.py"), []);
+  assert.deepEqual(singleFileScanArgs("/tmp/x"), ["scan", "--root", "/tmp/x", "--static-only", "--json"]);
+});

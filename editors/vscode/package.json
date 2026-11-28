@@ -63,7 +63,9 @@
     "onCommand:factoryline.openProductMissions",
     "onCommand:factoryline.openGraphOps",
     "onCommand:factoryline.openRequirementEvidence",
-    "onCommand:factoryline.draftTestProof"
+    "onCommand:factoryline.draftTestProof",
+    "onCommand:factoryline.scanCurrentFile",
+    "onLanguage:python"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -143,6 +145,10 @@
       {
         "command": "factoryline.draftTestProof",
         "title": "FactoryLine: Draft Unapproved Test Proof"
+      },
+      {
+        "command": "factoryline.scanCurrentFile",
+        "title": "FactoryLine: Scan Current File"
       }
     ],
     "configuration": {
@@ -157,6 +163,11 @@
           "type": "string",
           "default": "forge",
           "description": "ForgeLine CLI executable for repository inventory. Arguments are fixed by the extension."
+        },
+        "factoryline.scanOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run a static single-file FactoryLine scan when a Python file is saved in a trusted workspace and show the findings as diagnostics. Cross-file context is not applied."
         }
       }
     }
