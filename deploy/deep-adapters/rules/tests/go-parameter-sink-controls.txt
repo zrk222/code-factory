@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"text/template"
+	"gopkg.in/yaml.v3"
 
 	"github.com/gin-gonic/gin"
 )
@@ -266,4 +267,23 @@ func renderConstantSQLTemplate(content string, out *bytes.Buffer) string {
   if err != nil { return "" }
   if err = entry.Execute(out, nil); err != nil { return "" }
   return "done"
+}
+
+type buildConfig struct {
+	Program string `yaml:"program"`
+	Dir     string `yaml:"dir"`
+}
+
+func configCommandControls(content []byte) error {
+	conf := &buildConfig{}
+	// source: go.request-command-injection
+	if err := yaml.Unmarshal(content, conf); err != nil {
+		return err
+	}
+	args := []string{conf.Program, "-C", conf.Dir}
+	// ruleid: go.request-command-injection
+	exec.Command(args[0], args[1:]...)
+	// ok: go.request-command-injection
+	exec.Command("make", "-C", conf.Dir)
+	return nil
 }
