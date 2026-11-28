@@ -6380,6 +6380,62 @@ def test_codeql_source_accounting_marks_missing_or_degraded_source_rows(
     )
 
 
+def test_codeql_actions_accounting_selects_workflows_and_action_metadata():
+    from factoryline.deep_audit_io import _codeql_source_accounting, source_language
+    from factoryline.deep_audit_sarif import _required_sources
+
+    workflow_paths = (
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yaml",
+        "action.yml",
+        "tools/release/action.yaml",
+    )
+    other_paths = (
+        "settings.json",
+        "pyproject.toml",
+        "config/deploy.yml",
+        ".github/workflows/nested/ci.yaml",
+        ".github/workflows/settings.json",
+    )
+    source_sha = "a" * 64
+    inventory = {
+        "files": [
+            {"path": path, "sha256": source_sha, "language": source_language(path, b"")}
+            for path in (*workflow_paths, *other_paths)
+        ]
+    }
+    lane = {"engine": "codeql", "languages": ["configuration"]}
+    required = {path: source_sha for path in workflow_paths}
+    measurement = {
+        "rows": {
+            path: {"syntax_nodes": 1, "parse_errors": 0} for path in workflow_paths
+        },
+        "archived_sources": required,
+    }
+    assert _required_sources(inventory, lane) == required
+    assert _required_sources(inventory, {**lane, "engine": "trivy"}) == {
+        path: source_sha for path in (*workflow_paths, *other_paths)
+    }
+    accounting = _codeql_source_accounting(measurement, inventory, lane)
+    assert accounting["state"] == "COMPLETE"
+    assert accounting["required_paths"] == sorted(workflow_paths)
+    assert accounting["measured_paths"] == sorted(workflow_paths)
+
+    del measurement["rows"]["action.yml"]
+    accounting = _codeql_source_accounting(measurement, inventory, lane)
+    assert accounting["state"] == "INCOMPLETE"
+    assert accounting["missing_paths"] == ["action.yml"]
+
+    no_actions = {
+        "files": [row for row in inventory["files"] if row["path"] in other_paths]
+    }
+    accounting = _codeql_source_accounting(
+        {"rows": {}, "archived_sources": {}}, no_actions, lane
+    )
+    assert accounting["state"] == "INCOMPLETE"
+    assert accounting["required_paths"] == []
+
+
 def test_codeql_source_accounting_empty_required_set_is_incomplete():
     from factoryline.deep_audit_io import _codeql_source_accounting
 

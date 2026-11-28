@@ -1216,7 +1216,7 @@ def _required_sources(inventory, lane):
     return {
         item["path"]: item["sha256"]
         for item in inventory["files"]
-        if item["language"] in lane["languages"]
+        if _deep_audit_io._lane_source_applies(item, lane)
     }
 
 

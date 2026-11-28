@@ -2830,7 +2830,7 @@ def _native_profile_coverage(
         "sources": {
             item["path"]: item["sha256"]
             for item in inventory["files"]
-            if item["language"] in lane["languages"]
+            if _lane_source_applies(item, lane)
         },
         "mode": lane["mode"],
         "fallback": False,
@@ -3240,7 +3240,7 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
     required = {
         item["path"]: item["sha256"]
         for item in inventory["files"]
-        if item["language"] in lane["languages"]
+        if _lane_source_applies(item, lane)
     }
     archived, archive_sha = _deep_audit_io._codeql_archived_sources(
         source, scratch, required
@@ -3294,6 +3294,19 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
     }
 
 
+def _lane_source_applies(item: dict, lane: dict) -> bool:
+    language = item["language"]
+    if language not in lane["languages"]:
+        return False
+    if lane.get("engine") != "codeql" or language != "configuration":
+        return True
+    # In CodeQL, configuration denotes GitHub Actions workflows and metadata.
+    parent, _, name = item["path"].rpartition("/")
+    return name in {"action.yml", "action.yaml"} or (
+        parent == ".github/workflows" and name.endswith((".yml", ".yaml"))
+    )
+
+
 def _codeql_source_accounting(measurement, inventory, lane):
     try:
         rows, archived = measurement["rows"], measurement["archived_sources"]
@@ -3301,7 +3314,7 @@ def _codeql_source_accounting(measurement, inventory, lane):
             raise ValueError("source evidence maps required")
         checks = {}
         for item in inventory["files"]:
-            if item["language"] in lane["languages"]:
+            if _lane_source_applies(item, lane):
                 path = _deep_audit_io.relative_path(item["path"])
                 if path in checks:
                     raise ValueError("duplicate source inventory")

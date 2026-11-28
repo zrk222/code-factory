@@ -2472,7 +2472,7 @@ def execute_codeql_native_replay(request, source, scratch, timeout):
     required = {
         item["path"]: item["sha256"]
         for item in inventory["files"]
-        if item["language"] in lane["languages"]
+        if _deep_audit_io._lane_source_applies(item, lane)
     }
     _deep_audit_io.verify_codeql_retained_evidence(coverage, lane, required)
     deadline = _deep_audit_io.time.monotonic() + _deep_audit_io.require_int(
