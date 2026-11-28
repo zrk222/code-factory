@@ -835,3 +835,197 @@ def test_arm_g_source_pins_match_the_checkout():
     from scripts.precision_cohort_preflight import arm_g_lock
 
     arm_g_lock(Path(__file__).resolve().parents[1])
+
+
+def test_arm_g_exclusive_json_write_binds_the_actual_bytes(tmp_path):
+    from scripts import precision_cohort_preflight as preflight
+
+    target = tmp_path / "output.json"
+    digest = preflight.arm_g_write(target, {"items": []})
+    assert preflight.arm_g_json(target) == ({"items": []}, _sha(target))
+    assert digest == _sha(target)
+    with pytest.raises(FileExistsError):
+        preflight.arm_g_write(target, {"items": ["replacement"]})
+    assert preflight.arm_g_json(target)[0] == {"items": []}
+
+
+def test_arm_g_packet_checks_scope_and_publishes_once(tmp_path, monkeypatch):
+    from scripts import precision_cohort_preflight as preflight
+
+    repo = Path(__file__).resolve().parents[1]
+    lock, _ = preflight.arm_g_lock(repo)
+    rules = lock["repo_files"][preflight.ARM_G_RULES]
+    score = {
+        "schema": "factory.recall-result.v1",
+        "scope": "ecosystem",
+        "ruleset_sha256": rules,
+        "profile_sha256": lock["repo_files"][preflight.ARM_G_PROFILE],
+        "engine": {"executable_sha256": next(iter(lock["engine"]["sha256"].values()))},
+        "cases": [],
+    }
+    assert preflight.arm_g_score_repositories(score, lock, rules) == {}
+    with pytest.raises(ValueError, match="locked scan"):
+        preflight.arm_g_score_repositories({**score, "scope": "scannable"}, lock, rules)
+    path = tmp_path / "score.json"
+    path.write_text(json.dumps(score))
+    args = SimpleNamespace(
+        repo=repo,
+        run=tmp_path / "run",
+        score=path,
+        workdir=tmp_path,
+        score_sha256=_sha(path),
+        seed="inert",
+    )
+
+    def export(argv, **_kwargs):
+        assert argv[2] == "review-alerts" and argv[
+            argv.index("--score-sha256") + 1
+        ] == _sha(path)
+        Path(argv[argv.index("--out") + 1]).write_text("[]")
+
+    monkeypatch.setattr(preflight.subprocess, "run", export)
+    receipt = preflight.arm_g_packet(args)
+    assert receipt["items"] == 0
+    assert receipt["packet_sha256"] == _sha(args.run / "packet.json")
+    with pytest.raises(ValueError, match="already exists"):
+        preflight.arm_g_packet(args)
+    assert receipt["packet_sha256"] == _sha(args.run / "packet.json")
+
+
+def test_arm_g_packet_preserves_blinding_and_rejects_duplicate_alerts(tmp_path):
+    from scripts import precision_cohort_preflight as preflight
+
+    origin = tmp_path / "source.txt"
+    origin.write_text("inert marker", encoding="utf-8")
+    alert = {
+        "root": str(tmp_path),
+        "case": "inert-case",
+        "rule": "python.test",
+        "path": origin.name,
+        "line": 1,
+        "span": [1, 0, 9],
+        "on_fix_hunk": True,
+        "source_sha256": _sha(origin),
+        "rules_sha256": "a" * 64,
+    }
+    repos, tiers = {"inert-case": "sample/repo"}, {"python.test": "lead"}
+    item, key = preflight.arm_g_packet_item(alert, repos["inert-case"], tiers, tmp_path)
+    assert item["span"] == key["span"] and "rule" not in item and "case" not in item
+    assert key["source_sha256"] == _sha(origin)
+    args = SimpleNamespace(workdir=tmp_path, seed="inert")
+    assert preflight.arm_g_packet_rows(args, [alert], repos, tiers, "a" * 64) == (
+        [item],
+        {item["item"]: key},
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        preflight.arm_g_packet_rows(args, [alert, alert], repos, tiers, "a" * 64)
+    origin.write_text("mutated marker", encoding="utf-8")
+    with pytest.raises(ValueError, match="source digest differs"):
+        preflight.arm_g_packet_item(alert, repos["inert-case"], tiers, tmp_path)
+
+
+def test_arm_g_votes_requires_exact_citations_and_packet_identity(tmp_path):
+    from scripts import precision_cohort_preflight as preflight
+
+    item = {"item": "marker", "line": 2, "context_wide": "1  A\n2> B"}
+    vote = {
+        "item": "marker",
+        "decision": "REPORT",
+        "source_kind": "request",
+        "source_line": 1,
+        "entry_line": 1,
+        "sink_line": 2,
+    }
+    assert preflight.arm_g_verified_vote(vote, item, {1})
+    assert not preflight.arm_g_verified_vote({**vote, "source_line": 99}, item, {1})
+    (tmp_path / "triage-Ha-part0.json").write_text(
+        json.dumps({"packet_sha256": "bound", "triage": [vote]})
+    )
+    assert preflight.arm_g_votes(tmp_path, "H", {"marker": item}, "bound") == {
+        "marker": 1
+    }
+    with pytest.raises(ValueError, match="different triage packet"):
+        preflight.arm_g_votes(tmp_path, "H", {"marker": item}, "different")
+
+
+def test_arm_g_endpoint_requires_bound_reviews_and_replays_the_same_metrics(tmp_path):
+    pytest.importorskip("scipy.stats")
+    from scripts import precision_cohort_preflight as preflight
+
+    item = {
+        "item": "marker",
+        "line": 2,
+        "context_wide": "1  A\n2> B",
+        "repository": "sample/repo",
+    }
+    packet = {"instructions": "Inert markers", "items": [item]}
+    items = preflight.arm_g_index(packet["items"])
+    with pytest.raises(ValueError, match="duplicate"):
+        preflight.arm_g_index([item, item])
+    packet_sha = preflight.arm_g_write(tmp_path / "packet.json", packet)
+    labels = [{"item": "marker", "verdict": "TP", "reason": "Inert marker."}]
+    for model in ("opus", "fable"):
+        preflight.arm_g_write(
+            tmp_path / f"labels-{model}.json",
+            {"packet_sha256": packet_sha, "labels": labels},
+        )
+    assert (
+        preflight.arm_g_reviews(tmp_path / "labels-opus.json", packet_sha, items)[
+            "marker"
+        ]
+        == labels[0]
+    )
+    adjudication, _, _ = preflight.arm_g_disagreements(
+        tmp_path, packet, packet_sha, items
+    )
+    assert adjudication["disagreements"] == []
+    preflight.arm_g_write(tmp_path / "adjudication-packet.json", adjudication)
+    final, left, right = preflight.arm_g_final_verdicts(
+        tmp_path, packet, packet_sha, items
+    )
+    assert final == left == right == {"marker": "TP"}
+    key = {"marker": {"case": "inert-case", "tier": "finding", "on_fix_hunk": True}}
+    score = tmp_path / "score.json"
+    score_sha = preflight.arm_g_write(score, {"summary": {"scored": 1}})
+    key_sha = preflight.arm_g_write(
+        tmp_path / "key.json",
+        {"packet_sha256": packet_sha, "score_sha256": score_sha, "key": key},
+    )
+    preflight.arm_g_write(tmp_path / "stage2.json", {**packet, "items": []})
+    args = SimpleNamespace(run=tmp_path, score=score, key_sha256=key_sha)
+    metrics = preflight.arm_g_endpoint(args, packet, packet_sha, items)
+    assert metrics == preflight.arm_g_metrics(
+        items, key, final, left, right, {"marker": 0}, {}, 1
+    )
+    assert metrics["recall"] == {
+        "scored_cases": 1,
+        "hit_cases_all_alerts": 1,
+        "hit_cases_kept_as_findings": 0,
+    }
+
+
+def test_arm_g_metrics_thresholds_and_unclear_cases():
+    pytest.importorskip("scipy.stats")
+    from scripts import precision_cohort_preflight as preflight
+
+    items = {
+        "a": {"repository": "one"},
+        "b": {"repository": "two"},
+        "c": {"repository": "two"},
+    }
+    key = {"a": {"case": "a"}, "b": {"case": "b"}, "c": {"case": "c"}}
+    final = {"a": "TP", "b": "FP", "c": "UNCLEAR"}
+    assert preflight.arm_g_read_out(items, final) == (1, 1, 0.5)
+    assert preflight.arm_g_case_counts(items, key, final) == (1, 2)
+    assert preflight.arm_g_bounds(0, 0) == (None, None)
+    assert preflight.arm_g_threshold(
+        0.49, 0.246, (5, 0.8, 0.53), (5, 4, 0.53), True
+    ) == (True, True, True)
+    assert preflight.arm_g_robustness(items, items, final, 2) == (
+        "one",
+        0.0,
+        1 / 3,
+        False,
+    )
+    result = preflight.arm_g_verdict(items, items, key, final)
+    assert result["inconclusive_small_n"] and not result["six_x_confirmed"]
