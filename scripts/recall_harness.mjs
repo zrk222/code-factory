@@ -291,14 +291,28 @@ function regionSpan({ startLine, startColumn, endLine, endColumn }) {
   return [startColumn ?? null, lineOffset, endColumn ?? null];
 }
 
-export function sarifTraceThreads(result, resolvePath) {
+export function lineCoordinatesOnly(region) {
+  const { startLine, endLine = startLine, startColumn = 1, endColumn } = region ?? {};
+  const positive = value => Number.isSafeInteger(value) && value > 0;
+  if (![startLine, endLine, startColumn].every(positive) || endLine < startLine) return false;
+  if (endColumn !== undefined && (!positive(endColumn) || (endLine === startLine && endColumn < startColumn))) {
+    return false;
+  }
+  return !['charOffset', 'charLength', 'byteOffset', 'byteLength'].some(key => Object.hasOwn(region, key));
+}
+
+export function sarifTraceThreads(result, resolvePath, includeSpans = false) {
   return (result.codeFlows ?? []).map(flow =>
     (flow.threadFlows ?? []).map(thread => (thread.locations ?? []).map(step => {
       const location = step.location?.physicalLocation;
       if (!location?.artifactLocation) return { state: 'nonphysical' };
       const path = resolvePath(location.artifactLocation);
       const line = location.region?.startLine;
-      return Number.isSafeInteger(line) && line > 0 ? { path, line } : { path, state: 'invalid_line' };
+      if (!Number.isSafeInteger(line) || line < 1) return { path, state: 'invalid_line' };
+      if (!includeSpans) return { path, line };
+      const span = regionSpan(location.region);
+      return { path, line, ...(span ? { span } : {}),
+        ...(!lineCoordinatesOnly(location.region) ? { mixed_coordinates: true } : {}) };
     })));
 }
 
@@ -306,7 +320,8 @@ function verifiedTraceSteps(thread, path, line) {
   const steps = thread.filter(step => step.state !== 'nonphysical');
   const sink = steps.at(-1);
   if (steps.length < 2 || sink?.path !== path || sink.line !== line
-    || steps.some(step => step.state || !step.path || !Number.isSafeInteger(step.line) || step.line < 1)) {
+    || steps.some(step => step.state || step.mixed_coordinates || !step.path
+      || !Number.isSafeInteger(step.line) || step.line < 1)) {
     return null;
   }
   return steps;
@@ -327,7 +342,7 @@ export function anchoredTraceMatches({ oldFindings, newFindings, hunks, families
       const anchor = steps.slice(0, -1).find(step => hunks[step.path]?.old?.includes(step.line));
       if (!anchor) continue;
       const match = {
-        rule, sink: { path, line, ...(span ? { span } : {}) }, anchor,
+        rule, sink: { path, line, ...(span ? { span } : {}) }, anchor: { path: anchor.path, line: anchor.line },
         source_paths: [...new Set(steps.map(step => step.path))].sort(),
         fixed_sink_residual: fixedSinks.has(sinkKey(rule, hunks[path]?.new_path ?? path)),
       };
