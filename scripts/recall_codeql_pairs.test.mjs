@@ -296,6 +296,12 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
     source_paths: ['helper.py', 'sample.py'], fixed_sink_residual: false,
   }]);
   assert.equal(score(finding([anchor, sink]), [finding()]).cases[0].cross_file_trace_matches[0].fixed_sink_residual, true);
+  const mixedAnchor = position('sample.py');
+  mixedAnchor.physicalLocation.region.charOffset = 0;
+  const mixed = score(finding([mixedAnchor, sink]));
+  assert.equal(mixed.cases[0].fingerprints.old.invalid_trace_steps, 1);
+  assert.equal(mixed.cross_file_trace_hits, 0);
+  assert.equal(Object.hasOwn(mixed.cases[0], 'anchored_trace_matches'), false);
   for (const trace of [finding([anchor], [sink]), finding([sink, anchor]),
     finding([position('sample.py', 2), sink]), finding([anchor, position('missing.py'), sink])]) {
     const invalid = score(trace);
@@ -572,7 +578,8 @@ test('native detector arms retain their own extraction and count one shared case
   const { root, row, value, binding, json, write, run } = stagedPair(t, 'src', 'PyPI', 'KEEP = 3\n');
   const single = value.cases[0];
   const read = pin => JSON.parse(readFileSync(join(root, pin.path), 'utf8'));
-  const arm = (name, { hit, parsed, offHunk = false, offFile = '', fixedHunk = false, ambiguousFixed = false }) => {
+  const arm = (name, { hit, parsed, offHunk = false, offFile = '', fixedHunk = false, ambiguousFixed = false,
+    mixedTrace = false }) => {
     const id = 'test/' + name;
     const query = write(name + '.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
     const capture = side => {
@@ -617,8 +624,15 @@ test('native detector arms retain their own extraction and count one shared case
         scan.results = [{ ruleId: id, locations: [position(2)], codeFlows: [{
           threadFlows: [{ locations: [1, 2].map(line => ({ location: position(line) })) }],
         }] }];
-      } else if (side === 'old' && hit) scan.results[0].ruleId = id;
-      else scan.results = [];
+      } else if (side === 'old' && hit) {
+        const [result] = scan.results;
+        result.ruleId = id;
+        if (mixedTrace) {
+          result.codeFlows = [{ threadFlows: [{ locations: [{ location: { physicalLocation: {
+            artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, charOffset: 0 },
+          } } }] }] }];
+        }
+      } else scan.results = [];
       if (side === 'fixed' && !parsed) scan.invocations[0].toolExecutionNotifications = [];
       const sarif = json(name + '-' + side + '.sarif', report);
       const observation = json(name + '-' + side + '.json', { ...read(prior.observation),
@@ -704,6 +718,17 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(residual.pattern_join.follow_up[0].next, 'review_fixed_side_path');
   assert.equal(residual.pattern_join.case_evidence[0].layers[4].next, 'review_fixed_side_path');
   assert.equal(residual.pattern_join.eligible_native_additions, 0);
+  const unresolvedTrace = arm('mixed-trace', { hit: true, parsed: true, mixedTrace: true });
+  const mixedTraceOnly = evaluate([unresolvedTrace]);
+  assert.equal(mixedTraceOnly.strict_hunk_hits, 1);
+  assert.equal(mixedTraceOnly.pattern_join.eligible_native_additions, 0);
+  assert.equal(mixedTraceOnly.pattern_join.cases[0].disposition, 'native_trace_source_unresolved');
+  const splitResidual = evaluate([unresolvedTrace, arm('split-fixed', { parsed: true, fixedHunk: true })]);
+  assert.equal(splitResidual.pattern_join.cases[0].disposition, 'fixed_side_residual');
+  assert.deepEqual(splitResidual.pattern_join.cases[0].arm_dispositions.map(arm => arm.disposition).sort(),
+    ['fixed_side_residual', 'native_trace_source_unresolved']);
+  assert.equal(splitResidual.pattern_join.follow_up[0].next, 'review_fixed_side_path');
+  assert.equal(splitResidual.pattern_join.eligible_native_additions, 0);
   const uncertain = evaluate([arm('ambiguous-fixed', { hit: true, parsed: true, ambiguousFixed: true })]);
   assert.equal(uncertain.pattern_join.follow_up[0].next, 'review_native_alert_locations');
   assert.equal(uncertain.pattern_join.eligible_native_additions, 0);

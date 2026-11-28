@@ -320,7 +320,8 @@ function verifiedTraceSteps(thread, path, line) {
   const steps = thread.filter(step => step.state !== 'nonphysical');
   const sink = steps.at(-1);
   if (steps.length < 2 || sink?.path !== path || sink.line !== line
-    || steps.some(step => step.state || !step.path || !Number.isSafeInteger(step.line) || step.line < 1)) {
+    || steps.some(step => step.state || step.mixed_coordinates || !step.path
+      || !Number.isSafeInteger(step.line) || step.line < 1)) {
     return null;
   }
   return steps;

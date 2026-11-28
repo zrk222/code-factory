@@ -184,7 +184,7 @@ function captureFingerprints(capture, revision, policy, packets, findings, flows
     sarif_sha256: capture.sarif.sha256, archive_sha256: capture.archive.sha256,
     location_trace_sha256: caseDigest(locations), flow_trace_sha256: caseDigest(flows),
     trace_steps: steps.length, nonphysical_trace_steps: steps.filter(step => step.state === 'nonphysical').length,
-    invalid_trace_steps: steps.filter(step => step.state === 'invalid_line').length,
+    invalid_trace_steps: steps.filter(step => step.state === 'invalid_line' || step.mixed_coordinates).length,
     traced_findings: locations.filter(row => row.trace.length).length };
 }
 
@@ -390,7 +390,9 @@ function patternCoverageGap(pattern, captureStates) {
   return null;
 }
 
-function joinedDisposition(selected, native, evidence) {
+function joinedDisposition(selected, native, evidence, completePatternMiss) {
+  if (completePatternMiss && evidence.some(({ arm }) => arm.fixed_hunk_residuals
+    && arm.native_coverage.fixed.complete)) return 'fixed_side_residual';
   if (selected.disposition !== 'eligible') return selected.disposition;
   if (native.fixed_hunk_residuals) return 'fixed_side_residual';
   if (evidence.some(({ arm }) => arm.native_family_alerts?.fixed.unresolved_locations)) {
@@ -582,7 +584,8 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     const selected = evidence.find(item => item.disposition === 'eligible')
       ?? evidence.find(item => item.arm.hunk_hit)
       ?? evidence.find(item => item.disposition === 'fixed_side_residual') ?? evidence[0];
-    const disposition = joinedDisposition(selected, native, evidence);
+    const disposition = joinedDisposition(selected, native, evidence,
+      outcome === 'miss' && !coverageGaps.get(native.advisory));
     return { advisory: native.advisory, input_sha256: native.input_sha256, pattern_outcome: outcome,
       pattern_file_hit: searchedFileHit(row, outcome), native_hunk_hit: native.hunk_hit, native_file_hit: native.file_hit,
       native_extraction_complete: selected.extraction_complete, disposition,
