@@ -831,10 +831,45 @@ def test_arm_g_scoring_refuses_a_score_from_another_run(tmp_path, capsys):
     assert "sealed key bindings differ" in capsys.readouterr().err
 
 
-def test_arm_g_source_pins_match_the_checkout():
-    from scripts.precision_cohort_preflight import arm_g_lock
+@pytest.fixture
+def arm_g_repo(tmp_path):
+    from scripts import precision_cohort_preflight as preflight
 
-    arm_g_lock(Path(__file__).resolve().parents[1])
+    repo = tmp_path / "candidate"
+    lock_path = preflight.ARM_G_DIRECTORY / "run-lock.json"
+    registered, _ = preflight.arm_g_json(
+        Path(__file__).resolve().parents[1] / lock_path
+    )
+    files = {
+        preflight.ARM_G_RULES: b"rules: []\n",
+        preflight.ARM_G_PROFILE: b"{}\n",
+        "scripts/recall_harness.mjs": b"// inert scorer\n",
+    }
+    pins = {}
+    for name, raw in files.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        pins[name] = sha256(raw).hexdigest()
+    scorer = pins.pop("scripts/recall_harness.mjs")
+    lock = {
+        "engine": registered["engine"],
+        "repo_files": pins,
+        "scorer": {"files": {"recall_harness.mjs": scorer}},
+    }
+    (repo / lock_path).parent.mkdir(parents=True)
+    preflight.arm_g_write(repo / lock_path, lock)
+    return repo
+
+
+def test_arm_g_source_pins_match_the_checkout(arm_g_repo):
+    from scripts import precision_cohort_preflight as preflight
+
+    _, digest = preflight.arm_g_lock(arm_g_repo)
+    assert digest == _sha(arm_g_repo / preflight.ARM_G_DIRECTORY / "run-lock.json")
+    (arm_g_repo / "scripts/recall_harness.mjs").write_bytes(b"// changed scorer\n")
+    with pytest.raises(ValueError, match="lock mismatch: scripts/recall_harness"):
+        preflight.arm_g_lock(arm_g_repo)
 
 
 def test_arm_g_exclusive_json_write_binds_the_actual_bytes(tmp_path):
@@ -888,11 +923,11 @@ def test_arm_g_commitment_checks_schema_cohort_and_digest(tmp_path, changes, acc
 
 
 def test_arm_g_score_repositories_checks_pins_before_packet_publication(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, arm_g_repo
 ):
     from scripts import precision_cohort_preflight as preflight
 
-    repo = Path(__file__).resolve().parents[1]
+    repo = arm_g_repo
     lock, _ = preflight.arm_g_lock(repo)
     rules = lock["repo_files"][preflight.ARM_G_RULES]
     manifest_sha256 = "a" * 64
@@ -974,6 +1009,13 @@ def test_arm_g_score_repositories_checks_pins_before_packet_publication(
     with pytest.raises(ValueError, match="already exists"):
         preflight.arm_g_packet(args)
     assert receipt["packet_sha256"] == _sha(args.run / "packet.json")
+
+    (repo / preflight.ARM_G_RULES).write_bytes(b"rules: []\n# changed detector\n")
+    args.run = tmp_path / "drifted"
+    with pytest.raises(ValueError) as error:
+        preflight.arm_g_packet(args)
+    assert str(error.value) == f"Arm G lock mismatch: {preflight.ARM_G_RULES}"
+    assert not args.run.exists()
 
 
 def test_arm_g_packet_preserves_blinding_and_rejects_duplicate_alerts(tmp_path):
