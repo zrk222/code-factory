@@ -2,7 +2,7 @@
  "schema": "factory.precision-tier-prereg.v1",
  "date": "2026-11-27",
  "status": "Pre-registered before any scoring of the 323-case reserve or the 10-case Q4 calendar cohort.",
- "launch_readiness": "Draft. The packet, scoring and corroboration prototypes are archived. Primary endpoint execution requires a verified changed-file population, full alert spans, a sealed arm and tier key, and source-bound corroboration.",
+ "launch_readiness": "Amended 2026-11-27 before the 323-case reserve or the 10-case Q4 cohort is opened. Arm G is the only confirmatory arm. Its population is the recall harness's review-alerts export (exact changed-file membership, full spans, source digests, checked against the score receipt); precision_cohort_preflight.py arm-g packet binds the arm and tier key to the packet digest. Arms C and D (CodeQL corroboration) are not part of the confirmatory run and keep their draft status until source-bound corroboration is qualified.",
  "tier_policy": {
   "finding": "alerts from rules whose metadata.confidence is HIGH or MEDIUM",
   "lead": "alerts from rules whose metadata.confidence is LOW (listed for review; nothing is suppressed)",
@@ -32,25 +32,26 @@
  },
  "labeling_protocol": {
   "population": "census of finding-tier alerts; lead-tier census up to 300 alerts, otherwise a seeded (20261127) sample of 300",
-  "packet": "build_packet.py: repository, file, line, span, claimed weakness, code context (+-5 and +-40 lines, file imports); no advisory id, rule id, arm, tier or outcome",
+  "packet": "precision_cohort_preflight.py arm-g packet: repository, file, line, span, claimed weakness, code context (+-5 and +-40 lines, file imports); no advisory id, rule id, arm, tier or outcome",
   "reviewers": "arm 1 fresh Claude Opus agents, arm 2 fresh Claude Sonnet agents, disjoint packet parts, reading only their part, no web",
   "judge": "one fresh Fable 5.2 agent on the disagreements, reading only the judge packet",
   "final": "score_labels.py: agreed verdict, else the judge verdict"
  },
  "tools_sha256": {
-  "build_packet.py": "24a4aa622c14a1a498b2b15ef10fe1b6751d066434379aea8270aba1804b97f0",
+  "scripts/precision_cohort_preflight.py": "5f727966db901503edb8a86f7e4ca7e4437bd91df3d4d1a9e28bade39a7020c1",
   "score_labels.py": "2366898135889db9e2eed59ae1b61363ddc187cc418ae4763ce6e0b1ad7d21fd",
   "tuning-rule-table.txt": "d2312a9f99d01fc7ec2c12130a38362ea5af125c56314daa9147ef606eda8c11"
  },
  "candidate": {
-  "commit": "the commit that adds this record, on #431 (claude/port-q2-rules)",
-  "parent": "60f1d3b9",
-  "rules_sha256": "2dbd16a5134fdc20e54e5a4be6e12c39196a78266db0b984aa0e92d25813ce33",
-  "scorer": "origin/main 82c8ada5: recall_harness 4355f20f, recall_coverage 643ff35f, recall_losses b5a62296",
-  "engine": "OpenGrep 2.1.0, profile 8ec08b71, --timeout=15 --jobs=1"
+  "commit": "the commit that adds this amendment (branch claude/arm-f-relock, parent origin/main eb697a31)",
+  "parent": "eb697a31",
+  "rules_sha256": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd",
+  "rules_change_from_parent": "two javascript.request-path-traversal patterns read !'!$F.startsWith($NB)' and never matched the f !== base && !f.startsWith(base + sep) guard; fixed. No alert changes on exposed-161 or Q2.",
+  "scorer": "origin/main eb697a31: recall_harness e06ec30f, recall_coverage 643ff35f, recall_losses b5a62296",
+  "engine": "OpenGrep 2.1.0 (Linux d6a68a84), profile docs/evidence/recall-registered-exposed-161-profile.json 8ec08b71, --scope ecosystem --scanner-path-policy true --jobs 4 --extra-arg --timeout=15 --extra-arg --jobs=1"
  },
  "arm_C_codeql_corroboration": {
-  "status": "secondary, pre-registered 2026-11-27 before the reserve or Q4 is scored",
+  "status": "not part of the confirmatory run (see launch_readiness)",
   "definition": "finding = MEDIUM/HIGH alert, or a LOW alert with a CodeQL old-side result (profile codeql-<lang>-full, --ram={ram_mib}) of the same weakness family (CWE tag map in corroborate_tuning.py) whose primary location or any code-flow step is in the same file within 3 lines; lead = every other LOW alert",
   "scope": "cases in CodeQL-supported ecosystems (PyPI, npm, RubyGems, Maven); other cases fall back to the tier policy and are reported separately",
   "endpoints": "arm C finding-tier precision and recall on the reserve, beside the tier-only arm, from the same labeled alerts",
@@ -58,7 +59,7 @@
   "tool_sha256": "7ccad9dc116b5080faf9902081640e6fc2ef35d944d19648bb79e758806eb196"
  },
  "arm_D_two_engine_agreement": {
-  "status": "secondary, pre-registered 2026-11-27 before the reserve or Q4 is scored, and before any CodeQL scan of a Q3 case",
+  "status": "not part of the confirmatory run (see launch_readiness)",
   "definition": "finding = a pattern alert of any tier with a same-family CodeQL old-side result touching the same file within 3 lines (as in arm C); every other alert is a lead",
   "target": "finding-tier precision >= 6x the Q3 overall pattern precision at 60f1d3b9 (8.2%), i.e. >= 49%; reported with its Wilson interval and alert count",
   "scope": "CodeQL-supported ecosystems (PyPI, npm, RubyGems, Maven); others reported separately"
@@ -73,5 +74,52 @@
    "python-families.qls": "3c1fd18d5adb60b5f67ad7832ec00de603b7fc47c3d5383c3ac4feea09ab1d01",
    "ruby-families.qls": "8a99c7caf231a6feaf1c63bd215c5ff5bc57431db05b7b55193e2986654bbde8"
   }
+ },
+ "arm_G_two_stage_triage": {
+  "role": "success-criterion arm; replaces arm F as confirmatory. Arm F (Haiku 3/3) and Haiku 3/3 & Sonnet >= 2/3 are secondary, computed from the same votes, no multiplicity claims.",
+  "definition": "finding = an alert with at least 2 of 3 verified Claude Haiku 5.5 REPORT votes and then 3 of 3 verified Claude Sonnet 5.5 REPORT votes; every other alert is a lead (still listed). Both stages use triage_prompt_v3.txt on the same blinded items; Sonnet sees only items that passed the Haiku stage. A vote is verified (model-free, precision_cohort_preflight.py arm-g score) only if it is REPORT, source_kind is a known kind, sink_line is the marked line, and source_line and entry_line appear in the item's numbered context. A missing verdict counts as SUPPRESS; failed calls are retried once, then counted missing.",
+  "models": {
+   "stage1": "claude-haiku-5-5, 3 fresh agents per part",
+   "stage2": "claude-sonnet-5-5, 3 fresh agents per part",
+   "settings": "default agent settings; all prompts and raw outputs stored with the receipt"
+  },
+  "selection": {
+   "data": "exposed-161 (266 changed-file alerts) and Q2 (258) at candidate rules, full census, labels 152 TP / 350 FP / 22 UNCLEAR",
+   "arm_F": "36/152 TP, 7/350 FP, LR+ 11.8, projected 51% at 8.2% prevalence",
+   "arm_G": "26/152 TP, 1/350 FP (3 UNCLEAR among 30 findings), LR+ 59.9, projected 84% (78% with FP+0.5); exposed 16/0/1, Q2 10/1/2; 21 repositories",
+   "independence_check": "the 83 Haiku >= 2/3 candidates were relabeled by fresh Opus and Fable labelers without Sonnet: on arm G's 30 findings Opus 27 TP/3 FP, Fable 27 TP/3 FP, both-agree 26 TP/2 FP/2 split; projected about 64-73% under those labels",
+   "variants_tried": [
+    "Haiku adversarial refuter on 83 candidates (refuted 1 TP, 1 FP; rejected)",
+    "source-before-sink and source-kind gates (rejected: FP counts too small)",
+    "Sonnet replicates citing one source line (cost 9 TP for 2 FP; rejected)",
+    "Haiku 3/3 & Sonnet >= 2/3: 30 TP / 2 FP (secondary)",
+    "Haiku 3/3 & Sonnet 3/3: 22 TP / 0 FP",
+    "Sonnet 3/3 on 147 Haiku-rejected items: 0 reports"
+   ],
+   "disclosure": "Aggregate Q3 reads motivated arm F; no Q3 item informed arm G. The tuning labels used a Sonnet labeler; the reserve labels exclude every triage model."
+  },
+  "reserve_labeling": "labelers claude-opus-5-5 and claude-fable-5-2, independently, on every reserve alert (shuffled, blinded: no triage votes, citations, rule id, tier, arm or outcome), labeler_prompt.txt. Splits go to one adjudication round (precision_cohort_preflight.py arm-g adjudication, adjudication_prompt.txt): a fresh Opus and a fresh Fable each see both rationales; agreement decides, a remaining split is UNCLEAR and excluded from decided n. Sonnet and Haiku never label or adjudicate.",
+  "decision_rule": {
+   "unit": "alert identity (case, path, line, rule, span) from the review-alerts export; cluster ids: case and repository",
+   "min_decided": 5,
+   "six_x_point": "precision >= 49.0%",
+   "eight_x_point": "precision >= 65.6%",
+   "six_x_confirmed": "point >= 49.0% and exact Clopper-Pearson one-sided 95% lower bound > 24.6%, and the same after one outcome per case (majority, ties FP), and point >= 49% after dropping the repository with most TPs, and UNCLEAR-as-FP point >= 49%",
+   "eight_x_confirmed": "point >= 65.6% and lower bound > 32.8%, with the same case, repository and UNCLEAR checks",
+   "strong": "lower bound >= 49% (6x) or >= 65.6% (8x), with the robustness checks",
+   "not_met": "Clopper-Pearson one-sided 95% upper bound < 49%",
+   "inconclusive": "fewer than 5 decided findings, or none of the above",
+   "thresholds": "absolute 49.0% and 65.6%, not re-derived from the reserve's own all-alert precision (reported alongside)",
+   "replaces": "the arm F rule (>= 20 decided, case bootstrap), which stays the rule for the arm F secondary read"
+  },
+  "power_note": "decided findings per alert about 0.017 at 8.2% prevalence; the reserve likely yields 5-9 decided findings (Fable 5.2 review: P(< 5) about 15%, P(point >= 49%) about 70%, P(point >= 65.6%) about 45%, P(6x confirmed) about 50%)",
+  "recall_co_primary": "hit cases with >= 1 finding on the fix hunk / hit cases (all alerts), and / scored cases. Tuning: exposed 13 of 63 hit cases, Q2 4 of 30.",
+  "no_rerun": "single run, no extension or re-run after unsealing; an inconclusive or missed result is reported as such and confirmation moves to a prospective cohort of advisories published after this amendment",
+  "report_also": [
+   "reserve all-alert precision and prevalence",
+   "repository overlap with the tuning repositories",
+   "tier strata",
+   "Q4 separately"
+  ]
  }
 }

@@ -1,0 +1,73 @@
+{
+  "schema": "factory.arm-g-run-lock.v1",
+  "date": "2026-11-27",
+  "rule": "Run python scripts/precision_cohort_preflight.py arm-g verify-lock first from the clean candidate checkout. A failure prevents opening either cohort.",
+  "candidate": {
+    "commit": "the commit containing this lock, based on draft c9efbaf4",
+    "rules_sha256": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd"
+  },
+  "repo_files": {
+    "deploy/deep-adapters/rules/semgrep-pattern-limited.yml": "d96bc134860a258dab03d1e5f9f475adb7fafdfedc572818a4d3b7b5143d2bdd",
+    "deploy/deep-adapters/profiles/semgrep-pattern-limited.json": "281cbc17e6317d0ba65347f1b90bea604e380ef0612623b16f1c12c911289c09",
+    "docs/evidence/recall-registered-exposed-161-profile.json": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+    "docs/evidence/precision-tier-prereg-20261127/prereg.json": "e1c0361c3531429c3d43508eb0765e69f7ba1b06bb81502212fec08ad62c0622",
+    "docs/evidence/precision-tier-prereg-20261127/triage_prompt_v3.txt": "18d3bd04e856e90be3e56889ea832c3e9aedb0a99613db347ef6f02aaed5c419",
+    "docs/evidence/precision-tier-prereg-20261127/triage_agent_prompt.txt": "5995c7950cc2c914426f830ab6e36371ad1e0eed5b1a07a9b3d8fde5f3d74036",
+    "docs/evidence/precision-tier-prereg-20261127/labeler_prompt.txt": "051e83c265dd9a10c266df8f45e9210737916e546abb63c7068d49c22b18dca8",
+    "docs/evidence/precision-tier-prereg-20261127/adjudication_prompt.txt": "74f5d73a7310a21c27883c5b0b99857fb5dd7901d26b7eb21829e14edfd0851b",
+    "scripts/precision_cohort_preflight.py": "09fdcc47249f5e6b5e8c6957e12ad9c7492bb308606afb7bdd8f51281fb1f850"
+  },
+  "scorer": {
+    "source": "scripts/ at the candidate commit (identical to origin/main eb697a31)",
+    "files": {
+      "recall_harness.mjs": "e06ec30fc1b55448d5988362e1b04a65a0f8112fdd203a31ce1a37faa3bd8bf4",
+      "recall_coverage.mjs": "643ff35f7455429c2200008e84fb200344527a46c1f62c762d83e3ed3d8f25a5",
+      "recall_losses.mjs": "b5a622969c6f44c1aa267f0780f5083d18e033316e0e0155a9266093349809d8"
+    }
+  },
+  "engine": {
+    "name": "OpenGrep 2.1.0",
+    "sha256": {
+      "linux": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+      "windows": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a"
+    },
+    "score_args": [
+      "--profile",
+      "docs/evidence/recall-registered-exposed-161-profile.json",
+      "--scope",
+      "ecosystem",
+      "--scanner-path-policy",
+      "true",
+      "--jobs",
+      "4",
+      "--extra-arg",
+      "--timeout=15",
+      "--extra-arg",
+      "--jobs=1"
+    ]
+  },
+  "models": {
+    "triage_stage1": "claude-haiku-5-5, 3 fresh agents per part (Ha, Hb, Hc)",
+    "triage_stage2": "claude-sonnet-5-5, 3 fresh agents per part (Sa, Sb, Sc)",
+    "labelers": "claude-opus-5-5 and claude-fable-5-2",
+    "adjudicators": "a fresh claude-opus-5-5 and a fresh claude-fable-5-2"
+  },
+  "packet": {
+    "builder": "scripts/precision_cohort_preflight.py arm-g packet",
+    "seed": "20261127",
+    "max_items_per_part": 64
+  },
+  "steps": [
+    "1. python scripts/precision_cohort_preflight.py arm-g verify-lock REPO OPENGREP -> LOCK VERIFIED",
+    "2. score the reserve once: node scripts/recall_harness.mjs score --manifest RESERVE --rules RULES --opengrep ENGINE --workdir W --checkpoint-dir FRESH --out SCORE plus engine.score_args",
+    "3. Record the score receipt SHA-256 from step 2. The next step invokes the pinned review-alerts export with that digest and the recorded score work directory.",
+    "4. python scripts/precision_cohort_preflight.py arm-g packet REPO RUN SCORE W SCORE_SHA256 --cohort reserve --commitment COMMITMENT_JSON --commitment-sha256 REGISTERED_COMMITMENT_SHA256; use the independently registered factory.arm-g-cohort-commitment.v1 record containing schema, cohort and manifest_sha256. Obtain its digest independently of SCORE. For the separate Q4 run use --cohort q4 with its own commitment. Record packet and key digests; split packet.json into parts of <=64 items. Provide only assigned parts and their parent packet digest to agents.",
+    "5. stage 1: three fresh Haiku agents per part with triage_agent_prompt.txt -> triage-H{a,b,c}-partN.json",
+    "6. python scripts/precision_cohort_preflight.py arm-g stage2 RUN; split stage2.json; give its digest and only assigned parts to fresh Sonnet agents -> triage-S{a,b,c}-partN.json",
+    "7. labels (independent of steps 5-6): one Opus and one Fable agent per part of packet.json with labeler_prompt.txt -> labels-opus.json, labels-fable.json",
+    "8. python scripts/precision_cohort_preflight.py arm-g adjudication RUN; give the output packet and its digest to fresh adjudicators -> adjudication-opus.json and adjudication-fable.json. With zero disagreements, no adjudicator output is needed.",
+    "9. python scripts/precision_cohort_preflight.py arm-g score RUN SCORE KEY_SHA256 -> Arm G endpoints, once. Q4 runs separately with the same steps.",
+    "Blinding: triage agents never see labels; labelers and adjudicators never see triage outputs, key.json, rule ids, tiers or arms. A failed agent call is retried once, then its verdicts count as missing (SUPPRESS). All prompts and raw outputs are kept with the receipt. Keep the key and raw scanner export in the operator work directory; never share that directory with reviewers. Preserve every part row when assembling labels so validation can reject duplicates."
+  ],
+  "whole_repo_endpoint": "not part of arm G; a separate comparison later"
+}
