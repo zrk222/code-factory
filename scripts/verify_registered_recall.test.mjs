@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { sha256, sortKeys } from './recall_harness.mjs';
-import { inputFingerprint, verifyRegisteredRecall } from './verify_registered_recall.mjs';
+import { inputFingerprint, leadTierRuleIds, verifyRegisteredRecall } from './verify_registered_recall.mjs';
 
 const rulesHash = 'a'.repeat(64);
 const pins = {
@@ -209,6 +209,22 @@ test('rejects unresolved cases and extra fixed-side residuals', () => {
     { code: 'NEW_UNRESOLVED_CASE', advisory_ids: [candidate.cases[39].ghsa] },
     { code: 'FIXED_SIDE_RESIDUALS_INCREASED' },
   ]);
+});
+
+test('reports lead-tier residuals without gating them', () => {
+  const { reference, candidate } = fixture();
+  candidate.cases[0].fix_side_residual = findings;
+  candidate.summary.fix_side_residual_alerts = 1;
+  const result = verifyRegisteredRecall(reference, candidate, rulesHash, [], ['fixture']);
+  assert.equal(result.decision, 'ACCEPT');
+  assert.equal(result.summary.candidate_fixed_side_residual_alerts, 0);
+  assert.equal(result.summary.candidate_lead_tier_residual_alerts, 1);
+});
+
+test('only LOW-confidence lead-tier rules escape the fixed-side gate', () => {
+  assert.deepEqual(leadTierRuleIds([{ id: 'a', tier: 'lead', confidence: 'LOW' }, { id: 'b', tier: 'lead', confidence: 'HIGH' },
+    { id: 'c', tier: 'review', confidence: 'LOW' }, { id: 'd' }]), ['a']);
+  assert.deepEqual(leadTierRuleIds(null), []);
 });
 
 test('CLI writes a rejected receipt when the reference bytes are unauthenticated', t => {

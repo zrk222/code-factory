@@ -3,7 +3,7 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { completeFixedCoverage, scannerPathPolicy } from './recall_coverage.mjs';
+import { completeFixedCoverage, readRuleMetadata, scannerPathPolicy } from './recall_coverage.mjs';
 import { caseDigest, checkpointArtifactsIntact, outcomeOf, replayCaseScore, ruleFamilies, sha256, sortKeys, validateRecallManifest } from './recall_harness.mjs';
 
 const referenceSha256 = '0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf';
@@ -69,7 +69,7 @@ function readCandidateCases(cases, failures) {
   return rows;
 }
 
-function compareCases(reference, candidate, summary, failures, protectedHitIds, pairedPathPolicy) {
+function compareCases(reference, candidate, summary, failures, protectedHitIds, pairedPathPolicy, leadRules) {
   const remainingProtected = new Set(protectedHitIds);
   const expected = new Set(reference.map(row => row.advisory));
   const rows = readCandidateCases(candidate, failures);
@@ -91,7 +91,10 @@ function compareCases(reference, candidate, summary, failures, protectedHitIds, 
     summary.candidate_outcomes[outcome]++;
     if (outcome === 'hit') remainingProtected.delete(id);
     if (scored(outcome)) {
-      summary.candidate_fixed_side_residual_alerts += current.fix_side_residual.length;
+      // Lead-tier rules (metadata.tier: lead, confidence LOW) only emit leads; their fixed-side residuals are reported, not gated.
+      const leadTier = current.fix_side_residual.filter(([rule]) => leadRules.some(id => rule === id || rule.endsWith('.' + id))).length;
+      summary.candidate_fixed_side_residual_alerts += current.fix_side_residual.length - leadTier;
+      summary.candidate_lead_tier_residual_alerts += leadTier;
       const oldCoverage = current.file_coverage?.old;
       const oldFiles = pairedPathPolicy && Array.isArray(oldCoverage) ? oldCoverage : [];
       if (!completeFixedCoverage(current.file_coverage?.fixed, current.source_packets?.fixed, oldFiles)) fixedGaps.push(id);
@@ -134,12 +137,17 @@ function candidateValidationFailures(candidate, candidateRulesSha256, cases) {
 function reportedSummaryMatches(reported, summary) {
   return reported?.cases === registeredCases && reported?.hunk_hits === summary.candidate_hunk_hits
     && reported?.scored === summary.candidate_outcomes.hit + summary.candidate_outcomes.miss
-    && reported?.fix_side_residual_alerts === summary.candidate_fixed_side_residual_alerts
+    && reported?.fix_side_residual_alerts === summary.candidate_fixed_side_residual_alerts + summary.candidate_lead_tier_residual_alerts
     && caseDigest([reported?.outcomes ?? null]) === caseDigest([summary.candidate_outcomes]);
 }
 
 // CLI callers authenticate the immutable reference bytes before using this comparison.
-export function verifyRegisteredRecall(reference, candidate, candidateRulesSha256, protectedHitIds = []) {
+/** Rules whose alerts SARIF reports as leads: metadata.tier lead and confidence LOW; anything else stays gated. */
+export function leadTierRuleIds(records) {
+  return (records ?? []).filter(rule => rule.tier === 'lead' && rule.confidence === 'LOW').map(rule => rule.id);
+}
+
+export function verifyRegisteredRecall(reference, candidate, candidateRulesSha256, protectedHitIds = [], leadRules = []) {
   if (!validReference(reference)) return { decision: 'REJECT', failures: [{ code: 'REFERENCE_METADATA_MISMATCH' }] };
   const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
   const failures = candidateValidationFailures(candidate, candidateRulesSha256, cases);
@@ -147,10 +155,10 @@ export function verifyRegisteredRecall(reference, candidate, candidateRulesSha25
     registered_cases: registeredCases, verified_bindings: 0, reference_hunk_hits: referenceHits,
     retained_hunk_hits: 0, candidate_outcomes: outcomes(),
     reference_fixed_side_residual_alerts: reference.fix_side_residual_alerts[1],
-    candidate_fixed_side_residual_alerts: 0,
+    candidate_fixed_side_residual_alerts: 0, candidate_lead_tier_residual_alerts: 0,
   };
   const pairedPathPolicy = protectedHitIds.length > 0 && candidate?.scanner_path_policy === pathPolicyProof;
-  const changes = compareCases(reference.cases, cases, summary, failures, protectedHitIds, pairedPathPolicy);
+  const changes = compareCases(reference.cases, cases, summary, failures, protectedHitIds, pairedPathPolicy, leadRules);
   if (protectedHitIds.length) {
     summary.protected_hunk_hits = protectedHitIds.length;
     summary.retained_protected_hunk_hits = protectedHitIds.length - changes.lost_protected.length;
@@ -215,7 +223,8 @@ function evidenceFrom(paths, captureRoot) {
     }
     const protectedHits = JSON.parse(protectedBytes).required_hit_ids;
     const candidate = JSON.parse(candidateBytes);
-    const result = verifyRegisteredRecall(JSON.parse(referenceBytes), candidate, evidence.candidate_rules_sha256, protectedHits);
+    const leadRules = leadTierRuleIds(readRuleMetadata(rulesBytes));
+    const result = verifyRegisteredRecall(JSON.parse(referenceBytes), candidate, evidence.candidate_rules_sha256, protectedHits, leadRules);
     const manifestBytes = readFileSync(new URL('../docs/evidence/recall-registered-exposed-161-manifest.json', import.meta.url));
     const manifest = JSON.parse(manifestBytes);
     if (sha256(manifestBytes) !== scoringPins.manifest_sha256
