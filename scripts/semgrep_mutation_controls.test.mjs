@@ -125,7 +125,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const all = Object.keys(fixedReviewedFindingCounts);
   const manifest = Object.entries(fixedReviewedFindingCounts).flatMap(([rule, count]) =>
     Array.from({ length: count }, (_, index) => ({ rule,
-      ...((rules.includes(rule) && index < ({ 'opt.factory.rules.go.request-command-injection': 5,
+      ...((rules.includes(rule) && index < ({ 'opt.factory.rules.go.request-command-injection': 6,
         'opt.factory.rules.java.request-sql-injection': 7, 'opt.factory.rules.go.request-sql-injection': 4,
         'opt.factory.rules.ruby.request-sql-injection': 4 }[rule] ?? 3)) ? { source_line: index + 2 } : {}),
     })));
@@ -139,7 +139,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 412);
+  assert.equal(balancedReplacement.length, 415);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
