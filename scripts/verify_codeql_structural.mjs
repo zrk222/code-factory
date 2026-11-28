@@ -101,7 +101,7 @@ function main([image, output, target]) {
   if (!image || !output || !language) throw new Error('Specify image, output, and a compiled CodeQL target');
   const fixtures = {
     java: { 'Example.java': 'public class Example { int sum(int x, int y) { return x + y; } }\n' },
-    csharp: { 'Example.cs': 'public class Example { public int Sum(int x, int y) => x + y; }\n' },
+    csharp: { 'Example.cs': 'public class Example { public static void Main() { } public int Sum(int x, int y) => x + y; }\n' },
     go: {
       'nested/go.mod': 'module example.test/native\n\ngo 1.24.0\n',
       'nested/compute.go': 'package native\n\nfunc Add(x, y int) int { return x + y }\n',
