@@ -427,6 +427,44 @@ function pendingEvidence(pattern, outcomes, coverageGaps, referenceCases, dispos
   });
 }
 
+function caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observations, followUp, patternScoreSha256) {
+  const nativeByCase = new Map(observations.map(row => [row.advisory, row]));
+  const pendingByCase = new Map(followUp.map(row => [row.advisory, row]));
+  return [...pattern].map(([advisory, row]) => {
+    const native = nativeByCase.get(advisory);
+    const arms = native?.arms ?? (native ? [native] : []);
+    const pending = pendingByCase.get(advisory);
+    const fixedResiduals = native?.fixed_hunk_residuals ?? null;
+    const next = pending?.next ?? (row.fix_side_residual.length || fixedResiduals ? 'review_fixed_side_path' : null);
+    const pins = {
+      advisory, input_sha256: referenceCases.get(advisory).input_sha256, pattern_score_sha256: patternScoreSha256,
+      diff_sha256: row.diff_sha256, changed_files_sha256: row.changed_files_sha256,
+      pattern_artifacts: row.captures ?? null,
+      native_bundles: arms.map(arm => arm.native_bundle_sha256),
+    };
+    const layers = [
+        { stage: 'sink_collection', pattern_alerts_in_changed_files: row.alerts_in_changed_files ?? null,
+          native_alerts: native ? arms.reduce((sum, arm) => sum + arm.native_alerts.old, 0) : null },
+        { stage: 'parser_coverage', pattern: coverageGaps.get(advisory) ?? outcomes.get(advisory),
+          native_captures: arms.length, complete_native_captures: arms.filter(arm =>
+            arm.native_coverage.old.complete && arm.native_coverage.fixed.complete).length },
+        { stage: 'source_to_sink', same_family_pattern_alerts: row.family_alerts_in_changed_files ?? null,
+          verified_native_traces: native ? (native.anchored_trace_matches?.length ?? 0) : null },
+        { stage: 'fixed_side', pattern_hunk_residuals: row.fix_side_residual.length,
+          native_hunk_residuals: fixedResiduals },
+        { stage: 'verdict', state: next ? 'unresolved' : 'registered_hunk_hit',
+          historical_hunk_hit: !pending, next, next_plan_sha256s: pending?.plan_sha256s ?? [] },
+    ];
+    let prior = caseDigest([pins]);
+    const evidence = { ...pins, layers: layers.map(layer => {
+      const packet = { ...layer, input_sha256: prior };
+      prior = caseDigest([packet]);
+      return { ...packet, output_sha256: prior };
+    }) };
+    return { ...evidence, evidence_sha256: caseDigest([evidence]) };
+  });
+}
+
 function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, observations, plans) {
   requireProof(typeof pin.path === 'string' && digest.test(pin.sha256), 'Pattern score path and SHA-256 are required');
   const bytes = readFileSync(pin.path);
@@ -476,13 +514,14 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
   const additions = dispositions.filter(row => row.disposition === 'eligible').length;
   const newHunkHits = dispositions.filter(row => row.native_hunk_hit && row.pattern_outcome !== 'hit').length;
   const newFileHits = dispositions.filter(row => row.native_file_hit && !row.pattern_file_hit).length;
+  const followUp = plans && pendingEvidence(pattern, outcomes, coverageGaps, referenceCases, dispositions, observations, plans);
   return { scope: 'supplemental paired comparison', pattern_score_sha256: pin.sha256,
     pattern_hunk_hits: hunkHits, pattern_file_hits: fileHits,
     verified_pattern_cases: pattern.size, verified_native_pairs: dispositions.length,
     native_extraction_complete_pairs: dispositions.filter(row => row.native_extraction_complete).length,
     observed_union_hunk_hits: hunkHits + newHunkHits, observed_union_file_hits: fileHits + newFileHits,
     eligible_native_additions: additions, combined_hunk_hits: hunkHits + additions, cases: dispositions,
-    ...(plans ? { follow_up: pendingEvidence(pattern, outcomes, coverageGaps, referenceCases, dispositions, observations, plans) } : {}) };
+    ...(followUp ? { follow_up: followUp, case_evidence: caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observations, followUp, pin.sha256) } : {}) };
 }
 
 function readPairRegistry(root, bundle) {

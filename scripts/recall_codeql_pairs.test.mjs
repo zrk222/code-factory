@@ -624,6 +624,25 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(twoSignals.pattern_join.follow_up[0].next, 'resolve_native_extraction');
   const unobservedFamily = evaluate([negative]);
   assert.equal(unobservedFamily.pattern_join.follow_up[0].next, 'enhance_native_family_model');
+  const [assessment] = unobservedFamily.pattern_join.case_evidence;
+  assert.equal(assessment.input_sha256, unobservedFamily.cases[0].input_sha256);
+  assert.deepEqual(assessment.layers.map(layer => layer.stage),
+    ['sink_collection', 'parser_coverage', 'source_to_sink', 'fixed_side', 'verdict']);
+  assert.equal(assessment.layers[4].state, 'unresolved');
+  const { layers, evidence_sha256: evidenceSha, ...pins } = assessment;
+  let prior = caseDigest([pins]);
+  for (const { output_sha256: output, ...packet } of layers) {
+    assert.equal(packet.input_sha256, prior);
+    assert.equal(caseDigest([packet]), output);
+    prior = output;
+  }
+  const modified = { ...layers[1], native_captures: 99 };
+  delete modified.output_sha256;
+  assert.notEqual(caseDigest([modified]), layers[2].input_sha256);
+  assert.equal(evidenceSha, caseDigest([{ ...pins, layers }]));
+  assert.equal(assessment.evidence_sha256, caseDigest([Object.fromEntries(
+    Object.entries(assessment).filter(([key]) => key !== 'evidence_sha256'),
+  )]));
   assert.equal(unobservedFamily.cases[0].arms[0].native_family_alerts.matching_query_count, 1);
   assert.equal(unobservedFamily.cases[0].arms[0].native_family_alerts.old.total, 0);
   const persistent = evaluate([arm('retained', { parsed: true, offFile: 'retained' })]);
@@ -639,6 +658,7 @@ test('native detector arms retain their own extraction and count one shared case
   }
   const residual = evaluate([negative, arm('fixed-hunk', { parsed: true, fixedHunk: true })]);
   assert.equal(residual.pattern_join.follow_up[0].next, 'review_fixed_side_path');
+  assert.equal(residual.pattern_join.case_evidence[0].layers[4].next, 'review_fixed_side_path');
   assert.equal(residual.pattern_join.eligible_native_additions, 0);
   const uncertain = evaluate([arm('ambiguous-fixed', { hit: true, parsed: true, ambiguousFixed: true })]);
   assert.equal(uncertain.pattern_join.follow_up[0].next, 'review_native_alert_locations');
@@ -648,6 +668,7 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(splitUncertainty.pattern_join.eligible_native_additions, 0);
   const twoHits = evaluate([incomplete, complete]);
   assert.equal(twoHits.strict_hunk_hits, 1);
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].state, 'registered_hunk_hit');
   assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
   assert.equal(twoHits.cases[0].arms.length, 2);
   const anchored = evaluate([arm('off-hunk', { parsed: true, offHunk: true }), negative]);
