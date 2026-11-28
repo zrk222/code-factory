@@ -2496,12 +2496,24 @@ def _semgrep_rule_runs(
     }
 
 
+def _verify_semgrep_execution_facts(facts, timeout_seconds):
+    from .runtime_audit_common import _validate_runner_facts
+
+    _validate_runner_facts(facts, facts.get("timeout_seconds"))
+    if facts["timeout_seconds"] > timeout_seconds:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "rule exceeds signed budget"
+        )
+    if _deep_audit_io._adapter_command_failed(facts, [0], float("inf")):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "native rule did not complete"
+        )
+
+
 def verify_semgrep_rule_execution(
     evidence, lane, sources, report, *, execution_context=None
 ):
     """Re-derive execution and findings from exact pinned rules plus per-rule native JSON."""
-    from .runtime_audit_common import _validate_runner_facts
-
     from .deep_audit_sarif import _local_execution_context, _local_semgrep_report
 
     execution_context = _local_execution_context(execution_context, lane)
@@ -2518,16 +2530,9 @@ def verify_semgrep_rule_execution(
             mode=lane.get("mode"),
             execution_context=execution_context,
         )
-        facts = observation["execution"]
-        _validate_runner_facts(facts, facts.get("timeout_seconds"))
-        if facts["timeout_seconds"] > lane["timeout_seconds"]:
-            raise _deep_audit_io.RuntimeAuditError(
-                "E_SEMGREP_EXECUTION", "rule exceeds signed budget"
-            )
-        if _deep_audit_io._adapter_command_failed(facts, [0], float("inf")):
-            raise _deep_audit_io.RuntimeAuditError(
-                "E_SEMGREP_EXECUTION", "native rule did not complete"
-            )
+        _verify_semgrep_execution_facts(
+            observation["execution"], lane["timeout_seconds"]
+        )
         native = observation["native_report"]
         if execution_context:
             native = _local_semgrep_report(native, sources, execution_context)

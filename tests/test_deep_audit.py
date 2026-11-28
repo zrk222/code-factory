@@ -4033,6 +4033,23 @@ def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(
         verify_semgrep_rule_execution(evidence, lane, sources, baseline)
 
 
+@pytest.mark.parametrize(
+    ("facts", "message"),
+    [
+        ({"timeout_seconds": 31}, "rule exceeds signed budget"),
+        ({"exit_code": 1}, "native rule did not complete"),
+    ],
+)
+def test_semgrep_rule_execution_verifies_signed_runner_facts(facts, message):
+    from factoryline.deep_audit_io import verify_semgrep_rule_execution
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    evidence["observations"][0]["execution"].update(facts)
+    with pytest.raises(RuntimeAuditError, match=message) as rejected:
+        verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+    assert rejected.value.code == "E_SEMGREP_EXECUTION"
+
+
 def test_runtime_mutation_report_requires_a_passing_sentinel(tmp_path):
     from factoryline.deep_audit_io import _runtime_challenge_report
 
