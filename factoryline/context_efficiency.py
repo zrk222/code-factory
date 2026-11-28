@@ -817,7 +817,7 @@ def _consume_security_snapshots(
     from . import test_oracle_misuse as oracle
     from . import review_audits as audit
     from .import_context import prepared_security_snapshot_batch
-    from . import map_scan_jobs
+    from . import map_scan_jobs, scan_batch_bridge
 
     def scan_one(path, calls, bindings, context, tree):
         fingerprint = fingerprints.get(path)
@@ -859,7 +859,9 @@ def _consume_security_snapshots(
                         bind(context.get("captured_imports", {}), workspace, *state)
                     )
                 jobs.append((path, calls, bindings, context, tree))
-            rows.update(map_scan_jobs(jobs, scan_one))
+            rows.update(
+                map_scan_jobs(jobs, scan_one, *scan_batch_bridge(source_model_out))
+            )
     finally:
         snapshots.clear()
     return rows

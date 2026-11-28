@@ -5,18 +5,18 @@
   "lines": 40762,
   "host": {
     "cpus": 2,
-    "system": "Linux",
-    "python": "3.13.18"
+    "system": "linux",
+    "python": "python3"
   },
   "workers": 0,
   "runs_seconds": [
-    68.049,
-    68.063,
-    69.856
+    68.569,
+    70.931,
+    71.074
   ],
-  "median_seconds": 68.063,
-  "spread": 0.0266,
-  "lines_per_second": 599,
+  "median_seconds": 70.931,
+  "spread": 0.0353,
+  "lines_per_second": 575,
   "output_sha256": [
     "5405358500bf16029881747ea31cf948b6231ca160b3b82212b470b0c4158602"
   ],

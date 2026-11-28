@@ -159,36 +159,96 @@ def ast_dump_digest(node):
 def scan_workers(jobs):
     """Forked workers on Linux for four or more files; FACTORY_SCAN_WORKERS overrides the count."""
     import os
+    import threading
 
     if jobs < 4 or os.name != "posix" or os.uname().sysname != "Linux":
+        return 1
+    if threading.active_count() > 1:  # fork() from a threaded process can deadlock
         return 1
     try:
         wanted = int(os.environ.get("FACTORY_SCAN_WORKERS", "0"))
     except ValueError:
         wanted = 0
-    return max(1, min(wanted if wanted > 0 else min(8, os.cpu_count() or 1), jobs))
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else 1
+    return max(1, min(wanted if wanted > 0 else min(8, cpus), jobs))
 
 
 def _run_forked(index):
-    return _FORKED_JOB(index)
+    """Run one job in a forked worker; any exception becomes a sentinel the parent replays."""
+    try:
+        return True, _FORKED_JOB(index)
+    except BaseException:  # noqa: BLE001 - replayed serially so the parent raises it
+        return False, None
 
 
-def map_scan_jobs(jobs, scan):
-    """Return (job[0], scan(*job)) in input order; forked children inherit the parsed trees."""
+def map_scan_jobs(jobs, scan, settle=None, absorb=None):
+    """Return (job[0], scan(*job)) in input order; forked children inherit the parsed trees.
+
+    settle() runs in the worker after each job and returns picklable state for
+    absorb(states) in the parent, so batch checks still see every worker's work.
+    A failed job reruns serially in the parent; a dead worker or unpicklable result
+    reruns everything serially, so errors and rows match a serial scan.
+    """
+    from concurrent.futures import ProcessPoolExecutor
     import multiprocessing
 
     global _FORKED_JOB
     workers = scan_workers(len(jobs))
     if workers < 2:
-        rows = [scan(*job) for job in jobs]
-    else:
-        _FORKED_JOB = lambda index: scan(*jobs[index])  # noqa: E731
-        try:
-            with multiprocessing.get_context("fork").Pool(workers) as pool:
-                rows = pool.map(_run_forked, range(len(jobs)), chunksize=1)
-        finally:
-            _FORKED_JOB = None
+        return [(job[0], scan(*job)) for job in jobs]
+    settle = settle or (lambda: None)
+    _FORKED_JOB = lambda index: (scan(*jobs[index]), settle())  # noqa: E731
+    try:
+        context = multiprocessing.get_context("fork")
+        with ProcessPoolExecutor(workers, mp_context=context) as pool:
+            results = list(pool.map(_run_forked, range(len(jobs))))
+    except Exception:  # noqa: BLE001 - dead worker or unpicklable result: rerun serially
+        return [(job[0], scan(*job)) for job in jobs]
+    finally:
+        _FORKED_JOB = None
+    if absorb is not None:
+        absorb([result[1][1] for result in results if result[0]])
+    rows = [
+        result[1][0] if result[0] else scan(*job) for job, result in zip(jobs, results)
+    ]
     return [(job[0], row) for job, row in zip(jobs, rows)]
+
+
+def scan_batch_bridge(source_model_out):
+    """Carry each forked worker's batch freshness and validated paths back to the parent."""
+
+    def memo():
+        source = (source_model_out or {}).get("source")
+        return getattr(source, "class_chain_memo", None)
+
+    def settle():
+        # The parent's batch exit re-validates every merged path against fresh
+        # source, so a worker checks only what lives in its own memory.
+        from .credential_role_constructor_provider import _view, helper_epochs_valid
+
+        current = memo()
+        state = getattr(current, "_analysis_batch", None)
+        if state is None:
+            return None
+        fresh = (
+            current.matches(current.imports, current.classes, current.audit)
+            and _view(current.imports, current.classes) == current.view
+            and current.index.inventory == current.inventory
+            and helper_epochs_valid(state.helper_epoch)
+        )
+        return fresh, dict(current.index.validated)
+
+    def absorb(states):
+        from .runtime_audit_common import RuntimeAuditError
+
+        current = memo()
+        for item in states:
+            if item is not None and (current is None or not item[0]):
+                raise RuntimeAuditError("E_INPUT_CHANGED", "Shared batch rejected.")
+            if item is not None:
+                current.index.validated.update(item[1])
+
+    return settle, absorb
 
 
 class CodedError(ValueError):

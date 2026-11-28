@@ -7,9 +7,11 @@ Reproduce: copy the files into an empty directory, then run `node scripts/scan_b
 | Receipt | Median | Runs |
 | --- | --- | --- |
 | main e68f3871 ([main-e68f3871.json](main-e68f3871.json)) | 116.424 s | 115.512, 116.424, 116.511 |
-| this branch ([branch.json](branch.json)) | 68.063 s | 68.049, 68.063, 69.856 |
+| this branch ([branch.json](branch.json)) | 70.931 s | 68.569, 70.931, 71.074 |
 
 Both receipts carry the same output digest: the scan JSON is byte-identical.
+
+Workers carry their batch freshness and validated paths back to the parent, so the batch exit re-checks the same paths and helper epochs as a serial scan (6 and 7 on a 6-file probe, both modes). A failing job reruns serially in the parent, a dead worker or unpicklable result reruns the whole scan serially, and a threaded process stays serial.
 
 Files:
 

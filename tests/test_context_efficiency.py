@@ -6804,3 +6804,63 @@ def test_map_scan_jobs_keeps_order_in_and_out_of_workers(monkeypatch):
     pooled = scan_pool.map_scan_jobs(jobs, lambda name, index: f"{name}{index * 2}")
     assert serial == pooled == [(name, f"{name}{index * 2}") for name, index in jobs]
     assert scan_pool.scan_workers(3) == 1
+
+
+def _raise_on_third(name, index):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    if index == 2:
+        raise RuntimeAuditError("E_INPUT_CHANGED", "Shared batch rejected.")
+    return name
+
+
+def test_map_scan_jobs_replays_a_worker_exception_in_the_parent(monkeypatch):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+    jobs = [(name, index) for index, name in enumerate("abcdef")]
+    with pytest.raises(RuntimeAuditError) as error:
+        scan_pool.map_scan_jobs(jobs, _raise_on_third)
+    assert error.value.code == "E_INPUT_CHANGED"
+    assert scan_pool._run_forked.__doc__
+
+
+def test_map_scan_jobs_absorbs_every_worker_settle_state(monkeypatch):
+    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+    jobs = [(name, index) for index, name in enumerate("abcdef")]
+    seen = []
+    rows = scan_pool.map_scan_jobs(
+        jobs, lambda name, index: name, lambda: "settled", seen.extend
+    )
+    assert [row for _, row in rows] == list("abcdef")
+    assert seen == ["settled"] * 6
+
+
+def test_scan_workers_stays_serial_in_a_threaded_process(monkeypatch):
+    import threading
+
+    monkeypatch.setenv("FACTORY_SCAN_WORKERS", "2")
+    assert scan_pool.scan_workers(6) == 2
+    stop = threading.Event()
+    thread = threading.Thread(target=stop.wait)
+    thread.start()
+    try:
+        assert scan_pool.scan_workers(6) == 1
+    finally:
+        stop.set()
+        thread.join()
+
+
+def test_batch_bridge_rejects_a_stale_worker_and_merges_validated_paths():
+    from types import SimpleNamespace
+
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    index = SimpleNamespace(validated={"a.py": True})
+    model = {"source": SimpleNamespace(class_chain_memo=SimpleNamespace(index=index))}
+    settle, absorb = scan_pool.scan_batch_bridge(model)
+    assert settle() is None  # no open batch: nothing to carry back
+    absorb([None, (True, {"b.py": True})])
+    assert index.validated == {"a.py": True, "b.py": True}
+    with pytest.raises(RuntimeAuditError):
+        absorb([(False, {})])
