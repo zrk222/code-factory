@@ -21,6 +21,19 @@ const nativeFixtures = {
 const scannedCoverage = packets => Object.fromEntries(Object.entries(packets).map(([side, files]) =>
   [side, files.map(packet => ({ ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' }))]));
 
+function patternCapturePins(packets) {
+  const captures = {}, scan_sides = {};
+  for (const [side, files] of Object.entries(packets)) {
+    if (!files.length) continue;
+    const report = sha256(side + ':report'), coverage = sha256(side + ':coverage');
+    captures[side] = { source_root: side, sarif: { path: side + '.sarif', sha256: report },
+      native_report: { path: side + '.coverage.json', sha256: coverage } };
+    scan_sides[side] = { failed_exit: false, exit_code: 0, timeouts: 0, other: 0, blocking_parse_errors: 0,
+      report_sha256: report, coverage_report_sha256: coverage };
+  }
+  return { captures, scan_sides };
+}
+
 function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI', trailingSource = '') {
   const root = mkdtempSync(join(tmpdir(), 'cf-codeql-pair-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -294,7 +307,7 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
 test('native and pattern hits join only on identical evidence and are counted once', t => {
   const { root, row, value, binding, capture, json, run } = stagedPair(t);
   const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false, hunk_findings: [],
-    file_coverage: scannedCoverage(binding.source_packets), fix_side_residual: [] };
+    ...patternCapturePins(binding.source_packets), file_coverage: scannedCoverage(binding.source_packets), fix_side_residual: [] };
   const score = (candidate, summary = {}) => {
     const pins = json('pattern-score.json', {
       schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: value.manifest.sha256,
@@ -311,6 +324,18 @@ test('native and pattern hits join only on identical evidence and are counted on
   assert.equal(detected.native_extraction_complete_pairs, 1);
   assert.equal(detected.observed_union_hunk_hits, 1);
   assert.equal(detected.observed_union_file_hits, 1);
+  assert.equal(detected.case_evidence.length, 1);
+  assert.deepEqual(detected.case_evidence[0].layers[1].pattern_captures, { old: 'report_pinned', fixed: 'report_pinned' });
+  assert.equal(detected.case_evidence[0].native_bundles[0], detected.case_evidence[0].cohort_sha256);
+  const lost = joined({ ...base, captures: { old: base.captures.old } });
+  assert.equal(lost.eligible_native_additions, 0);
+  assert.equal(lost.case_evidence[0].layers[1].pattern_captures.fixed, 'missing_capture');
+  assert.equal(lost.follow_up[0].next, 'resolve_pattern_coverage');
+  const mismatched = joined({ ...base, captures: { ...base.captures, fixed: {
+    ...base.captures.fixed, sarif: { ...base.captures.fixed.sarif, sha256: '0'.repeat(64) },
+  } } });
+  assert.equal(mismatched.eligible_native_additions, 0);
+  assert.equal(mismatched.case_evidence[0].layers[1].pattern_captures.fixed, 'unverified_capture');
   const found = joined({ ...base, outcome: 'hit', hunk_hit: true, file_hit: true,
     hunk_findings: [['test/rule', 'sample.py', 1]] });
   assert.equal(found.cases[0].disposition, 'overlap');
@@ -517,7 +542,7 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
     cases: cases.map(entry => {
       const input = supplied.get(entry.ghsa);
       return { ...input, ...entry, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false,
-        hunk_findings: [], fix_side_residual: [], file_coverage: scannedCoverage(input.source_packets) };
+        hunk_findings: [], fix_side_residual: [], ...patternCapturePins(input.source_packets), file_coverage: scannedCoverage(input.source_packets) };
     }),
   });
   const routed = run({ ...cohort, schema: 'factory.recall-codeql-cohort.v2' }, { ...pattern, path: join(root, pattern.path) });
@@ -605,7 +630,7 @@ test('native detector arms retain their own extraction and count one shared case
   };
   const patternCase = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false,
     file_hit: false, hunk_findings: [], fix_side_residual: [],
-    file_coverage: scannedCoverage(binding.source_packets) };
+    ...patternCapturePins(binding.source_packets), file_coverage: scannedCoverage(binding.source_packets) };
   for (const side of ['old', 'fixed']) patternCase.file_coverage[side].push(
     { path: 'nested/bridge.ts', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
     { path: 'resources/mapper.xml', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
