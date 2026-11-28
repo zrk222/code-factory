@@ -4086,6 +4086,62 @@ class Handler(BaseHTTPRequestHandler):
 
 
 @pytest.mark.parametrize(
+    ("relative", "replacement", "operation", "expected"),
+    [
+        ("tools/benchmark.py", "new=True", "client.run()", 0),
+        (r"tools\benchmark.py", "new=True", "client.run()", 0),
+        ("services/benchmark.py", "new=True", "client.run()", 1),
+        ("tools/benchmark.py", "return_value=True", "client.run()", 1),
+        ("tools/benchmark.py", "new=True", "pass", 1),
+    ],
+)
+def test_tooling_measurement_mock_needs_real_work(
+    relative, replacement, operation, expected
+):
+    source = f'''
+from time import perf_counter
+from unittest.mock import patch
+def measure(client):
+    """Measure a client operation with a fixed tag."""
+    with patch.object(client, "tag", {replacement}):
+        started = perf_counter()
+        {operation}
+        return perf_counter() - started
+'''
+    findings = implementation_completeness_findings(relative, ast.parse(source), source)
+    assert (
+        sum(item["code"] == "QUALITY_PRODUCTION_MOCK" for item in findings) == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("trace", "expected"), [("conn.set_trace_callback(record)", 0), ("pass", 1)]
+)
+def test_tooling_measurement_mock_needs_trace_binding(trace, expected):
+    source = f'''
+from unittest.mock import patch
+def measure(db):
+    """Measure queries for a real database read."""
+    rows = []
+    def record(query):
+        rows.append(query)
+    def connected():
+        conn = db.live_connection()
+        {trace}
+        return conn
+    with patch.object(db, "connect", new=connected):
+        db.read_rows()
+    return len(rows)
+'''
+    findings = implementation_completeness_findings(
+        "tools/query_budget.py", ast.parse(source), source
+    )
+    assert (
+        sum(item["code"] == "QUALITY_PRODUCTION_MOCK" for item in findings) == expected
+    )
+
+
+@pytest.mark.parametrize(
     "body",
     [
         '"Subclasses must override this operation."\n        raise NotImplementedError',

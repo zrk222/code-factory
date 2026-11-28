@@ -4466,3 +4466,147 @@ def imported_testcase_subclasses(tree, imports, snapshots, testcase_info) -> set
                 derived.add(name)
                 changed = True
     return derived
+
+
+_MEASUREMENT_TOOL_ROOTS = {"tools", "scripts", "benchmarks"}
+_MEASUREMENT_PATCH_APIS = {"unittest.mock.patch", "unittest.mock.patch.object"}
+
+
+def tooling_measurement_patch(relative, call, parents, aliases, api, resolve):
+    """Recognize a documented, scoped patch for a measured tooling operation."""
+    root, slash, _ = relative.replace("\\", "/").partition("/")
+    if (
+        api not in _MEASUREMENT_PATCH_APIS
+        or not slash
+        or root not in _MEASUREMENT_TOOL_ROOTS
+    ):
+        return False
+    scope = parents.get(parents.get(call))
+    match scope, call.keywords:
+        case ast.With(items=[ast.withitem(context_expr=applied, optional_vars=None)]), [
+            ast.keyword(arg="new", value=replacement)
+        ] if applied is call:
+            owner = _documented_measurement_owner(scope, parents)
+            if owner is not None and _has_measurement_work(scope, aliases, resolve):
+                return _timed_measurement(
+                    scope, replacement, aliases, resolve
+                ) or _traced_measurement(owner, scope, replacement, aliases, resolve)
+    return False
+
+
+def _has_measurement_work(scope, aliases, resolve):
+    return any(
+        isinstance(row, ast.Expr)
+        and isinstance(row.value, ast.Call)
+        and _clock_call(row.value, aliases, resolve) is None
+        and not resolve(row.value.func, aliases).startswith("unittest.mock.")
+        for row in scope.body
+    )
+
+
+def _documented_measurement_owner(node, parents):
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            doc = (ast.get_docstring(node) or "").casefold()
+            return (
+                node
+                if any(word in doc for word in ("benchmark", "measure", "query budget"))
+                else None
+            )
+    return None
+
+
+def _clock_call(node, aliases, resolve):
+    if not isinstance(node, ast.Call) or node.args or node.keywords:
+        return None
+    name = resolve(node.func, aliases)
+    return (
+        name
+        if name
+        in {
+            "time.perf_counter",
+            "time.perf_counter_ns",
+            "time.monotonic",
+            "time.monotonic_ns",
+        }
+        else None
+    )
+
+
+def _clock_names(statements, aliases, resolve):
+    names = {}
+    for row in statements:
+        if (
+            isinstance(row, ast.Assign)
+            and len(row.targets) == 1
+            and isinstance(row.targets[0], ast.Name)
+        ):
+            names[row.targets[0].id] = _clock_call(row.value, aliases, resolve)
+    return names
+
+
+def _timed_measurement(scope, replacement, aliases, resolve):
+    if not isinstance(replacement, ast.Constant) or replacement.value is None:
+        return False
+    returns = [node for node in ast.walk(scope) if isinstance(node, ast.Return)]
+    if len(returns) != 1:
+        return False
+    expr = returns[0].value
+    if (
+        not isinstance(expr, ast.BinOp)
+        or not isinstance(expr.op, ast.Sub)
+        or not isinstance(expr.right, ast.Name)
+    ):
+        return False
+    clock = _clock_call(expr.left, aliases, resolve)
+    return (
+        clock is not None
+        and _clock_names(scope.body, aliases, resolve).get(expr.right.id) == clock
+    )
+
+
+def _traced_measurement(owner, scope, replacement, aliases, resolve):
+    if not isinstance(replacement, ast.Name):
+        return False
+    if any(
+        isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom))
+        for node in ast.walk(scope)
+    ):
+        return False
+    candidates = [
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name == replacement.id
+    ]
+    if len(candidates) != 1:
+        return False
+    return _assigns_trace_callback(candidates[0], aliases, resolve)
+
+
+def _assigns_trace_callback(wrapper, aliases, resolve):
+    if wrapper.decorator_list:
+        return False
+    match wrapper.body:
+        case [
+            ast.Assign(targets=[ast.Name(id=bound)], value=ast.Call(func=constructor)),
+            recording,
+            ast.Return(value=ast.Name(id=returned)),
+        ] if bound == returned:
+            return not resolve(constructor, aliases).startswith(
+                "unittest.mock."
+            ) and _is_trace_callback(recording, bound)
+    return False
+
+
+def _is_trace_callback(statement, connection):
+    match statement:
+        case ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(value=ast.Name(id=bound), attr="set_trace_callback"),
+                args=[ast.Name()],
+                keywords=[],
+            )
+        ):
+            return bound == connection
+    return False

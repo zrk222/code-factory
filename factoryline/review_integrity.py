@@ -2339,13 +2339,17 @@ def _implementation_mock_findings(
     parents: dict[ast.AST, ast.AST],
     module_aliases: dict[str, str],
 ) -> list[dict[str, Any]]:
+    from .test_oracle_misuse import tooling_measurement_patch
+
     findings = []
     for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
         if _implementation_is_test_function(call, parents):
             continue
         aliases = _implementation_aliases_for(call, parents, module_aliases, tree)
         api = _implementation_call_name(call.func, aliases)
-        if api not in _MOCK_APIS:
+        if api not in _MOCK_APIS or tooling_measurement_patch(
+            relative, call, parents, aliases, api, _implementation_call_name
+        ):
             continue
         findings.append(
             {
