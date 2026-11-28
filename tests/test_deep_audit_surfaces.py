@@ -653,8 +653,15 @@ def test_chain_labels_taint_source_and_sink_and_marks_leads():
             ]
         ],
     }
+    item["flows"].append(
+        [
+            {**step, "path": "other.py", "kinds": ["source"]},
+            {**step, "path": "other_db.py", "kinds": ["sink"]},
+        ]
+    )
     chain = _chain(item, {"decision": "REVIEW"}, "r.json")
     assert chain["source"] == "web.py:3"
+    assert chain["source_sha256"] == "a" * 64
     assert chain["finding"] == "py.sql (lead) -> db.py:9"
     plain = _chain(
         {**item, "flows": [], "report_tier": "finding"}, {"decision": "X"}, "r"
