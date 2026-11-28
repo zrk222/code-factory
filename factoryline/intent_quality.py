@@ -102,6 +102,7 @@ from .implementation_audit import (  # noqa: F401
     _BoundSourceBytes,
     _bind_file_contracts,
     _bind_imported_base,
+    _borrowed_method,
     _concrete_contract_method,
     _contract_body_nodes,
     _declared_stub_method,
@@ -146,6 +147,53 @@ from .semantic_credential_sensor import (
     flask_upload_expression as flask_upload_expression,
     password_comparison_finding as password_comparison_finding,
 )
+
+
+_HTTP_LOG_MIN_POSITIONAL = {"log_message": 2, "log_error": 2, "log_request": 1}
+
+
+def _http_logging_hook(node, parents, module):
+    name = node.name
+    if name not in _HTTP_LOG_MIN_POSITIONAL or node.decorator_list:
+        return False
+    owner = parents.get(node)
+    if not isinstance(owner, ast.ClassDef) or _borrowed_method(owner, name) is not node:
+        return False
+    args = node.args
+    positional = len(args.posonlyargs) + len(args.args)
+    required = positional - len(args.defaults)
+    if required > _HTTP_LOG_MIN_POSITIONAL[name] or None in args.kw_defaults:
+        return False
+    if args.vararg is None and (name != "log_request" or positional < 3):
+        return False
+    doc = ast.get_docstring(node)
+    body = node.body if doc is None else node.body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Pass):
+        return False
+    if re.search(r"todo|tbd|not\s+(?:yet\s+)?implemented|fixme", doc or "", re.I):
+        return False
+    return _stdlib_http_base(owner, parents, module)
+
+
+def _stdlib_http_base(owner, parents, module):
+    from .review_integrity import _implementation_imports, _implementation_scope_chain
+
+    if owner.decorator_list or owner.keywords or len(owner.bases) != 1:
+        return False
+    root, dot, suffix = ast.unparse(owner.bases[0]).partition(".")
+    imported = _implementation_imports(module.body).get(root, "")
+    if f"{imported}{dot}{suffix}" != "http.server.BaseHTTPRequestHandler":
+        return False
+    scopes = _implementation_scope_chain(owner, parents)
+    bindings = sum(_scope_statement_binds_name(stmt, root) for stmt in module.body)
+    imports = (stmt for stmt in ast.walk(module) if isinstance(stmt, ast.ImportFrom))
+    return (
+        bindings == 1
+        and not any(_scope_binds_name(scope, root) for scope in scopes)
+        and not any(stmt.names[0].name == "*" for stmt in imports)
+        and _stable_import_contract(module, root, owner.lineno)
+        and _stable_api_origin(owner, parents, {root: imported}, {imported})
+    )
 
 
 _PLACEHOLDER_RE = re.compile(

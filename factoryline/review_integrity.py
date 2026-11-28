@@ -2221,7 +2221,7 @@ def _implementation_is_exempt(
     aliases: dict[str, str],
     tree: ast.Module,
 ) -> bool:
-    from .intent_quality import intentional_implementation_contract
+    from .intent_quality import _http_logging_hook, intentional_implementation_contract
 
     decorators = _implementation_decorator_names(node, aliases)
     exempt_decorators = {
@@ -2237,6 +2237,7 @@ def _implementation_is_exempt(
         or bool(decorators & exempt_decorators)
         or _implementation_static_interface(node, parents, aliases, tree)
         or intentional_implementation_contract(node, parents, aliases)
+        or _http_logging_hook(node, parents, tree)
     )
 
 
