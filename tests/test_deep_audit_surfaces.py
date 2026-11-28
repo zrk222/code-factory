@@ -635,6 +635,16 @@ def test_imported_symbol_mismatch_does_not_create_contract_edge(tmp_path):
     assert edges == []
 
 
+def test_flow_point_prefers_marked_steps_then_ends_then_location():
+    from factoryline.deep_audit_loop import _flow_point
+
+    steps = [{"path": "a.py", "start_line": 1}, {"path": "b.py", "start_line": 2}]
+    fallback = {"path": "c.py", "start_line": 3}
+    assert _flow_point({"flows": [steps]}, "source", fallback) == "a.py:1"
+    assert _flow_point({"flows": [steps]}, "sink", fallback) == "b.py:2"
+    assert _flow_point({}, "sink", fallback) == "c.py:3"
+
+
 def test_chain_labels_taint_source_and_sink_and_marks_leads():
     from factoryline.deep_audit_loop import _chain
 

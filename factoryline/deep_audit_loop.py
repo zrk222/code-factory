@@ -255,6 +255,7 @@ def deep_audit_lineage(root: Path, status: dict) -> dict:
 
 
 def _flow_point(item: dict, kind: str, fallback: dict) -> str:
+    """First step marked kind (last for sinks), else the flow end, else the location."""
     steps = [step for flow in item.get("flows") or [] for step in flow]
     marked = [step for step in steps if kind in step.get("kinds", [])]
     point = (marked or steps or [fallback])[0 if kind == "source" else -1]
