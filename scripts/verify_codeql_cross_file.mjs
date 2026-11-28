@@ -6,11 +6,10 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 const [image, output = '.factory/codeql-cross-file-verification.json'] = process.argv.slice(2);
 const variant = process.argv[4] ?? 'javascript';
-if (!['javascript', 'actions', 'python', 'ruby'].includes(variant)) throw new Error('Unknown CodeQL control variant');
+if (!['javascript', 'actions', 'python', 'ruby', 'python-clickhouse'].includes(variant)) throw new Error('Unknown CodeQL control variant');
 if (!image) throw new Error('Usage: node scripts/verify_codeql_cross_file.mjs IMAGE OUTPUT');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const profilePath = `deploy/deep-adapters/profiles/codeql-${variant}-full.json`;
-const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
 const fixtureRoot = 'deploy/deep-adapters/rules/tests/codeql-cross-file';
 const receipt = { schema: 'factory.codeql-cross-file-controls.v1', state: 'BLOCKED',
   observed_at: new Date().toISOString(), image, source: {}, controls: [], executions: [],
@@ -30,7 +29,27 @@ function docker(args, timeout = 30000) {
   if (proc.error || proc.status !== 0) throw new Error(`Docker execution failed: ${proc.error?.code ?? proc.status}`);
   return proc.stdout;
 }
+function finish() {
+  rmSync(temp, { recursive: true, force: true });
+  mkdirSync(dirname(resolve(output)), { recursive: true });
+  writeFileSync(output, `${JSON.stringify(receipt, null, 2)}\n`);
+  console.log(JSON.stringify({ state: receipt.state, image_id: receipt.image_id, error: receipt.error }));
+  return receipt.state === 'PASS' ? 0 : 1;
+}
+
+if (variant === 'python-clickhouse') {
+  try {
+    const { verifyClickHouseModel } = await import('../deploy/deep-adapters/rules/codeql-models/clickhouse-query/verify.mjs');
+    Object.assign(receipt, verifyClickHouseModel({ image, output, docker, workspace: temp }));
+    receipt.state = 'PASS';
+  } catch (error) {
+    receipt.error = error.message;
+  }
+  process.exit(finish());
+}
+
 try {
+  const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
   receipt.source[profilePath] = hash(readFileSync(profilePath));
   const targets = {
     actions: { 'workflow-controls.txt': '.github/workflows/control.yml' },
@@ -133,9 +152,5 @@ try {
 } catch (error) {
   receipt.error = error.message;
 } finally {
-  rmSync(temp, { recursive: true, force: true });
-  mkdirSync(dirname(resolve(output)), { recursive: true });
-  writeFileSync(output, `${JSON.stringify(receipt, null, 2)}\n`);
+  process.exitCode = finish();
 }
-console.log(JSON.stringify({ state: receipt.state, image_id: receipt.image_id, error: receipt.error }));
-process.exitCode = receipt.state === 'PASS' ? 0 : 1;
