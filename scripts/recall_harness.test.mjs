@@ -9,10 +9,19 @@ import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
   publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint, reviewCapturePath,
-  replayCaseScore, sarifTraceThreads, anchoredTraceMatches } from './recall_harness.mjs';
+  replayCaseScore, lineCoordinatesOnly, sarifTraceThreads, anchoredTraceMatches } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 import { compileScannerPathPolicy, completeFixedCoverage, engineTargetIgnores, readRuleMetadata, scannerPathPolicy } from './recall_coverage.mjs';
 import { replayRegisteredCaptures } from './verify_registered_recall.mjs';
+
+test('lineCoordinatesOnly requires positive ordered positions and a single coordinate system', () => {
+  assert.equal(lineCoordinatesOnly({ startLine: 4, endLine: 5, startColumn: 8, endColumn: 2 }), true);
+  for (const region of [{ startLine: 4, startColumn: 0 }, { startLine: 4, endLine: 3 },
+    { startLine: 4, startColumn: 8, endColumn: 2 }, { startLine: 4, charOffset: 2 },
+    { startLine: 4, endLine: '5' }, {}]) {
+    assert.equal(lineCoordinatesOnly(region), false);
+  }
+});
 
 test('sarifTraceThreads preserves thread boundaries and marks unavailable locations', () => {
   const physical = (uri, startLine) => ({
