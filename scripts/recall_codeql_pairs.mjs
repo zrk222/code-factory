@@ -282,7 +282,7 @@ function nativeCapture(root, capture, side, input, engineVersion, policy, extrac
 }
 
 function nativeDisposition(native, pattern, outcome, extractionComplete) {
-  if (!native.hunk_hit) return 'native_miss';
+  if (!native.hunk_hit) return extractionComplete ? 'native_miss' : 'native_extraction_unresolved';
   if (outcome === 'hit') return 'overlap';
   if (outcome !== 'miss') return 'pattern_unresolved';
   if (native.fixed_hunk_residuals || pattern.fix_side_residual.length) return 'fixed_side_residual';

@@ -353,6 +353,17 @@ test('native and pattern hits join only on identical evidence and are counted on
   assert.equal(fileMatch.observed_union_hunk_hits, 0);
   assert.equal(fileMatch.observed_union_file_hits, 1);
   assert.equal(fileMatch.eligible_native_additions, 0);
+  assert.equal(fileMatch.cases[0].disposition, 'native_miss');
+  const incompleteFixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [] }]);
+  const unfinishedFileOnly = { ...fileOnly, cases: [{ ...fileOnly.cases[0], fixed: incompleteFixed }] };
+  const unresolvedFileOnly = joined(base, unfinishedFileOnly);
+  assert.equal(unresolvedFileOnly.cases[0].disposition, 'native_extraction_unresolved');
+  assert.equal(unresolvedFileOnly.native_extraction_complete_pairs, 0);
+  assert.equal(unresolvedFileOnly.eligible_native_additions, 0);
+  assert.equal(unresolvedFileOnly.combined_hunk_hits, 0);
+  assert.equal(joined({ ...base, fix_side_residual: [['test/rule', 'sample.py', 1]] },
+    { ...value, cases: [{ ...pair, fixed: incompleteFixed }] }).cases[0].disposition, 'fixed_side_residual');
+  capture('fixed');
   assert.equal(joined({ ...base, file_hit: true }, fileOnly).observed_union_file_hits, 1);
 
   const result = nativeReport.runs[0].results[0];
