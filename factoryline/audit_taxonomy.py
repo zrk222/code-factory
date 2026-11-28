@@ -32,7 +32,7 @@ _NATIVE_WORKERS = {
     "semgrep": {
         "target": "semgrep-worker",
         "profile": "semgrep-pattern-limited.json",
-        "version": "1.15.0",
+        "version": "2.1.0",
         "variants": {
             "php_interfile": {
                 "target": "php-interfile-worker",
