@@ -817,6 +817,12 @@ def _consume_security_snapshots(
     from . import test_oracle_misuse as oracle
     from . import review_audits as audit
     from .import_context import prepared_security_snapshot_batch
+    from .scan_pool import map_scan_jobs
+
+    def scan_one(path, calls, bindings, context, tree):
+        fingerprint = fingerprints.get(path)
+        args = (test_file_patterns, retained.get(path), tree, fingerprint)
+        return scan_snapshot(workspace, path, calls, bindings, context, *args)
 
     security_only = audit._SECURITY_ONLY_SCAN.get() is True
     provider_mutations = {}
@@ -828,6 +834,7 @@ def _consume_security_snapshots(
             rows, state = {}, ({}, {})
             if not security_only:
                 state = oracle.source_callback_snapshot_state(snapshots, fingerprints)
+            jobs = []
             for path in files:
                 if (tree := snapshots.pop(path, None)) is None:
                     continue
@@ -851,17 +858,8 @@ def _consume_security_snapshots(
                     context.update(
                         bind(context.get("captured_imports", {}), workspace, *state)
                     )
-                rows[path] = scan_snapshot(
-                    workspace,
-                    path,
-                    calls,
-                    bindings,
-                    context,
-                    test_file_patterns,
-                    retained.get(path),
-                    tree,
-                    fingerprints.get(path),
-                )
+                jobs.append((path, calls, bindings, context, tree))
+            rows.update(map_scan_jobs(jobs, scan_one))
     finally:
         snapshots.clear()
     return rows

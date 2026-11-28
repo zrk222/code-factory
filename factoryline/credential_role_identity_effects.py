@@ -848,12 +848,9 @@ def _unknown_expression(node, aliases, *, strict_calls=False, material_values=Fa
 
 
 def _value_trace(node, operation):
-    try:
-        digest = hashlib.sha256(
-            ast.dump(node, include_attributes=False).encode("utf-8")
-        ).hexdigest()
-    except (TypeError, ValueError):
-        digest = ""
+    from .scan_pool import ast_dump_digest
+
+    digest = ast_dump_digest(node)
     return (
         operation,
         (

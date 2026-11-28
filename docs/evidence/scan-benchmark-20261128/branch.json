@@ -1,0 +1,25 @@
+{
+  "schema": "factory.scan-benchmark.v1",
+  "corpus_sha256": "8d7675e94cb347836661da1b451814338e001e67a1336967261e27818827350f",
+  "python_files": 30,
+  "lines": 40762,
+  "host": {
+    "cpus": 2,
+    "system": "Linux",
+    "python": "3.13.18"
+  },
+  "workers": 0,
+  "runs_seconds": [
+    68.049,
+    68.063,
+    69.856
+  ],
+  "median_seconds": 68.063,
+  "spread": 0.0266,
+  "lines_per_second": 599,
+  "output_sha256": [
+    "5405358500bf16029881747ea31cf948b6231ca160b3b82212b470b0c4158602"
+  ],
+  "stable_output": true,
+  "stable_timing": true
+}
