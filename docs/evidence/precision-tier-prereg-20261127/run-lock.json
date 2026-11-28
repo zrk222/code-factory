@@ -15,7 +15,7 @@
     "docs/evidence/precision-tier-prereg-20261127/triage_agent_prompt.txt": "5995c7950cc2c914426f830ab6e36371ad1e0eed5b1a07a9b3d8fde5f3d74036",
     "docs/evidence/precision-tier-prereg-20261127/labeler_prompt.txt": "051e83c265dd9a10c266df8f45e9210737916e546abb63c7068d49c22b18dca8",
     "docs/evidence/precision-tier-prereg-20261127/adjudication_prompt.txt": "74f5d73a7310a21c27883c5b0b99857fb5dd7901d26b7eb21829e14edfd0851b",
-    "scripts/precision_cohort_preflight.py": "87b49adc4f72bcba28d82fc0f4529050afdf6b5339bf5ea581c9ad18b5ed3705"
+    "scripts/precision_cohort_preflight.py": "09fdcc47249f5e6b5e8c6957e12ad9c7492bb308606afb7bdd8f51281fb1f850"
   },
   "scorer": {
     "source": "scripts/ at the candidate commit (identical to origin/main eb697a31)",

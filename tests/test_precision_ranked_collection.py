@@ -849,7 +849,47 @@ def test_arm_g_exclusive_json_write_binds_the_actual_bytes(tmp_path):
     assert preflight.arm_g_json(target)[0] == {"items": []}
 
 
-def test_arm_g_packet_checks_scope_and_publishes_once(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("changes", "accepted"),
+    [
+        ({}, True),
+        ({"cohort": "q4"}, True),
+        ({"manifest_sha256": "A" * 64}, False),
+        ({"manifest_sha256": "a" * 63}, False),
+        ({"extra": "unexpected"}, False),
+        ({"schema": "factory.arm-g-cohort-commitment.v2"}, False),
+        ({"cohort": "exposed"}, False),
+    ],
+)
+def test_arm_g_commitment_checks_schema_cohort_and_digest(tmp_path, changes, accepted):
+    from scripts import precision_cohort_preflight as preflight
+
+    commitment = tmp_path / "commitment.json"
+    registered = {
+        "schema": "factory.arm-g-cohort-commitment.v1",
+        "cohort": "reserve",
+        "manifest_sha256": "a" * 64,
+        **changes,
+    }
+    sha256 = preflight.arm_g_write(commitment, registered)
+    args = SimpleNamespace(
+        commitment=commitment,
+        commitment_sha256=sha256,
+        cohort=registered["cohort"],
+    )
+    if accepted:
+        assert preflight.arm_g_commitment(args) == {
+            **registered,
+            "commitment_sha256": sha256,
+        }
+    else:
+        with pytest.raises(ValueError, match="cohort commitment"):
+            preflight.arm_g_commitment(args)
+
+
+def test_arm_g_score_repositories_checks_pins_before_packet_publication(
+    tmp_path, monkeypatch
+):
     from scripts import precision_cohort_preflight as preflight
 
     repo = Path(__file__).resolve().parents[1]
@@ -878,6 +918,8 @@ def test_arm_g_packet_checks_scope_and_publishes_once(tmp_path, monkeypatch):
         {"case_workers": 1},
         {"engine_args": ["--timeout=60"]},
         {"scanner_path_policy": None},
+        {"engine": {**score["engine"], "version": "2.1.1"}},
+        {"engine": {**score["engine"], "executable_sha256": "b" * 64}},
     ):
         with pytest.raises(ValueError, match="locked scan"):
             preflight.arm_g_score_repositories(

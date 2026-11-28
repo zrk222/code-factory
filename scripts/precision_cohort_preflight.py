@@ -412,25 +412,31 @@ def arm_g_commitment(args):
 
 def arm_g_score_repositories(score, lock, rules_sha256, manifest_sha256):
     """Validate the score contract and index repositories by advisory."""
+    engine = lock["engine"]
     scan = defaultdict(list)
-    scan_args = lock["engine"]["score_args"]
+    scan_args = engine["score_args"]
     for option, value in zip(scan_args[::2], scan_args[1::2], strict=True):
         scan[option].append(value)
+    expected_score = {
+        "schema": "factory.recall-result.v1",
+        "manifest_sha256": manifest_sha256,
+        "ruleset_sha256": rules_sha256,
+        "profile_sha256": lock["repo_files"][ARM_G_PROFILE],
+        "scanner_path_policy": "opengrep-2.1.0-target-inventory-v1",
+        "engine_args": scan["--extra-arg"],
+    }
+    expected_options = {
+        "--profile": [ARM_G_PROFILE],
+        "--scope": [score.get("scope")],
+        "--scanner-path-policy": ["true"],
+        "--jobs": [str(score.get("case_workers"))],
+    }
+    observed_engine = score.get("engine", {})
     if (
-        score.get("schema") != "factory.recall-result.v1"
-        or score.get("manifest_sha256") != manifest_sha256
-        or score.get("ruleset_sha256") != rules_sha256
-        or score.get("profile_sha256") != lock["repo_files"][ARM_G_PROFILE]
-        or score.get("engine", {}).get("executable_sha256")
-        not in lock["engine"]["sha256"].values()
-        or score.get("engine", {}).get("version")
-        != lock["engine"]["name"].removeprefix("OpenGrep ")
-        or scan["--profile"] != [ARM_G_PROFILE]
-        or scan["--scope"] != [score.get("scope")]
-        or scan["--scanner-path-policy"] != ["true"]
-        or score.get("scanner_path_policy") != "opengrep-2.1.0-target-inventory-v1"
-        or scan["--jobs"] != [str(score.get("case_workers"))]
-        or scan["--extra-arg"] != score.get("engine_args")
+        {name: score.get(name) for name in expected_score} != expected_score
+        or {name: scan[name] for name in expected_options} != expected_options
+        or observed_engine.get("executable_sha256") not in engine["sha256"].values()
+        or observed_engine.get("version") != engine["name"].removeprefix("OpenGrep ")
     ):
         raise ValueError("Arm G score receipt differs from the locked scan")
     repositories = {case["ghsa"]: case["repository"] for case in score["cases"]}
