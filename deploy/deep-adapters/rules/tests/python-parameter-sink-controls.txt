@@ -337,3 +337,14 @@ class ClearFieldBeforeLaunch:
         command = [self.program, *arguments]
         with subprocess.Popen(command) as process:
             return process
+
+class OverwriteExecutableSlot:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_PROGRAM")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        command[0] = "approved-worker"
+        with subprocess.Popen(command) as process:
+            return process
