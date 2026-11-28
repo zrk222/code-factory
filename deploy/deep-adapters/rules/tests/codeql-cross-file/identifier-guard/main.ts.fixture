@@ -1,0 +1,35 @@
+import * as http from 'node:http';
+import * as fs from 'node:fs';
+import {join} from 'node:path';
+import {requireKey} from './identifiers.js';
+import {unavailable} from './unresolved.js';
+
+function accepted(value: string) {
+  requireKey(value);
+  return join("root", value);
+}
+function wrong(value: string, another: string) {
+  requireKey(another);
+  return join("root", value);
+}
+function conditional(value: string, chosen: boolean) {
+  if (chosen) requireKey(value);
+  return join("root", value);
+}
+function late(value: string) {
+  const result = join("root", value);
+  requireKey(value);
+  return result;
+}
+function unresolved(value: string) {
+  unavailable(value);
+  return join("root", value);
+}
+http.createServer((request, response) => {
+  const value = request.url;
+  fs.stat(accepted(value), () => {}); // accepted
+  fs.stat(wrong(value, "known"), () => {}); // wrong
+  fs.stat(conditional(value, value.length > 10), () => {}); // conditional
+  fs.stat(late(value), () => {}); // late
+  fs.stat(unresolved(value), () => {}); // unresolved
+});

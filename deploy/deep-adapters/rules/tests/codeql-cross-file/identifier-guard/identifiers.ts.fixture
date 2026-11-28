@@ -1,0 +1,4 @@
+const allowed = /^[A-Za-z0-9_-]+$/;
+export function requireKey(key: string) {
+  if (!allowed.test(key)) { throw new Error(); }
+}
