@@ -62,3 +62,42 @@ def load_after_permission(request, check):
     check(request)
     # ruleid: python.unsafe-deserialization-unscoped
     return dill.loads(request.body)
+
+from keras.src.layers.layer import Layer
+from keras.src.saving import serialization_lib
+from keras.src.utils.module_utils import tensorflow as tf
+class UnrestrictedIndexWidget(Layer):
+    def __init__(self, source=None):
+        self._source = source
+        if source is not None:
+            self.activate(source)
+    def get_config(self):
+        config = {"source": encode(self._source)}
+        return config
+    def activate(self, source):
+        # ruleid: python.unsafe-deserialization-unscoped
+        if isinstance(source, str):
+            self.table = self._reader(source)
+    def _reader(self, filename):
+        with tf.init_scope():
+            initializer = tf.lookup.TextFileInitializer(filename=filename)
+        return initializer
+
+class GuardedIndexWidget(Layer):
+    def __init__(self, source=None):
+        self._source = source
+        if source is not None:
+            self.activate(source)
+    def get_config(self):
+        config = {"source": encode(self._source)}
+        return config
+    def activate(self, source):
+        # ok: python.unsafe-deserialization-unscoped
+        if isinstance(source, str):
+            if serialization_lib.in_safe_mode():
+                raise ValueError("external asset is disabled")
+            self.table = self._reader(source)
+    def _reader(self, filename):
+        with tf.init_scope():
+            initializer = tf.lookup.TextFileInitializer(filename=filename)
+        return initializer

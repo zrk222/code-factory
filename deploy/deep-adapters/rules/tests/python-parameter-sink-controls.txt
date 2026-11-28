@@ -212,3 +212,128 @@ class BoundJsonBuilderGuarded(object):
                 # ok: python.parameter-sql-text
                 return (f"json_extract(value, '$.{key}') = '" + escape_value(value) + "'", [])
         return "",[]
+
+class OperatorProgram:
+    def configure(self, handle):
+        connection = self.get_connection(handle)
+        # ruleid: python.parameter-shell-command
+        self.program = connection.extra_dejson.get("program", "worker")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class EnvironmentProgram:
+    def configure(self, connection):
+        # ruleid: python.parameter-shell-command
+        self.program = os.environ.get("REVIEW_PROGRAM", "worker")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class ConstantProgram:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = "worker"
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class ProgramArgument:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_OPTION")
+
+    def run(self, arguments):
+        command = ["worker", self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class ApprovedProgram:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = {"batch": "worker", "report": "reporter"}.get(os.getenv("REVIEW_MODE"), "worker")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class OrdinaryMapping:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = connection.get("program", "worker")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class OtherAttribute:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_PROGRAM")
+
+    def run(self, arguments):
+        command = [self.other_program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class AssignmentOnly:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = connection.extra_dejson.get("program")
+
+class LaunchOnly:
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class UnrelatedRecord:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = connection.extra_dejson.get("program")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class ResetInSetter:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_SETTING")
+        self.program = "worker"
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class ResetBeforeLaunch:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_SETTING")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        command = ["worker", *arguments]
+        with subprocess.Popen(command) as process:
+            return process
+
+class ClearFieldBeforeLaunch:
+    def configure(self, connection):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_SETTING")
+
+    def run(self, arguments):
+        self.program = "worker"
+        command = [self.program, *arguments]
+        with subprocess.Popen(command) as process:
+            return process
