@@ -427,7 +427,7 @@ function pendingEvidence(pattern, outcomes, coverageGaps, referenceCases, dispos
   });
 }
 
-function caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observations, followUp, patternScoreSha256) {
+function caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observations, followUp, proofPins) {
   const nativeByCase = new Map(observations.map(row => [row.advisory, row]));
   const pendingByCase = new Map(followUp.map(row => [row.advisory, row]));
   return [...pattern].map(([advisory, row]) => {
@@ -435,25 +435,28 @@ function caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observati
     const arms = native?.arms ?? (native ? [native] : []);
     const pending = pendingByCase.get(advisory);
     const fixedResiduals = native?.fixed_hunk_residuals ?? null;
-    const next = pending?.next ?? (row.fix_side_residual.length || fixedResiduals ? 'review_fixed_side_path' : null);
+    const historical = outcomes.get(advisory) === 'hit';
+    const coverageGap = coverageGaps.get(advisory);
+    const fixedReview = row.fix_side_residual.length || fixedResiduals ? 'review_fixed_side_path' : null;
+    const next = pending?.next ?? (coverageGap ? 'resolve_pattern_coverage' : fixedReview);
     const pins = {
-      advisory, input_sha256: referenceCases.get(advisory).input_sha256, pattern_score_sha256: patternScoreSha256,
+      advisory, input_sha256: referenceCases.get(advisory).input_sha256, ...proofPins,
       diff_sha256: row.diff_sha256, changed_files_sha256: row.changed_files_sha256,
       pattern_artifacts: row.captures ?? null,
       native_bundles: arms.map(arm => arm.native_bundle_sha256),
     };
     const layers = [
-        { stage: 'sink_collection', pattern_alerts_in_changed_files: row.alerts_in_changed_files ?? null,
+        { stage: 'sink_collection', pattern_alerts_in_changed_files: row.captures?.old ? row.alerts_in_changed_files ?? null : null,
           native_alerts: native ? arms.reduce((sum, arm) => sum + arm.native_alerts.old, 0) : null },
-        { stage: 'parser_coverage', pattern: coverageGaps.get(advisory) ?? outcomes.get(advisory),
+        { stage: 'parser_coverage', pattern: coverageGap ?? outcomes.get(advisory),
           native_captures: arms.length, complete_native_captures: arms.filter(arm =>
             arm.native_coverage.old.complete && arm.native_coverage.fixed.complete).length },
-        { stage: 'source_to_sink', same_family_pattern_alerts: row.family_alerts_in_changed_files ?? null,
-          verified_native_traces: native ? (native.anchored_trace_matches?.length ?? 0) : null },
-        { stage: 'fixed_side', pattern_hunk_residuals: row.fix_side_residual.length,
+        { stage: 'source_to_sink', same_family_pattern_alerts: row.captures?.old ? row.family_alerts_in_changed_files ?? null : null,
+          archive_bound_trace_anchors: native ? (native.anchored_trace_matches?.length ?? 0) : null },
+        { stage: 'fixed_side', pattern_hunk_residuals: row.captures?.fixed || row.fix_side_residual.length ? row.fix_side_residual.length : null,
           native_hunk_residuals: fixedResiduals },
-        { stage: 'verdict', state: next ? 'unresolved' : 'registered_hunk_hit',
-          historical_hunk_hit: !pending, next, next_plan_sha256s: pending?.plan_sha256s ?? [] },
+        { stage: 'verdict', state: next ? 'unresolved' : historical ? 'registered_hunk_hit' : 'verified_native_addition',
+          historical_hunk_hit: historical, next, next_plan_sha256s: pending?.plan_sha256s ?? [] },
     ];
     let prior = caseDigest([pins]);
     const evidence = { ...pins, layers: layers.map(layer => {
@@ -465,7 +468,16 @@ function caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observati
   });
 }
 
-function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, observations, plans) {
+function registerUnresolvedCases(caseEvidence, outcomes) {
+  return caseEvidence.flatMap(({ advisory, input_sha256, evidence_sha256, layers }) => {
+    const verdict = layers.at(-1);
+    if (!verdict.next) return [];
+    return [{ advisory, input_sha256, evidence_sha256, pattern_outcome: outcomes.get(advisory),
+      next: verdict.next, plan_sha256s: verdict.next_plan_sha256s }];
+  });
+}
+
+function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, observations, plans, cohortPins) {
   requireProof(typeof pin.path === 'string' && digest.test(pin.sha256), 'Pattern score path and SHA-256 are required');
   const bytes = readFileSync(pin.path);
   requireProof(sha256(bytes) === pin.sha256, 'Pattern score digest mismatch');
@@ -488,7 +500,7 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     const outcome = verifiedPatternOutcome(row);
     pattern.set(row.ghsa, row);
     outcomes.set(row.ghsa, outcome);
-    if (outcome === 'miss') coverageGaps.set(row.ghsa, patternCoverageGap(row));
+    if (['hit', 'miss'].includes(outcome)) coverageGaps.set(row.ghsa, patternCoverageGap(row));
   }
   const hunkHits = [...outcomes.values()].filter(outcome => outcome === 'hit').length;
   const fileHits = [...pattern].filter(([id, row]) => searchedFileHit(row, outcomes.get(id))).length;
@@ -514,14 +526,16 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
   const additions = dispositions.filter(row => row.disposition === 'eligible').length;
   const newHunkHits = dispositions.filter(row => row.native_hunk_hit && row.pattern_outcome !== 'hit').length;
   const newFileHits = dispositions.filter(row => row.native_file_hit && !row.pattern_file_hit).length;
-  const followUp = plans && pendingEvidence(pattern, outcomes, coverageGaps, referenceCases, dispositions, observations, plans);
+  const registeredEvidence = plans && caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observations,
+    pendingEvidence(pattern, outcomes, coverageGaps, referenceCases, dispositions, observations, plans),
+    { ...cohortPins, pattern_score_sha256: pin.sha256 });
   return { scope: 'supplemental paired comparison', pattern_score_sha256: pin.sha256,
     pattern_hunk_hits: hunkHits, pattern_file_hits: fileHits,
     verified_pattern_cases: pattern.size, verified_native_pairs: dispositions.length,
     native_extraction_complete_pairs: dispositions.filter(row => row.native_extraction_complete).length,
     observed_union_hunk_hits: hunkHits + newHunkHits, observed_union_file_hits: fileHits + newFileHits,
     eligible_native_additions: additions, combined_hunk_hits: hunkHits + additions, cases: dispositions,
-    ...(followUp ? { follow_up: followUp, case_evidence: caseEvidence(pattern, outcomes, coverageGaps, referenceCases, observations, followUp, pin.sha256) } : {}) };
+    ...(registeredEvidence ? { follow_up: registerUnresolvedCases(registeredEvidence, outcomes), case_evidence: registeredEvidence } : {}) };
 }
 
 function readPairRegistry(root, bundle) {
@@ -698,10 +712,10 @@ function verifyPairBundles(lanes) {
   return prepared.map((lane, index) => lane.complete(bindings[index]));
 }
 
-function summarizeVerifiedPairs(bundle, registry, observations, patternPin, plans) {
+function summarizeVerifiedPairs(bundle, registry, observations, patternPin, plans, cohortPins) {
   const { manifestDigest, reference, cases, referenceCases } = registry;
   const patternJoin = patternPin && joinPatternScore(
-    patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations, plans);
+    patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations, plans, cohortPins);
   const reused = observations.filter(row => (row.arms ?? [row])
     .every(arm => Object.hasOwn(arm, 'capture_reused_from'))).length;
   return { ...(patternJoin ? { pattern_join: patternJoin } : {}),
@@ -752,14 +766,16 @@ function scoreCohortBundle(root, bytes, bundle, patternPin) {
   const covered = new Set(observations.map(row => row.advisory));
   requireProof(covered.size === observations.length, 'Duplicate CodeQL advisory across cohort bundles');
   const { registry } = verified[0];
+  const cohortSha = sha256(bytes);
   return { schema: grouped ? 'factory.recall-codeql-cohort-score.v2' : 'factory.recall-codeql-cohort-score.v1',
     scope: 'verified paired native cohort', ...(grouped ? { scored_arm_pairs: captures.length } : {}),
-    input_sha256: sha256(bytes), manifest_sha256: first.manifest.sha256, engine_version: first.engine_version,
+    input_sha256: cohortSha, manifest_sha256: first.manifest.sha256, engine_version: first.engine_version,
     bundles: verified.map((lane, index) => ({ ...lanes[index].pin, scope: lane.scope,
       scored_pairs: lane.observations.length, ...lane.coverage })),
     unscored_advisories: [...registry.cases.keys()].filter(id => !covered.has(id)),
     ...summarizeVerifiedPairs(first, registry, observations, patternPin, grouped
-      ? verified.map(lane => lane.coverage).filter(coverage => coverage.plan_sha256) : undefined) };
+      ? verified.map(lane => lane.coverage).filter(coverage => coverage.plan_sha256) : undefined,
+    { cohort_sha256: cohortSha, manifest_sha256: first.manifest.sha256, reference_sha256: first.reference.sha256 }) };
 }
 
 export function scoreCodeqlPairs(bundlePath, patternPin = null) {

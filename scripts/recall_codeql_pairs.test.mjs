@@ -626,6 +626,9 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(unobservedFamily.pattern_join.follow_up[0].next, 'enhance_native_family_model');
   const [assessment] = unobservedFamily.pattern_join.case_evidence;
   assert.equal(assessment.input_sha256, unobservedFamily.cases[0].input_sha256);
+  assert.equal(assessment.cohort_sha256, unobservedFamily.input_sha256);
+  assert.equal(assessment.manifest_sha256, value.manifest.sha256);
+  assert.equal(assessment.reference_sha256, value.reference.sha256);
   assert.deepEqual(assessment.layers.map(layer => layer.stage),
     ['sink_collection', 'parser_coverage', 'source_to_sink', 'fixed_side', 'verdict']);
   assert.equal(assessment.layers[4].state, 'unresolved');
@@ -640,6 +643,7 @@ test('native detector arms retain their own extraction and count one shared case
   delete modified.output_sha256;
   assert.notEqual(caseDigest([modified]), layers[2].input_sha256);
   assert.equal(evidenceSha, caseDigest([{ ...pins, layers }]));
+  assert.equal(unobservedFamily.pattern_join.follow_up[0].evidence_sha256, assessment.evidence_sha256);
   assert.equal(assessment.evidence_sha256, caseDigest([Object.fromEntries(
     Object.entries(assessment).filter(([key]) => key !== 'evidence_sha256'),
   )]));
@@ -668,7 +672,9 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(splitUncertainty.pattern_join.eligible_native_additions, 0);
   const twoHits = evaluate([incomplete, complete]);
   assert.equal(twoHits.strict_hunk_hits, 1);
-  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].state, 'registered_hunk_hit');
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].state, 'verified_native_addition');
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].historical_hunk_hit, false);
+  assert.equal(twoHits.pattern_join.follow_up.length, 0);
   assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
   assert.equal(twoHits.cases[0].arms.length, 2);
   const anchored = evaluate([arm('off-hunk', { parsed: true, offHunk: true }), negative]);
