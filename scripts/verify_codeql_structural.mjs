@@ -48,6 +48,36 @@ export function verifyStructuralBundle(bundle, candidate, expected, pins) {
 const stableJson = value => JSON.stringify(value, (_, item) =>
   item && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+const compareRecords = (a, b) => {
+  const left = stableJson(a);
+  const right = stableJson(b);
+  return Number(left > right) - Number(left < right);
+};
+const isGoExtraction = item => item.descriptor?.id === 'go/diagnostics/successfully-extracted-files';
+
+const knownIndexOwners = new Set([
+  ['artifacts', null, 'location'], // Validated self-indices.
+  ['invocations', null, 'toolExecutionNotifications', null, 'descriptor'],
+  ['properties', 'metricResults', null, 'rule'],
+].map(path => JSON.stringify(path)));
+
+function hasArtifactIndexReference(value, path = []) {
+  if (Array.isArray(value)) return value.some(item => hasArtifactIndexReference(item, [...path, null]));
+  return value && typeof value === 'object' && Object.entries(value).some(([key, item]) =>
+    key === 'artifactIndex' || key === 'parentIndex'
+    || (key === 'index' && !knownIndexOwners.has(JSON.stringify(path)))
+    || hasArtifactIndexReference(item, [...path, key]));
+}
+
+function sortUnreferencedGoArtifacts(run) {
+  if (!Array.isArray(run.artifacts) || !run.artifacts.every((artifact, index) => {
+    const location = artifact?.location;
+    return typeof location?.uri === 'string' && (!Object.hasOwn(location, 'index') || location.index === index);
+  }) || hasArtifactIndexReference(run)) return;
+  // CodeQL can number extracted files in either order, even when no consumer uses the indices.
+  for (const artifact of run.artifacts) delete artifact.location.index;
+  run.artifacts.sort(compareRecords);
+}
 
 export function assertStructuralParity(first, repeat) {
   const semantics = ({ sarif, coverage, challenges }) => {
@@ -55,8 +85,10 @@ export function assertStructuralParity(first, repeat) {
     // The raw digest includes CodeQL telemetry timestamps. Keep it in the stored bundle.
     delete report.properties?.factory_native_raw_sha256;
     for (const run of report.runs) {
+      let hasGoExtraction = false;
       for (const invocation of run.invocations ?? []) {
-        for (const notification of invocation.toolExecutionNotifications ?? []) {
+        const notifications = invocation.toolExecutionNotifications ?? [];
+        for (const notification of notifications) {
           delete notification.timeUtc;
           if (['cli/file-coverage-baseline', 'cli/platform'].includes(notification.descriptor?.id)) {
             delete notification.properties?.attributes?.durationMilliseconds;
@@ -64,9 +96,17 @@ export function assertStructuralParity(first, repeat) {
             delete notification.properties?.attributes?.durations;
           }
         }
+        const extracted = notifications.filter(isGoExtraction);
+        if (extracted.length) {
+          hasGoExtraction = true;
+          const sorted = extracted.sort(compareRecords).values();
+          invocation.toolExecutionNotifications = notifications.map(notification =>
+            isGoExtraction(notification) ? sorted.next().value : notification);
+        }
       }
+      if (hasGoExtraction) sortUnreferencedGoArtifacts(run);
       // CodeQL exports these counters as an unordered list.
-      run.properties?.metricResults?.sort((a, b) => stableJson(a).localeCompare(stableJson(b)));
+      run.properties?.metricResults?.sort(compareRecords);
     }
     // Wrapper executions and archive/stream hashes are retained in the raw bundle.
     // These fields describe the analysis result and the exact inputs it covered.

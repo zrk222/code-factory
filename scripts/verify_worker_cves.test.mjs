@@ -85,6 +85,46 @@ test('compiled fixture parity ignores known timing fields and detects native evi
   assert.throws(() => verifyStructuralBundle(bundle, 'candidate', expected, pins), /exact native file coverage/);
 });
 
+test('Go fixture parity permits unordered extraction evidence with unreferenced artifact indices', () => {
+  const paths = ['nested/go.mod', 'nested/compute.go', 'nested/compute_test.go'];
+  const extraction = uri => ({
+    descriptor: { id: 'go/diagnostics/successfully-extracted-files', index: 0 },
+    locations: [{ physicalLocation: { artifactLocation: { uri } } }],
+  });
+  const bundle = order => {
+    const notifications = order.map(extraction);
+    notifications.splice(1, 0, { descriptor: { id: 'go/baseline/expected-extracted-files', index: 2 } });
+    return {
+      sarif: { runs: [{
+        artifacts: order.map((uri, index) => ({ location: { uri, index, uriBaseId: '%SRCROOT%' } })),
+        invocations: [{ toolExecutionNotifications: notifications }],
+        properties: { metricResults: [{ rule: { id: 'go/summary/lines-of-code', index: 34 }, value: 3 }] },
+      }] },
+      coverage: {},
+    };
+  };
+  const first = bundle(paths);
+  const repeat = bundle([paths[1], paths[2], paths[0]]);
+  const original = structuredClone(repeat);
+  assertStructuralParity(first, repeat);
+  assert.deepEqual(repeat, original);
+
+  const artifactDrift = structuredClone(repeat);
+  artifactDrift.sarif.runs[0].artifacts[0].hashes = { 'sha-256': 'changed' };
+  assert.throws(() => assertStructuralParity(first, artifactDrift), /changed on repeat \(report\)/);
+  const diagnosticDrift = structuredClone(repeat);
+  diagnosticDrift.sarif.runs[0].invocations[0].toolExecutionNotifications[0].locations =
+    extraction('nested/unexpected.go').locations;
+  assert.throws(() => assertStructuralParity(first, diagnosticDrift), /changed on repeat \(report\)/);
+
+  for (const evidence of [first, repeat]) {
+    evidence.sarif.runs[0].results = [{
+      relatedLocations: [{ physicalLocation: { artifactLocation: { index: 0 } } }],
+    }];
+  }
+  assert.throws(() => assertStructuralParity(first, repeat), /changed on repeat \(report\)/);
+});
+
 test('worker workflow path filters cover every Docker build input without framework scope', () => {
   const workflow = readFileSync('.github/workflows/worker-verification.yml', 'utf8').replace(/\r\n/g, '\n');
   const dockerfile = readFileSync('deploy/deep-adapters/Dockerfile', 'utf8').replace(/\r\n/g, '\n');
