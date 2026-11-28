@@ -2237,7 +2237,7 @@ def _implementation_is_exempt(
         or bool(decorators & exempt_decorators)
         or _implementation_static_interface(node, parents, aliases, tree)
         or intentional_implementation_contract(node, parents, aliases)
-        or _http_logging_hook(node, parents, aliases)
+        or _http_logging_hook(node, parents, tree)
     )
 
 

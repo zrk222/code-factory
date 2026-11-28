@@ -152,7 +152,7 @@ from .semantic_credential_sensor import (
 _HTTP_LOG_MIN_POSITIONAL = {"log_message": 2, "log_error": 2, "log_request": 1}
 
 
-def _http_logging_hook(node, parents, aliases):
+def _http_logging_hook(node, parents, module):
     name = node.name
     if name not in _HTTP_LOG_MIN_POSITIONAL or node.decorator_list:
         return False
@@ -170,29 +170,27 @@ def _http_logging_hook(node, parents, aliases):
     body = node.body if doc is None else node.body[1:]
     if len(body) != 1 or not isinstance(body[0], ast.Pass):
         return False
-    if re.search(r"todo|tbd|not implemented|fixme", doc or "", re.I):
+    if re.search(r"todo|tbd|not\s+(?:yet\s+)?implemented|fixme", doc or "", re.I):
         return False
-    return _stdlib_http_base(owner, parents, aliases)
+    return _stdlib_http_base(owner, parents, module)
 
 
-def _stdlib_http_base(owner, parents, aliases):
-    module = parents.get(owner)
-    if not isinstance(module, ast.Module) or owner.decorator_list or owner.keywords:
-        return False
-    if len(owner.bases) != 1:
+def _stdlib_http_base(owner, parents, module):
+    from .review_integrity import _implementation_imports, _implementation_scope_chain
+
+    if owner.decorator_list or owner.keywords or len(owner.bases) != 1:
         return False
     root, dot, suffix = ast.unparse(owner.bases[0]).partition(".")
-    imported = aliases.get(root, "")
+    imported = _implementation_imports(module.body).get(root, "")
     if f"{imported}{dot}{suffix}" != "http.server.BaseHTTPRequestHandler":
         return False
+    scopes = _implementation_scope_chain(owner, parents)
     bindings = sum(_scope_statement_binds_name(stmt, root) for stmt in module.body)
-    wildcard = any(
-        isinstance(stmt, ast.ImportFrom) and stmt.names[0].name == "*"
-        for stmt in ast.walk(module)
-    )
+    imports = (stmt for stmt in ast.walk(module) if isinstance(stmt, ast.ImportFrom))
     return (
         bindings == 1
-        and not wildcard
+        and not any(_scope_binds_name(scope, root) for scope in scopes)
+        and not any(stmt.names[0].name == "*" for stmt in imports)
         and _stable_import_contract(module, root, owner.lineno)
         and _stable_api_origin(owner, parents, {root: imported}, {imported})
     )

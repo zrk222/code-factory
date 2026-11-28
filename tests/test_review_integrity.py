@@ -4091,6 +4091,56 @@ def test_http_logging_hook_accepts_stdlib_calls(hook, parameters, compatible):
     assert symbols(source) == (set() if compatible else {hook})
 
 
+@pytest.mark.parametrize(
+    ("module_import", "class_import", "expected"),
+    [
+        (
+            "from app import Base",
+            "from http.server import BaseHTTPRequestHandler as Base",
+            {"log_message"},
+        ),
+        (
+            "from http.server import BaseHTTPRequestHandler as Base",
+            "from app import Base",
+            set(),
+        ),
+    ],
+)
+def test_http_hook_class_body_cannot_change_its_base_origin(
+    module_import, class_import, expected
+):
+    source = f"""{module_import}
+class Handler(Base):
+    {class_import}
+    def log_message(self, *args): pass
+"""
+    assert symbols(source) == expected
+
+
+@pytest.mark.parametrize(
+    "arguments, expected", [("", set()), ("Base", {"log_message"})]
+)
+def test_http_hook_nested_class_uses_its_factory_scope(arguments, expected):
+    source = f"""from http.server import BaseHTTPRequestHandler as Base
+def factory({arguments}):
+    class Handler(Base):
+        def log_message(self, *args): pass
+    return Handler
+"""
+    assert symbols(source) == expected
+
+
+@pytest.mark.parametrize("doc", ["Not yet implemented.", "Not  YET   implemented."])
+def test_http_hook_unfinished_docstring_remains_a_finding(doc):
+    source = f'''from http.server import BaseHTTPRequestHandler
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        """{doc}"""
+        pass
+'''
+    assert symbols(source) == {"log_message"}
+
+
 def test_documented_http_logging_overrides_preserve_unfinished_siblings():
     source = '''
 from http.server import BaseHTTPRequestHandler
