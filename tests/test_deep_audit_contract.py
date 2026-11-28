@@ -58,6 +58,51 @@ def test_keyless_review_decodes_lossless_bounded_input():
             decode(b64encode(compress(b"a" * 4_194_305)))
 
 
+@pytest.mark.parametrize("modified", [False, True])
+def test_keyless_coordinator_seals_exact_eight_lane_plan(tmp_path, monkeypatch, modified):
+    import yaml
+
+    repo = Path(__file__).resolve().parents[1]
+    workflow = repo / ".github/workflows/deep-audit-keyless-coordinator.yml"
+    flow = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    step = next(
+        item
+        for item in flow["jobs"]["authorize"]["steps"]
+        if item.get("name") == "Bind only the approved candidate to exact role workflows"
+    )
+    source = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    command = compile(source, str(workflow), "exec")
+    plan_path = Path("scripts/deep-audit-keyless-plan.json")
+    raw_plan = (repo / plan_path).read_bytes()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "zrk222/code-factory")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    plan_path.parent.mkdir()
+    plan_path.write_bytes(raw_plan + b" " if modified else raw_plan)
+
+    root = Path("control")
+    if modified:
+        with pytest.raises(ValueError, match="approved SHA-256"):
+            exec(command, {})
+        assert not root.exists()
+        return
+
+    exec(command, {})
+    manifest_bytes = (root / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
+    payload = json.loads((root / "authorization-payload.json").read_bytes())
+    assert len(manifest["lanes"]) == 8 and len(manifest["obligations"]) == 10
+    assert len({lane["family"] for lane in manifest["lanes"]}) == 6
+    assert manifest["lanes"] == json.loads(raw_plan)["lanes"]
+    assert payload["adapter_images"] == {lane["id"]: lane["image"] for lane in manifest["lanes"]}
+    assert payload["manifest_sha256"] == payload["manifest_content_sha256"] == sha256_bytes(
+        manifest_bytes
+    )
+    assert payload["candidate_sha256"] == manifest["candidate_sha256"]
+    assert payload["authority"] == "none"
+
+
 def test_keyless_artifact_download_follows_producing_job_on_rerun():
     import yaml
 
@@ -315,7 +360,7 @@ def test_keyless_review_requires_the_independently_registered_control_summary(
             for obligation in row["obligations"]
             for control in obligation["controls"]
         )
-        == 27
+        == 30
     )
 
     packet["binding"]["run_id"] = "wrong-run"
