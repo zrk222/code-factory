@@ -211,6 +211,16 @@ test('rejects unresolved cases and extra fixed-side residuals', () => {
   ]);
 });
 
+test('reports recall-mode residuals without gating them', () => {
+  const { reference, candidate } = fixture();
+  candidate.cases[0].fix_side_residual = findings;
+  candidate.summary.fix_side_residual_alerts = 1;
+  const result = verifyRegisteredRecall(reference, candidate, rulesHash, [], ['fixture']);
+  assert.equal(result.decision, 'ACCEPT');
+  assert.equal(result.summary.candidate_fixed_side_residual_alerts, 0);
+  assert.equal(result.summary.candidate_recall_mode_residual_alerts, 1);
+});
+
 test('CLI writes a rejected receipt when the reference bytes are unauthenticated', t => {
   const dir = mkdtempSync(join(tmpdir(), 'registered-recall-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

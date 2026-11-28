@@ -112,9 +112,12 @@ for item in value(doc["rules"], yaml.SequenceNode, "seq"):
         cwes = [value(cwe, yaml.ScalarNode, "str")]
     else:
         cwes = strings(cwe)
+    mode = value(meta["mode"], yaml.ScalarNode, "str") if "mode" in meta else None
     records.append(dict(id=name, cwes=cwes,
         languages=strings(rule["languages"]) if "languages" in rule else [],
         excludes=strings(paths["exclude"]) if "exclude" in paths else []))
+    if mode:
+        records[-1]["mode"] = mode
 print(json.dumps(records))
 `;
 
