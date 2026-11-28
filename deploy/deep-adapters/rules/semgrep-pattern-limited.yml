@@ -1302,16 +1302,38 @@ rules:
     pattern-sources:
       - pattern: '$_GET[...]'
         exact: true
+        label: REQUEST
       - pattern: '$_POST[...]'
         exact: true
+        label: REQUEST
       - pattern: '$_REQUEST[...]'
         exact: true
+        label: REQUEST
       - pattern: '$_COOKIE[...]'
         exact: true
+        label: REQUEST
+      # A method parameter formatted into an include path (for example a locale or
+      # template name joined to a directory).
+      - patterns:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - focus-metavariable: $P
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:file|filename|path|filepath|includefile)$)\w+$'}
+        label: PARAMETER
     pattern-sanitizers:
       - pattern: (int) $VALUE
       - pattern: (integer) $VALUE
       - pattern: intval(...)
+      # A check method on a parameter that is never reassigned; sanitizers drop
+      # every label, so request data must not pass through it.
+      - patterns:
+          - pattern-inside: function $SF(..., $VALUE, ...) { ... }
+          - pattern-not-inside: |
+              $VALUE = $ANY;
+              ...
+          - pattern: $OBJ->$CHECK($VALUE)
+          - metavariable-regex: {metavariable: $CHECK, regex: '^(?i:assert|validate|ensure)\w*$'}
+          - focus-metavariable: $VALUE
+        by-side-effect: true
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -1320,6 +1342,18 @@ rules:
               - pattern: require $VALUE
               - pattern: require_once $VALUE
           - focus-metavariable: $VALUE
+        requires: REQUEST
+      - patterns:
+          - pattern-either:
+              - pattern: include sprintf($FMT, ...)
+              - pattern: include_once sprintf($FMT, ...)
+              - pattern: require sprintf($FMT, ...)
+              - pattern: require_once sprintf($FMT, ...)
+              - pattern: include \sprintf($FMT, ...)
+              - pattern: include_once \sprintf($FMT, ...)
+              - pattern: require \sprintf($FMT, ...)
+              - pattern: require_once \sprintf($FMT, ...)
+        requires: PARAMETER
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -4595,6 +4629,10 @@ rules:
     pattern-sanitizers:
       - pattern: Shellwords.escape(...)
       - pattern: $X.shellescape
+      - pattern: Shellwords.join(...)
+      - pattern: Shellwords.shelljoin(...)
+      - pattern: shelljoin(...)
+      - pattern: $X.shelljoin
       - pattern: $X.to_i
         exact: true
     pattern-sinks:

@@ -96,3 +96,17 @@ module ArchiveLoader
     Kernel.open(path, mode)
   end
 end
+
+class ListingControls
+  def list(option, filename)
+    command = ['ls', option, filename].compact
+    # ok: ruby.parameter-shell-command
+    `#{shelljoin(command)} 2>&1`
+  end
+
+  def list_joined(option, filename)
+    command = ['ls', option, filename].compact.join(' ')
+    # ruleid: ruby.parameter-shell-command
+    `#{command}`
+  end
+end
