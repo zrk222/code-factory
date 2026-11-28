@@ -2723,6 +2723,61 @@ def semgrep_execution_evidence(
     return evidence, lane, sources, {"runs": [{"results": []}]}
 
 
+@pytest.mark.parametrize("fault", [None, "target", "finding", "source-drift", "legacy"])
+def test_semgrep_grouped_reports_prove_zero_targets(fault):
+    import base64
+    from factoryline.deep_audit_io import canonical_bytes, verify_semgrep_rule_execution
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence(version="2.1.0")
+    rules = json.loads(base64.b64decode(evidence["ruleset_base64"]))["rules"]
+    extra = dict(rules[0], id="ruby-rule", languages=["ruby"])
+    sources.pop("app.js")
+    lane.update(
+        mode="pattern-inventory",
+        rule_ids=["js-rule", "py-rule", "ruby-rule"],
+        ruleset_sha256=digest({"rules": [*rules, extra]}),
+    )
+    evidence.update(
+        schema="factory.semgrep-rule-execution.v2",
+        ruleset_base64=base64.b64encode(
+            canonical_bytes({"rules": [*rules, extra]})
+        ).decode(),
+    )
+    empty = evidence["observations"][0]
+    native = empty["native_report"]
+    native["paths"]["scanned"] = ["/src/app.py"] if fault == "target" else []
+    if fault == "finding":
+        native["results"] = [{"check_id": "js-rule", "path": "/src/app.py"}]
+    config = {"rules": [rules[0], extra]}
+    empty.update(
+        rule_config_sha256=digest(config),
+        rule_config_base64=base64.b64encode(canonical_bytes(config)).decode(),
+        native_report_sha256=digest(native),
+        raw_report_sha256=digest(native),
+        raw_report_base64=base64.b64encode(canonical_bytes(native)).decode(),
+    )
+    for row in evidence["observations"]:
+        argv = row["argv"]
+        argv.insert(argv.index("--config"), "--x-ignore-semgrepignore-files")
+        row["argv_sha256"] = digest(argv)
+    if fault == "legacy":
+        lane["mode"] = "pattern-limited"
+    if fault == "source-drift":
+        sources["app.js"] = "b" * 64
+    if fault:
+        with pytest.raises(RuntimeAuditError, match="E_SEMGREP_EXECUTION"):
+            verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+    else:
+        checked = verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+        assert {
+            row["rule_id"]: row["executed_sources"] for row in checked["rules"]
+        } == {
+            "js-rule": [],
+            "py-rule": ["app.py"],
+            "ruby-rule": [],
+        }
+
+
 def test_semgrep_native_source_budget_rejects_before_tool_execution(tmp_path):
     from factoryline.deep_audit_io import INVENTORY_LIMIT, _run_native_profile
 

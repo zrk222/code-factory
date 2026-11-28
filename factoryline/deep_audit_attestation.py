@@ -2371,6 +2371,27 @@ def _semgrep_rule_json(raw, tool_version):
         raise RuntimeAuditError("E_REPORT_JSON", "invalid native rule JSON") from exc
 
 
+def _semgrep_rule_groups(rules, lane, sources=None):
+    groups = {index: [rule] for index, rule in enumerate(rules)}
+    if sources is None or (lane.get("mode"), lane["tool_version"]) != (
+        "pattern-inventory",
+        "2.1.0",
+    ):
+        return list(groups.items())
+
+    empty = [
+        index
+        for index, rule in enumerate(rules)
+        if not _deep_audit_io._semgrep_rule_sources(rule, sources)
+    ]
+    if len(empty) > 1:
+        first, *rest = empty
+        groups[first] = [rules[index] for index in empty]
+        for index in rest:
+            del groups[index]
+    return list(groups.items())
+
+
 def _semgrep_rule_runs(
     profile,
     lane,
@@ -2379,6 +2400,7 @@ def _semgrep_rule_runs(
     rules,
     started,
     *,
+    sources=None,
     execution_context=None,
     cancelled=None,
 ):
@@ -2402,7 +2424,9 @@ def _semgrep_rule_runs(
             )
     observations = []
     deadline = started + lane["timeout_seconds"]
-    for index, rule in enumerate(rules):
+    groups = _semgrep_rule_groups(rules, lane, sources)
+    for index, group in groups:
+        rule = group[0]
         remaining = int(deadline - _deep_audit_io.time.monotonic())
         if remaining < 1:
             raise _deep_audit_io.RuntimeAuditError(
@@ -2410,7 +2434,7 @@ def _semgrep_rule_runs(
             )
         directory = scratch / f"semgrep-rule-{index}"
         directory.mkdir()
-        config = _deep_audit_io.canonical_bytes({"rules": [rule]})
+        config = _deep_audit_io.canonical_bytes({"rules": group})
         config_path, report_path = directory / "rule.json", directory / "report.json"
         config_path.write_bytes(config)
         argv = _semgrep_rule_prefix(
@@ -2465,7 +2489,11 @@ def _semgrep_rule_runs(
                 "raw_report_base64": base64.b64encode(raw).decode("ascii"),
             }
         )
-    return {"schema": "factory.semgrep-rule-execution.v1", "observations": observations}
+    version = 2 if len(groups) < len(rules) else 1
+    return {
+        "schema": f"factory.semgrep-rule-execution.v{version}",
+        "observations": observations,
+    }
 
 
 def verify_semgrep_rule_execution(
@@ -2477,13 +2505,13 @@ def verify_semgrep_rule_execution(
     from .deep_audit_sarif import _local_execution_context, _local_semgrep_report
 
     execution_context = _local_execution_context(execution_context, lane)
-    rules, observations = _deep_audit_io._semgrep_evidence_inputs(
+    groups, observations = _deep_audit_io._semgrep_evidence_inputs(
         evidence, lane, sources
     )
     findings, dispositions = [], []
-    for index, (rule, observation) in enumerate(zip(rules, observations)):
+    for (index, group), observation in zip(groups, observations):
         _deep_audit_io._semgrep_observation_identity(
-            rule,
+            group,
             observation,
             index,
             lane["tool_version"],
@@ -2503,22 +2531,29 @@ def verify_semgrep_rule_execution(
         native = observation["native_report"]
         if execution_context:
             native = _local_semgrep_report(native, sources, execution_context)
-        expected = _deep_audit_io._semgrep_rule_sources(rule, sources)
+        single_rule = len(group) == 1
+        expected = (
+            _deep_audit_io._semgrep_rule_sources(group[0], sources)
+            if single_rule
+            else set()
+        )
         scanned = _deep_audit_io._semgrep_scanned_sources(native, sources, lane)
-        if scanned != expected:
+        if scanned != expected or (not single_rule and native.get("results") != []):
             raise _deep_audit_io.RuntimeAuditError(
                 "E_SEMGREP_EXECUTION", "native source execution differs"
             )
         findings.extend(
-            _deep_audit_io._semgrep_json_findings(native, rule["id"], sources)
+            _deep_audit_io._semgrep_json_findings(native, group[0]["id"], sources)
         )
-        dispositions.append(
+        not_applicable_sources = sorted(set(sources) - scanned)
+        dispositions.extend(
             {
                 "rule_id": rule["id"],
                 "executed_sources": sorted(scanned),
-                "not_applicable_sources": sorted(set(sources) - scanned),
+                "not_applicable_sources": not_applicable_sources,
                 "native_report_sha256": observation["native_report_sha256"],
             }
+            for rule in group
         )
     if execution_context:
         report = _local_semgrep_report(report, sources, execution_context)
@@ -2527,6 +2562,7 @@ def verify_semgrep_rule_execution(
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "per-rule findings contradict baseline"
         )
+    dispositions.sort(key=lambda row: row["rule_id"])
     return {"state": "VERIFIED", "rules": dispositions, "findings": len(findings)}
 
 
@@ -2536,7 +2572,11 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
     if (
         not isinstance(evidence, dict)
         or set(evidence) != {"schema", "ruleset_base64", "observations"}
-        or evidence["schema"] != "factory.semgrep-rule-execution.v1"
+        or evidence["schema"]
+        not in (
+            "factory.semgrep-rule-execution.v1",
+            "factory.semgrep-rule-execution.v2",
+        )
     ):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "native rule evidence missing"
@@ -2548,20 +2588,26 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
             "E_SEMGREP_RULESET", "invalid native ruleset"
         ) from exc
     rules, _inventory = _deep_audit_io._semgrep_rule_inventory(config, lane)
-    observations = evidence["observations"]
-    if not isinstance(observations, list) or len(observations) != len(rules):
-        raise _deep_audit_io.RuntimeAuditError(
-            "E_SEMGREP_EXECUTION", "rule observation inventory differs"
-        )
     if len(sources) > _deep_audit_io.INVENTORY_LIMIT:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "bounded source inventory required"
         )
-    return rules, observations
+    grouped = evidence["schema"] == "factory.semgrep-rule-execution.v2"
+    groups = _semgrep_rule_groups(rules, lane, sources if grouped else None)
+    observations = evidence["observations"]
+    if (
+        not isinstance(observations, list)
+        or len(observations) != len(groups)
+        or (grouped and len(groups) == len(rules))
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "rule observation inventory differs"
+        )
+    return groups, observations
 
 
 def _semgrep_observation_identity(
-    rule, observation, index, tool_version, *, mode=None, execution_context=None
+    group, observation, index, tool_version, *, mode=None, execution_context=None
 ):
     import base64
 
@@ -2581,15 +2627,14 @@ def _semgrep_observation_identity(
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "invalid native rule record"
         )
-    if observation["rule_id"] != rule["id"] or observation[
+    config = _deep_audit_io.canonical_bytes({"rules": group})
+    if observation["rule_id"] != group[0]["id"] or observation[
         "rule_config_sha256"
-    ] != _deep_audit_io.digest({"rules": [rule]}):
+    ] != _deep_audit_io.sha256_bytes(config):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_RULESET", "isolated native rule differs"
         )
-    if observation["rule_config_base64"] != base64.b64encode(
-        _deep_audit_io.canonical_bytes({"rules": [rule]})
-    ).decode("ascii"):
+    if observation["rule_config_base64"] != base64.b64encode(config).decode("ascii"):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_RULESET", "native config bytes differ"
         )
