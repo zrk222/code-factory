@@ -1,0 +1,7 @@
+name: local/clickhouse-query-model
+version: 0.0.1
+library: true
+extensionTargets:
+  codeql/python-queries: 1.8.11
+dataExtensions:
+  - models/*.yml

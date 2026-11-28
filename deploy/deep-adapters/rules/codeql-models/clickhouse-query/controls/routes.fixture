@@ -1,0 +1,12 @@
+"""Input paths for a static-analysis-only fixture."""
+from flask import request
+from statements import positional_statement, keyword_statement, bound_statement
+
+def positional_control():
+    return positional_statement(request.args["fixture"])
+
+def keyword_control():
+    return keyword_statement(request.args["fixture"])
+
+def bound_control():
+    return bound_statement(request.args["fixture"])

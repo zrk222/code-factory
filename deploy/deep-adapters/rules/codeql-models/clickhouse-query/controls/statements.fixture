@@ -1,0 +1,11 @@
+"""Analyzed as text only. This module has no executable entry point."""
+import clickhouse_connect
+
+def positional_statement(statement):
+    return clickhouse_connect.get_client().query(statement)
+
+def keyword_statement(statement):
+    return clickhouse_connect.get_client().query(query=statement)
+
+def bound_statement(value):
+    return clickhouse_connect.get_client().query("SELECT {value:String}", parameters={"value": value})

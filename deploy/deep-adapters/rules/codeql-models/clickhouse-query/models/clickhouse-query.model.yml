@@ -1,0 +1,7 @@
+extensions:
+  - addsTo:
+      pack: codeql/python-all
+      extensible: sinkModel
+    data:
+      - ["clickhouse_connect", "Member[get_client].ReturnValue.Member[query].Argument[0]", "sql-injection"]
+      - ["clickhouse_connect", "Member[get_client].ReturnValue.Member[query].Argument[query:]", "sql-injection"]
