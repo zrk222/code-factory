@@ -348,3 +348,47 @@ class OverwriteExecutableSlot:
         command[0] = "approved-worker"
         with subprocess.Popen(command) as process:
             return process
+
+class ResetFieldAfterCapture:
+    def configure(self):
+        # ruleid: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_PROGRAM")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        self.program = "worker"
+        with subprocess.Popen(command) as process:
+            return process
+
+class ResetArgvAfterLaunch:
+    def configure(self):
+        # ruleid: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_PROGRAM")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command, executable="worker") as fixed:
+            pass
+        with subprocess.Popen(command) as process:
+            pass
+        command = ["worker"]
+
+class FixedProgramOverride:
+    def configure(self):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_PROGRAM")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command, executable="worker") as process:
+            return process
+
+class ExplicitShellFreeOverride:
+    def configure(self):
+        # ok: python.parameter-shell-command
+        self.program = os.getenv("REVIEW_PROGRAM")
+
+    def run(self, arguments):
+        command = [self.program, *arguments]
+        with subprocess.Popen(command, shell=False, executable="worker") as process:
+            return process
