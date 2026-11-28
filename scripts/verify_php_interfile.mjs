@@ -14,7 +14,7 @@ const profile = JSON.parse(profileBytes);
 const receipt = {
   schema: 'factory.php-interfile-verification.v1', state: 'BLOCKED',
   candidate_commit: process.env.GITHUB_SHA ?? null, profile_sha256: hash(profileBytes),
-  scope: 'Unsigned PHP worker fixture with pinned rule accounting and separate benign cross-file flow controls.',
+  scope: 'Unsigned PHP worker fixture with pinned rule accounting and separate benign cross-file flow controls and paired parser evidence.',
 };
 try {
   const id = docker(['image', 'inspect', image, '--format', '{{.Id}}']).stdout.trim();
@@ -35,15 +35,19 @@ try {
     'helper.php': '<?php\nfunction store_fixture_output($value) { return record_test_marker($value); }\n',
     'main.php': "<?php\nrequire_once __DIR__ . '/helper.php';\nstore_fixture_output(marker_from_fixture());\n",
   };
+  const safeFixture = { ...fixture, 'main.php': fixture['main.php'].replace('marker_from_fixture()', "'fixed'") };
   for (const dir of [source, safe, mixed]) {
     mkdirSync(dir);
-    for (const [name, text] of Object.entries(fixture)) {
-      writeFileSync(join(dir, name), dir === safe ? text.replace('marker_from_fixture()', "'fixed'") : text);
+    for (const [name, text] of Object.entries(dir === safe ? safeFixture : fixture)) {
+      writeFileSync(join(dir, name), text);
     }
   }
   const template = '<p>{{ $message }}</p>\n';
   writeFileSync(join(mixed, 'view.blade.php'), template);
-  const files = Object.entries(fixture).map(([path, text]) => ({ path, language: 'php', sha256: hash(text) }));
+  const inventory = sources => Object.entries(sources).map(([path, text]) => ({
+    path, language: 'php', sha256: hash(text),
+  }));
+  const files = inventory(fixture), safeFiles = inventory(safeFixture);
   const lane = { id: 'php-control', family: 'static', languages: ['php'], timeout_seconds: 90,
     memory_mib: 768, native_artifact_roles: ['rule_inventory', 'sarif_report'], rule_ids: ruleIds,
     report: 'native.json', coverage: 'coverage.json', challenge_report: 'challenges.json' };
@@ -93,6 +97,26 @@ try {
     'pattern-sinks': [{ pattern: 'record_test_marker(...)' }],
   }] }));
   const fixed = profile.commands[0].argv.slice(2, profile.commands[0].argv.indexOf('--config'));
+  receipt.marker_rule_sha256 = hash(readFileSync(marker));
+  receipt.parser = { tool_version: profile.tool_version, argv: [
+    '/usr/bin/opengrep', 'scan', '--dump-ast', '--json', '--lang', 'php',
+  ] };
+  const dumpAst = (dir, path) => docker([...isolation, ...mount(dir, '/src'), '--entrypoint',
+    receipt.parser.argv[0], id, ...receipt.parser.argv.slice(1), `/src/${path}`], [0, 3], 30000);
+  const parseProof = result => {
+    assert.equal(result.status, 0, 'PHP parser rejected source');
+    const statements = JSON.parse(result.stdout).Pr;
+    assert.ok(Array.isArray(statements) && statements.length > 0, 'Expected a nonempty PHP fixture AST');
+    return { exit_code: result.status, ast_sha256: hash(result.stdout), top_level_nodes: statements.length };
+  };
+  // Parse-only evidence is reusable within this pinned image for identical bytes at the same path.
+  const parsed = new Map();
+  const extraction = (dir, expected) => expected.map(({ path, sha256 }) => {
+    assert.equal(hash(readFileSync(join(dir, path))), sha256, 'Source changed during verification');
+    const key = JSON.stringify([path, sha256]);
+    if (!parsed.has(key)) parsed.set(key, parseProof(dumpAst(dir, path)));
+    return { path, sha256, ...parsed.get(key) };
+  });
   receipt.controls = {};
   for (const [name, dir, flags] of [
     ['interfile', source, fixed], ['disabled', source, fixed.filter(flag => flag !== '--enable-interfile')],
@@ -103,15 +127,34 @@ try {
       '--no-rewrite-rule-ids', '--config', '/proof/marker.json', '--json', '/src']).stdout;
     writeFileSync(`${output}.${name}.json`, raw);
     const native = JSON.parse(raw);
+    assert.equal(native.version, profile.tool_version);
     assert.deepEqual(native.errors, []);
+    assert.deepEqual(native.skipped_rules, []);
+    assert.deepEqual([...native.paths.scanned].sort(), files.map(file => `/src/${file.path}`).sort());
     assert.equal(native.results.length, name === 'interfile' ? 1 : 0);
     if (name === 'interfile') {
       assert.match(native.results[0].path, /(?:^|\/)helper\.php$/);
       const origin = native.results[0].extra.dataflow_trace.find(step => step.kind === 'source');
       assert.match(origin.location.path, /(?:^|\/)main\.php$/);
     }
-    receipt.controls[name] = { findings: native.results.length, sha256: hash(raw) };
+    const control = { findings: native.results.length, sha256: hash(raw) };
+    if (name !== 'disabled') {
+      assert.deepEqual(native.interfile_languages_used, ['PHP']);
+      control.extraction = extraction(dir, dir === safe ? safeFiles : files);
+    }
+    receipt.controls[name] = control;
   }
+
+  // The parser can emit a partial AST for malformed PHP. Its exit code is decisive.
+  const malformed = join(root, 'malformed');
+  mkdirSync(malformed);
+  const damaged = '<?php\nfunction other( { return 8; }\n';
+  writeFileSync(join(malformed, 'broken.php'), damaged);
+  const rejected = dumpAst(malformed, 'broken.php');
+  assert.equal(rejected.status, 3, 'Expected the pinned parser to reject malformed PHP');
+  assert.throws(() => parseProof(rejected), /PHP parser rejected source/);
+  receipt.malformed_control = { path: 'broken.php', sha256: hash(damaged), exit_code: rejected.status,
+    stdout_sha256: hash(rejected.stdout), stderr_sha256: hash(rejected.stderr) };
   receipt.state = 'PASS';
 } catch (error) {
   receipt.error = error.message;
