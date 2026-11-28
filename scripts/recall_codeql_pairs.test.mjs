@@ -18,6 +18,22 @@ const nativeFixtures = {
   'crates.io': ['sample.rs', 'rust/diagnostics/successfully-extracted-files'],
 };
 
+const scannedCoverage = packets => Object.fromEntries(Object.entries(packets).map(([side, files]) =>
+  [side, files.map(packet => ({ ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' }))]));
+
+function patternCapturePins(packets) {
+  const captures = {}, scan_sides = {};
+  for (const [side, files] of Object.entries(packets)) {
+    if (!files.length) continue;
+    const report = sha256(side + ':report'), coverage = sha256(side + ':coverage');
+    captures[side] = { source_root: side, sarif: { path: side + '.sarif', sha256: report },
+      native_report: { path: side + '.coverage.json', sha256: coverage } };
+    scan_sides[side] = { failed_exit: false, exit_code: 0, timeouts: 0, other: 0, blocking_parse_errors: 0,
+      report_sha256: report, coverage_report_sha256: coverage };
+  }
+  return { captures, scan_sides };
+}
+
 function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI', trailingSource = '') {
   const root = mkdtempSync(join(tmpdir(), 'cf-codeql-pair-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -96,13 +112,14 @@ test('each registered native lane accepts its own exact extraction diagnostic', 
   }
 });
 
-test('C# and Rust extraction errors without file locations block complete coverage', t => {
-  for (const ecosystem of ['NuGet', 'crates.io']) {
+test('unlocated extraction or parse errors block complete coverage', t => {
+  for (const ecosystem of ['NuGet', 'crates.io', 'PyPI']) {
     const [uri, success] = nativeFixtures[ecosystem];
     const { value, capture, run } = stagedPair(t, 'src', ecosystem);
     const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: [
       { descriptor: { id: success }, locations: [{ physicalLocation: { artifactLocation: { uri } } }] },
-      { descriptor: { id: success.replace('successfully-extracted-files', 'extraction-errors') }, level: 'warning' },
+      { descriptor: { id: ecosystem === 'PyPI' ? 'py/diagnostics/parse-error'
+        : success.replace('successfully-extracted-files', 'extraction-errors') }, level: 'warning' },
     ] }]);
     const [scored] = run({ ...value, cases: [{ ...value.cases[0], fixed }] }).cases;
     assert.deepEqual(scored.native_coverage.fixed.extracted, [uri], ecosystem);
@@ -279,6 +296,12 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
     source_paths: ['helper.py', 'sample.py'], fixed_sink_residual: false,
   }]);
   assert.equal(score(finding([anchor, sink]), [finding()]).cases[0].cross_file_trace_matches[0].fixed_sink_residual, true);
+  const mixedAnchor = position('sample.py');
+  mixedAnchor.physicalLocation.region.charOffset = 0;
+  const mixed = score(finding([mixedAnchor, sink]));
+  assert.equal(mixed.cases[0].fingerprints.old.invalid_trace_steps, 1);
+  assert.equal(mixed.cross_file_trace_hits, 0);
+  assert.equal(Object.hasOwn(mixed.cases[0], 'anchored_trace_matches'), false);
   for (const trace of [finding([anchor], [sink]), finding([sink, anchor]),
     finding([position('sample.py', 2), sink]), finding([anchor, position('missing.py'), sink])]) {
     const invalid = score(trace);
@@ -290,9 +313,7 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
 test('native and pattern hits join only on identical evidence and are counted once', t => {
   const { root, row, value, binding, capture, json, run } = stagedPair(t);
   const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false, hunk_findings: [],
-    file_coverage: { fixed: binding.source_packets.fixed.map(packet => ({
-      ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths',
-    })) }, fix_side_residual: [] };
+    ...patternCapturePins(binding.source_packets), file_coverage: scannedCoverage(binding.source_packets), fix_side_residual: [] };
   const score = (candidate, summary = {}) => {
     const pins = json('pattern-score.json', {
       schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: value.manifest.sha256,
@@ -309,6 +330,18 @@ test('native and pattern hits join only on identical evidence and are counted on
   assert.equal(detected.native_extraction_complete_pairs, 1);
   assert.equal(detected.observed_union_hunk_hits, 1);
   assert.equal(detected.observed_union_file_hits, 1);
+  assert.equal(detected.case_evidence.length, 1);
+  assert.deepEqual(detected.case_evidence[0].layers[1].pattern_captures, { old: 'report_pinned', fixed: 'report_pinned' });
+  assert.equal(detected.case_evidence[0].native_bundles[0], detected.case_evidence[0].cohort_sha256);
+  const lost = joined({ ...base, captures: { old: base.captures.old } });
+  assert.equal(lost.eligible_native_additions, 0);
+  assert.equal(lost.case_evidence[0].layers[1].pattern_captures.fixed, 'missing_capture');
+  assert.equal(lost.follow_up[0].next, 'resolve_pattern_coverage');
+  const mismatched = joined({ ...base, captures: { ...base.captures, fixed: {
+    ...base.captures.fixed, sarif: { ...base.captures.fixed.sarif, sha256: '0'.repeat(64) },
+  } } });
+  assert.equal(mismatched.eligible_native_additions, 0);
+  assert.equal(mismatched.case_evidence[0].layers[1].pattern_captures.fixed, 'unverified_capture');
   const found = joined({ ...base, outcome: 'hit', hunk_hit: true, file_hit: true,
     hunk_findings: [['test/rule', 'sample.py', 1]] });
   assert.equal(found.cases[0].disposition, 'overlap');
@@ -317,9 +350,15 @@ test('native and pattern hits join only on identical evidence and are counted on
   assert.equal(found.eligible_native_additions, 0);
   assert.equal(joined({ ...base, fix_side_residual: [['test/rule', 'sample.py', 1]] }).cases[0].disposition,
     'fixed_side_residual');
-  assert.equal(joined({ ...base, file_coverage: { fixed: [] } }).cases[0].disposition, 'fixed_coverage_unresolved');
+  for (const old of [undefined, [], [{ ...base.file_coverage.old[0], sha256: '0'.repeat(64) }]]) {
+    const unresolvedOld = joined({ ...base, file_coverage: { ...base.file_coverage, old } });
+    assert.equal(unresolvedOld.cases[0].disposition, 'old_coverage_unresolved');
+    assert.equal(unresolvedOld.eligible_native_additions, 0);
+  }
+  assert.equal(joined({ ...base, file_coverage: { ...base.file_coverage, fixed: [] } }).cases[0].disposition,
+    'fixed_coverage_unresolved');
   const [fixed] = base.file_coverage.fixed;
-  assert.equal(joined({ ...base, file_coverage: { fixed: [fixed, fixed] } }).cases[0].disposition,
+  assert.equal(joined({ ...base, file_coverage: { ...base.file_coverage, fixed: [fixed, fixed] } }).cases[0].disposition,
     'fixed_coverage_unresolved');
   assert.throws(() => joined({ ...base, diff_sha256: '0'.repeat(64) }), /Pattern case input differs/);
   assert.throws(() => run(value, { ...score(base), sha256: '0'.repeat(64) }), /Pattern score digest mismatch/);
@@ -509,8 +548,7 @@ test('registered CodeQL plans reconcile the exact query set and keep absent case
     cases: cases.map(entry => {
       const input = supplied.get(entry.ghsa);
       return { ...input, ...entry, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false,
-        hunk_findings: [], fix_side_residual: [], file_coverage: { fixed: input.source_packets.fixed.map(packet =>
-          ({ ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' })) } };
+        hunk_findings: [], fix_side_residual: [], ...patternCapturePins(input.source_packets), file_coverage: scannedCoverage(input.source_packets) };
     }),
   });
   const routed = run({ ...cohort, schema: 'factory.recall-codeql-cohort.v2' }, { ...pattern, path: join(root, pattern.path) });
@@ -540,22 +578,61 @@ test('native detector arms retain their own extraction and count one shared case
   const { root, row, value, binding, json, write, run } = stagedPair(t, 'src', 'PyPI', 'KEEP = 3\n');
   const single = value.cases[0];
   const read = pin => JSON.parse(readFileSync(join(root, pin.path), 'utf8'));
-  const arm = (name, { hit, parsed, offHunk = false }) => {
+  const arm = (name, { hit, parsed, offHunk = false, offFile = '', fixedHunk = false, ambiguousFixed = false,
+    mixedTrace = false }) => {
     const id = 'test/' + name;
     const query = write(name + '.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
     const capture = side => {
       const prior = single[side];
       const report = read(prior.sarif), scan = report.runs[0];
       scan.tool.driver.rules[0].id = id;
-      if (side === 'old' && offHunk) {
+      if (ambiguousFixed && side === 'fixed') {
+        scan.results = [{ ruleId: id, locations: ['helper.py', 'sample.py'].map(uri => ({
+          physicalLocation: { artifactLocation: { uri }, region: { startLine: 1 } },
+        })) }];
+      } else if (fixedHunk && side === 'fixed') {
+        scan.results = [{ ruleId: id, locations: [{ physicalLocation: {
+          artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 },
+        } }] }];
+      } else if (offFile && (offFile !== 'fixed-only' || side === 'fixed')) {
+        const column = side === 'fixed' && offFile === 'changed-span' ? 2 : 1;
+        const position = (uri, line, startColumn) => ({ physicalLocation: {
+          artifactLocation: { uri }, region: { startLine: line, startColumn },
+        } });
+        const sink = position('helper.py', 1, column);
+        if (offFile === 'invalid-region') sink.physicalLocation.region.startColumn = 0;
+        if (offFile === 'offset') {
+          sink.physicalLocation.region.charOffset = side === 'old' ? 1 : 2;
+          sink.physicalLocation.region.charLength = 1;
+        }
+        const result = { ruleId: id, locations: [sink] };
+        if (offFile === 'logical-step') {
+          result.codeFlows = [{ threadFlows: [{ locations: [
+            { location: { logicalLocations: [{ name: side }] } }, { location: sink },
+          ] }] }];
+        }
+        if (offFile === 'secondary') result.locations.push(position('helper.py', 1, side === 'old' ? 3 : 4));
+        if (offFile === 'changed-trace') {
+          const source = side === 'old' ? position('helper.py', 1, 2) : position('sample.py', 2, 1);
+          result.codeFlows = [{ threadFlows: [{ locations: [source, sink].map(location => ({ location })) }] }];
+        }
+        scan.results = [result];
+      } else if (side === 'old' && offHunk) {
         const position = line => ({ physicalLocation: {
           artifactLocation: { uri: 'sample.py' }, region: { startLine: line },
         } });
         scan.results = [{ ruleId: id, locations: [position(2)], codeFlows: [{
           threadFlows: [{ locations: [1, 2].map(line => ({ location: position(line) })) }],
         }] }];
-      } else if (side === 'old' && hit) scan.results[0].ruleId = id;
-      else scan.results = [];
+      } else if (side === 'old' && hit) {
+        const [result] = scan.results;
+        result.ruleId = id;
+        if (mixedTrace) {
+          result.codeFlows = [{ threadFlows: [{ locations: [{ location: { physicalLocation: {
+            artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, charOffset: 0 },
+          } } }] }] }];
+        }
+      } else scan.results = [];
       if (side === 'fixed' && !parsed) scan.invocations[0].toolExecutionNotifications = [];
       const sarif = json(name + '-' + side + '.sarif', report);
       const observation = json(name + '-' + side + '.json', { ...read(prior.observation),
@@ -567,9 +644,12 @@ test('native detector arms retain their own extraction and count one shared case
   };
   const patternCase = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false,
     file_hit: false, hunk_findings: [], fix_side_residual: [],
-    file_coverage: { fixed: binding.source_packets.fixed.map(packet => ({
-      ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths',
-    })) } };
+    ...patternCapturePins(binding.source_packets), file_coverage: scannedCoverage(binding.source_packets) };
+  for (const side of ['old', 'fixed']) patternCase.file_coverage[side].push(
+    { path: 'nested/bridge.ts', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
+    { path: 'resources/mapper.xml', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
+    { path: 'readme.md', submitted: false, state: 'excluded', reason: 'outside_ecosystem_language' },
+  );
   const pattern = json('pattern-score.json', {
     schema: 'factory.recall-result.v1', scope: 'ecosystem', manifest_sha256: value.manifest.sha256,
     manifest_cases_sha256: caseDigest([row]), ruleset_sha256: 'c'.repeat(64), profile_sha256: 'd'.repeat(64),
@@ -586,9 +666,82 @@ test('native detector arms retain their own extraction and count one shared case
   assert.equal(twoSignals.scored_arm_pairs, 2);
   assert.equal(twoSignals.pattern_join.eligible_native_additions, 0);
   assert.equal(twoSignals.pattern_join.follow_up[0].next, 'resolve_native_extraction');
-  assert.equal(evaluate([negative]).pattern_join.follow_up[0].next, 'completed_native_search');
+  const unobservedFamily = evaluate([negative]);
+  assert.equal(unobservedFamily.pattern_join.follow_up[0].next, 'enhance_native_family_model');
+  const [assessment] = unobservedFamily.pattern_join.case_evidence;
+  assert.equal(assessment.input_sha256, unobservedFamily.cases[0].input_sha256);
+  assert.equal(assessment.cohort_sha256, unobservedFamily.input_sha256);
+  assert.equal(assessment.manifest_sha256, value.manifest.sha256);
+  assert.equal(assessment.reference_sha256, value.reference.sha256);
+  assert.deepEqual(assessment.layers.map(layer => layer.stage),
+    ['sink_collection', 'parser_coverage', 'source_to_sink', 'fixed_side', 'verdict']);
+  assert.equal(assessment.layers[4].state, 'unresolved');
+  const { routes, inventoried_paths } = assessment.layers[1].source_routing.old;
+  assert.equal(inventoried_paths, 4);
+  assert.equal(routes.find(x => x.path === 'sample.py').sha256, binding.source_packets.old[0].sha256);
+  assert.equal(routes.find(x => x.path === 'sample.py').state, 'pattern_parsed');
+  assert.deepEqual(routes.filter(x => !x.sha256), [
+    { path: 'nested/bridge.ts', state: 'cross_language' },
+    { path: 'resources/mapper.xml', state: 'context_required' },
+  ]);
+  assert.deepEqual(unobservedFamily.pattern_join.follow_up[0].source_follow_up, assessment.layers[4].source_follow_up);
+  assert.equal(assessment.layers[4].source_follow_up.length, 4);
+  const { layers, evidence_sha256: evidenceSha, ...pins } = assessment;
+  let prior = caseDigest([pins]);
+  for (const { output_sha256: output, ...packet } of layers) {
+    assert.equal(packet.input_sha256, prior);
+    assert.equal(caseDigest([packet]), output);
+    prior = output;
+  }
+  const modified = { ...layers[1], native_captures: 99 };
+  delete modified.output_sha256;
+  assert.notEqual(caseDigest([modified]), layers[2].input_sha256);
+  assert.equal(evidenceSha, caseDigest([{ ...pins, layers }]));
+  assert.equal(unobservedFamily.pattern_join.follow_up[0].evidence_sha256, assessment.evidence_sha256);
+  assert.equal(assessment.evidence_sha256, caseDigest([Object.fromEntries(
+    Object.entries(assessment).filter(([key]) => key !== 'evidence_sha256'),
+  )]));
+  assert.equal(unobservedFamily.cases[0].arms[0].native_family_alerts.matching_query_count, 1);
+  assert.equal(unobservedFamily.cases[0].arms[0].native_family_alerts.old.total, 0);
+  const persistent = evaluate([arm('retained', { parsed: true, offFile: 'retained' })]);
+  const family = persistent.cases[0].arms[0].native_family_alerts;
+  assert.equal(family.old.byte_verified_outside, 1);
+  assert.equal(family.retained_outside, 1);
+  assert.equal(persistent.pattern_join.follow_up[0].next, 'enhance_native_family_model');
+  for (const shape of ['changed-span', 'fixed-only', 'changed-trace', 'secondary', 'offset', 'logical-step', 'invalid-region']) {
+    const changedShape = evaluate([arm(shape, { parsed: true, offFile: shape })]);
+    assert.equal(changedShape.cases[0].arms[0].native_family_alerts.retained_outside, 0);
+    assert.equal(changedShape.pattern_join.follow_up[0].next, 'review_nonlocal_family_alerts');
+    assert.equal(changedShape.pattern_join.eligible_native_additions, 0);
+  }
+  const residual = evaluate([negative, arm('fixed-hunk', { parsed: true, fixedHunk: true })]);
+  assert.equal(residual.pattern_join.follow_up[0].next, 'review_fixed_side_path');
+  assert.equal(residual.pattern_join.case_evidence[0].layers[4].next, 'review_fixed_side_path');
+  assert.equal(residual.pattern_join.eligible_native_additions, 0);
+  const unresolvedTrace = arm('mixed-trace', { hit: true, parsed: true, mixedTrace: true });
+  const mixedTraceOnly = evaluate([unresolvedTrace]);
+  assert.equal(mixedTraceOnly.strict_hunk_hits, 1);
+  assert.equal(mixedTraceOnly.pattern_join.eligible_native_additions, 0);
+  assert.equal(mixedTraceOnly.pattern_join.cases[0].disposition, 'native_trace_source_unresolved');
+  const splitResidual = evaluate([unresolvedTrace, arm('split-fixed', { parsed: true, fixedHunk: true })]);
+  assert.equal(splitResidual.pattern_join.cases[0].disposition, 'fixed_side_residual');
+  assert.deepEqual(splitResidual.pattern_join.cases[0].arm_dispositions.map(arm => arm.disposition).sort(),
+    ['fixed_side_residual', 'native_trace_source_unresolved']);
+  assert.equal(splitResidual.pattern_join.follow_up[0].next, 'review_fixed_side_path');
+  assert.equal(splitResidual.pattern_join.eligible_native_additions, 0);
+  const uncertain = evaluate([arm('ambiguous-fixed', { hit: true, parsed: true, ambiguousFixed: true })]);
+  assert.equal(uncertain.pattern_join.follow_up[0].next, 'review_native_alert_locations');
+  assert.equal(uncertain.pattern_join.eligible_native_additions, 0);
+  const splitUncertainty = evaluate([complete, arm('other-fixed', { parsed: true, ambiguousFixed: true })]);
+  assert.equal(splitUncertainty.pattern_join.follow_up[0].next, 'review_native_alert_locations');
+  assert.equal(splitUncertainty.pattern_join.eligible_native_additions, 0);
   const twoHits = evaluate([incomplete, complete]);
   assert.equal(twoHits.strict_hunk_hits, 1);
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].state, 'unresolved');
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].next, 'resolve_source_routes');
+  assert.equal(twoHits.pattern_join.case_evidence[0].layers[4].historical_hunk_hit, false);
+  assert.equal(twoHits.pattern_join.follow_up.length, 1);
+  assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
   assert.equal(twoHits.pattern_join.eligible_native_additions, 1);
   assert.equal(twoHits.cases[0].arms.length, 2);
   const anchored = evaluate([arm('off-hunk', { parsed: true, offHunk: true }), negative]);
