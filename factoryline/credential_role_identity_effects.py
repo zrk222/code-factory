@@ -848,7 +848,7 @@ def _unknown_expression(node, aliases, *, strict_calls=False, material_values=Fa
 
 
 def _value_trace(node, operation):
-    from .scan_pool import ast_dump_digest
+    from . import ast_dump_digest
 
     digest = ast_dump_digest(node)
     return (

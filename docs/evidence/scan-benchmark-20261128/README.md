@@ -2,7 +2,7 @@
 
 Corpus: these 30 files copied unchanged from `factoryline/` (40,762 lines, corpus digest in each receipt). Host: 2 CPUs, Linux, Python 3.13.
 
-Reproduce: copy the files into an empty directory, then run `python scripts/scan_benchmark.py DIR OUT.json --runs 3` from each checkout.
+Reproduce: copy the files into an empty directory, then run `node scripts/scan_benchmark.mjs DIR OUT.json --runs 3` from each checkout.
 
 | Receipt | Median | Runs |
 | --- | --- | --- |

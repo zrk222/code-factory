@@ -817,7 +817,7 @@ def _consume_security_snapshots(
     from . import test_oracle_misuse as oracle
     from . import review_audits as audit
     from .import_context import prepared_security_snapshot_batch
-    from .scan_pool import map_scan_jobs
+    from . import map_scan_jobs
 
     def scan_one(path, calls, bindings, context, tree):
         fingerprint = fingerprints.get(path)
