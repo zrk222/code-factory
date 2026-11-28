@@ -449,8 +449,8 @@ def test_graph_has_six_non_authorizing_stages(tmp_path):
     assert all(n["status"] == "unassessed" for n in nodes)
     assert result["deep_audit"]["authority"] == "none"
     labels = {n["kind"]: n["label"] for n in nodes}
-    assert labels["deep_audit_source"] == "app.py:1"
-    assert labels["deep_audit_finding"].startswith("leak -> app.py:")
+    assert labels["deep_audit_source"] == "app.py"
+    assert labels["deep_audit_finding"].startswith("leak: app.py:1 -> app.py:")
 
 
 def test_projection_bound_and_stale_observation(tmp_path):
@@ -654,9 +654,9 @@ def test_chain_labels_taint_source_and_sink_and_marks_leads():
         ],
     }
     chain = _chain(item, {"decision": "REVIEW"}, "r.json")
-    assert chain["source"] == "web.py:3"
-    assert chain["finding"] == "py.sql (lead) -> db.py:9"
+    assert chain["source"] == "db.py"  # the file source_sha256 binds
+    assert chain["finding"] == "py.sql (lead): web.py:3 -> db.py:9"
     plain = _chain(
         {**item, "flows": [], "report_tier": "finding"}, {"decision": "X"}, "r"
     )
-    assert (plain["source"], plain["finding"]) == ("db.py:9", "py.sql -> db.py:9")
+    assert (plain["source"], plain["finding"]) == ("db.py", "py.sql: db.py:9")

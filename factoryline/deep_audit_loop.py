@@ -262,15 +262,20 @@ def _flow_point(item: dict, kind: str, fallback: dict) -> str:
 
 
 def _chain(item: dict, receipt: dict, relative: str) -> dict:
-    """One finding as source -> sink: taint origin, then rule and sink location."""
+    """One finding; its label reads rule, lead tier, taint origin -> sink."""
     location = item["locations"][0]
     tier = " (lead)" if item.get("report_tier") == "lead" else ""
-    sink = _flow_point(item, "sink", location) if item.get("flows") else None
+    flow = (
+        _flow_point(item, "source", location)
+        + " -> "
+        + _flow_point(item, "sink", location)
+        if item.get("flows")
+        else f"{location['path']}:{location.get('start_line', '?')}"
+    )
     return {
         "finding_id": item["finding_id"],
-        "source": _flow_point(item, "source", location),
-        "finding": f"{item.get('rule_id', item['finding_id'])}{tier} -> "
-        + (sink or f"{location['path']}:{location.get('start_line', '?')}"),
+        "source": location["path"],
+        "finding": f"{item.get('rule_id', item['finding_id'])}{tier}: {flow}"[:240],
         "source_sha256": location["source_sha256"],
         "obligation": item.get("obligation_id", "unmapped"),
         "trace_sha256": item["trace_sha256"],
